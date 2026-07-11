@@ -152,6 +152,8 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
             }
                 true
             } catch (e: Exception) {
+                // Surface the failure in Logcat at least; user-facing behavior unchanged (still onError()).
+                android.util.Log.e("AddUnitViewModel", "Topic save failed", e)
                 false
             }
             if (ok) onSaved() else onError()
