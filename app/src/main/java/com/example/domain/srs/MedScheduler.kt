@@ -272,6 +272,33 @@ object MedScheduler {
     ): Double = review(stability, difficulty, elapsedDays, memoryRating, understanding, highYield, reviewNumber).intervalDays
 
     /**
+     * Ordering score for the due queue and the overdue-redistribution plan. Higher = review sooner /
+     * recover first. SINGLE source of truth for "which items matter most": the review-session daily cap
+     * and the Today redistribution both call this, so their notion of priority can never drift apart.
+     * Weights are deliberately coarse and additive: importance dominates, then how weak/overdue it is.
+     */
+    fun priorityScore(
+        highYield: Boolean,
+        state: String,
+        lapseCount: Int,
+        nextReviewAt: Long,
+        now: Long,
+    ): Double {
+        var score = 0.0
+        if (highYield) score += 100.0
+        score += when (state) {
+            "NeedsRelearn" -> 80.0
+            "Learning" -> 40.0
+            "Building" -> 20.0
+            else -> 0.0
+        }
+        score += lapseCount * 10.0
+        val overdueDays = (now - nextReviewAt) / 86400000.0
+        if (overdueDays > 0) score += overdueDays * 5.0
+        return score
+    }
+
+    /**
      * Derive a mastery state from the memory model (replacing the old review-count thresholds, which
      * were decoupled from scheduling). Mastery tracks stability so the badge and the scheduler agree.
      */

@@ -132,18 +132,7 @@ class ReviewViewModel(
                     // Priority order so the most important items survive the daily cap, not just the
                     // earliest-due ones: high-yield, weak/relearn, lapses, and how overdue they are.
                     val prioritized = units.sortedByDescending { u ->
-                        var score = 0.0
-                        if (u.highYield) score += 100.0
-                        score += when (u.state) {
-                            "NeedsRelearn" -> 80.0
-                            "Learning" -> 40.0
-                            "Building" -> 20.0
-                            else -> 0.0
-                        }
-                        score += u.lapseCount * 10.0
-                        val overdueDays = (now - u.nextReviewAt) / 86400000.0
-                        if (overdueDays > 0) score += overdueDays * 5.0
-                        score
+                        com.example.domain.srs.MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
                     }
                     dueUnits.addAll(prioritized.take(limit))
                     advanceUnit()

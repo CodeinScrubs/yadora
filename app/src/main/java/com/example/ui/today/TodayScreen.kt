@@ -112,18 +112,7 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             // Highest-priority first (same score the review queue uses) so DAY 1 gets the important ones
             // (high-yield, needs-relearn, recent forgot, most overdue) instead of a blind round-robin.
             val prioritized = overdueList.sortedByDescending { u ->
-                var score = 0.0
-                if (u.highYield) score += 100.0
-                score += when (u.state) {
-                    "NeedsRelearn" -> 80.0
-                    "Learning" -> 40.0
-                    "Building" -> 20.0
-                    else -> 0.0
-                }
-                score += u.lapseCount * 10.0
-                val overdueDays = (now - u.nextReviewAt) / 86400000.0
-                if (overdueDays > 0) score += overdueDays * 5.0
-                score
+                com.example.domain.srs.MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
             }
             val perDay = Math.ceil(prioritized.size / 3.0).toInt().coerceAtLeast(1)
             val updated = prioritized.mapIndexed { index, unit ->
