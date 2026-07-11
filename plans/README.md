@@ -9,17 +9,17 @@ The project had **no version control** when these plans were written, so plans
 baseline. **Run plan 001 first** — it establishes git; then record its commit SHA
 here so the later drift checks work:
 
-- Plan 001 baseline commit SHA: `__________` (fill in after running 001)
+- Plan 001 baseline commit SHA: `92425b3`
 
 ## Execution order & status
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001  | Establish version control (git init + baseline commit) | P1 | S | — | TODO |
-| 002  | Extract & test `MedScheduler.priorityScore()` (dedup queue formula) | P1 | S | 001 | TODO |
-| 003  | Log swallowed topic-save exceptions to `crash.log` | P2 | S | 001 | TODO |
-| 004  | Add `CLAUDE.md` (build commands + settled decisions) | P2 | S | 001 | TODO |
-| 005  | Extract & test Today due-bucket + overdue-redistribution logic | P2 | M | 002 | TODO |
+| 001  | Establish version control (git init + baseline commit) | P1 | S | — | DONE (`92425b3`) |
+| 002  | Extract & test `MedScheduler.priorityScore()` (dedup queue formula) | P1 | S | 001 | DONE (`539c940`) |
+| 003  | Log swallowed topic-save exceptions to `crash.log` | P2 | S | 001 | DONE (`b7fbe37` — Logcat path 2B; crash.log integration deferred) |
+| 004  | Add `CLAUDE.md` (build commands + settled decisions) | P2 | S | 001 | DONE (`e721407`) |
+| 005  | Extract & test Today due-bucket + overdue-redistribution logic | P2 | M | 002 | DONE (`ca15146`) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 
