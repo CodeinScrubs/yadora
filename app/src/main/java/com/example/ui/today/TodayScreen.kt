@@ -81,23 +81,23 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
 
     val dueUnits: StateFlow<List<StudyUnitEntity>> = repository.activeUnits.combine(dayTick) { units, _ ->
         val end = endOfToday()
-        units.filter { it.nextReviewAt <= end }
+        units.filter { TodayBuckets.isDueByEndOfToday(it.nextReviewAt, end) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val overdueUnits = repository.activeUnits.combine(dayTick) { units, _ ->
         val start = startOfToday()
-        units.filter { it.nextReviewAt < start }
+        units.filter { TodayBuckets.isOverdue(it.nextReviewAt, start) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val dueTodayUnits = repository.activeUnits.combine(dayTick) { units, _ ->
         val start = startOfToday()
         val end = endOfToday()
-        units.filter { it.nextReviewAt in start..end }
+        units.filter { TodayBuckets.isDueToday(it.nextReviewAt, start, end) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val upcomingUnits: StateFlow<List<StudyUnitEntity>> = repository.activeUnits.combine(dayTick) { units, _ ->
         val end = endOfToday()
-        units.filter { it.nextReviewAt > end }.sortedBy { it.nextReviewAt }.take(5)
+        units.filter { TodayBuckets.isUpcoming(it.nextReviewAt, end) }.sortedBy { it.nextReviewAt }.take(5)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
@@ -114,17 +114,9 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             val prioritized = overdueList.sortedByDescending { u ->
                 com.example.domain.srs.MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
             }
-            val perDay = Math.ceil(prioritized.size / 3.0).toInt().coerceAtLeast(1)
+            val total = prioritized.size
             val updated = prioritized.mapIndexed { index, unit ->
-                val dayOffset = (index / perDay).coerceAtMost(2) + 1 // fill day 1, then 2, then 3
-                val target = java.util.Calendar.getInstance().apply {
-                    timeInMillis = now
-                    add(java.util.Calendar.DAY_OF_YEAR, dayOffset)
-                    set(java.util.Calendar.HOUR_OF_DAY, 8)
-                    set(java.util.Calendar.MINUTE, 0)
-                    set(java.util.Calendar.SECOND, 0)
-                    set(java.util.Calendar.MILLISECOND, 0)
-                }.timeInMillis
+                val target = OverdueRedistributor.targetMillis(now, OverdueRedistributor.dayOffset(index, total))
                 unit.copy(nextReviewAt = target, updatedAt = now)
             }
             // One transaction: a crash mid-redistribution must not leave a half-applied plan.
