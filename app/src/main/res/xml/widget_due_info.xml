@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 2x1 due-count widget. updatePeriodMillis is the OS-enforced 30-min floor; the app also pushes
+     updates on open/review/boot so the count is fresh when it matters. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_due"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

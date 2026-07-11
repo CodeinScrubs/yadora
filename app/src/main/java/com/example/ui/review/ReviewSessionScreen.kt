@@ -1,0 +1,875 @@
+package com.example.ui.review
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Undo
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.local.entity.StudyUnitEntity
+
+import com.example.data.repository.MedReviewRepository
+import com.example.domain.model.MemoryRating
+import com.example.domain.model.UnderstandingRating
+import com.example.domain.srs.MedScheduler
+import com.example.ui.i18n.stateLabel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.stateIn
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+
+import androidx.compose.ui.unit.sp
+
+import kotlinx.coroutines.flow.first
+
+/** English ordinal: 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 11 -> "11th", 21 -> "21st"... */
+private fun ordinalEn(n: Int): String {
+    if (n % 100 in 11..13) return "${n}th"
+    return when (n % 10) {
+        1 -> "${n}st"
+        2 -> "${n}nd"
+        3 -> "${n}rd"
+        else -> "${n}th"
+    }
+}
+
+/** True if [earlier] falls on an earlier local calendar day than [later]. */
+private fun isEarlierLocalDay(earlier: Long, later: Long): Boolean {
+    val c = java.util.Calendar.getInstance()
+    c.timeInMillis = earlier
+    val ey = c.get(java.util.Calendar.YEAR); val ed = c.get(java.util.Calendar.DAY_OF_YEAR)
+    c.timeInMillis = later
+    val ly = c.get(java.util.Calendar.YEAR); val ld = c.get(java.util.Calendar.DAY_OF_YEAR)
+    return ey < ly || (ey == ly && ed < ld)
+}
+
+@Suppress("UNCHECKED_CAST")
+class ReviewViewModelFactory(
+    private val application: android.app.Application,
+    private val repository: MedReviewRepository
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return ReviewViewModel(application, repository) as T
+    }
+}
+
+class ReviewViewModel(
+    application: android.app.Application,
+    private val repository: MedReviewRepository
+) : androidx.lifecycle.AndroidViewModel(application) {
+    data class ReviewHistoryItem(val unitBeforeRating: StudyUnitEntity, val logId: Long, val ratingGiven: MemoryRating)
+    private val ratedStack = mutableListOf<ReviewHistoryItem>()
+    
+    private val dueUnits = mutableListOf<StudyUnitEntity>()
+    
+    private val _currentUnit = MutableStateFlow<StudyUnitEntity?>(null)
+    val currentUnit: StateFlow<StudyUnitEntity?> = _currentUnit
+    
+    val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList())
+        
+    var sessionCount by androidx.compose.runtime.mutableStateOf(0)
+        private set
+    var sessionHard by androidx.compose.runtime.mutableStateOf(0)
+        private set
+    var sessionGood by androidx.compose.runtime.mutableStateOf(0)
+        private set
+    var sessionForgot by androidx.compose.runtime.mutableStateOf(0)
+        private set
+    var canUndo by androidx.compose.runtime.mutableStateOf(false)
+        private set
+    var isLoading by androidx.compose.runtime.mutableStateOf(true)
+        private set
+
+    // Guards against a fast double-tap rating/procrastinating the same card twice (double-log + skip).
+    var isProcessing by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    // "Why scheduled?" — a localized one-liner after each rating (shown as a snackbar) so the user
+    // sees cause → effect and learns to trust the scheduler instead of guessing at it.
+    var lastReason by androidx.compose.runtime.mutableStateOf<String?>(null)
+        private set
+    fun consumeReason() { lastReason = null }
+
+    // When the current card appeared — the review's duration (shown → rated) is a research signal
+    // (optimal-retention computation needs per-review time). Capped so a phone left open overnight
+    // doesn't record a 9-hour "review".
+    private var unitShownAt = System.currentTimeMillis()
+
+    fun loadNext(cutoffTime: Long, unitId: Long = -1L) {
+        viewModelScope.launch {
+            if (dueUnits.isEmpty() && _currentUnit.value == null) {
+                if (unitId != -1L) {
+                    val unit = repository.getUnitById(unitId)
+                    if (unit != null) {
+                        dueUnits.clear()
+                        dueUnits.add(unit)
+                        advanceUnit()
+                    }
+                } else {
+                    val sharedPrefs = getApplication<android.app.Application>().getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                    val limit = sharedPrefs.getFloat("daily_review_limit", 50f).toInt()
+                    val now = System.currentTimeMillis()
+                    val units = repository.getDueUnits(cutoffTime).first()
+                    dueUnits.clear()
+                    // Priority order so the most important items survive the daily cap, not just the
+                    // earliest-due ones: high-yield, weak/relearn, lapses, and how overdue they are.
+                    val prioritized = units.sortedByDescending { u ->
+                        var score = 0.0
+                        if (u.highYield) score += 100.0
+                        score += when (u.state) {
+                            "NeedsRelearn" -> 80.0
+                            "Learning" -> 40.0
+                            "Building" -> 20.0
+                            else -> 0.0
+                        }
+                        score += u.lapseCount * 10.0
+                        val overdueDays = (now - u.nextReviewAt) / 86400000.0
+                        if (overdueDays > 0) score += overdueDays * 5.0
+                        score
+                    }
+                    dueUnits.addAll(prioritized.take(limit))
+                    advanceUnit()
+                }
+            }
+            isLoading = false
+        }
+    }
+
+    private fun advanceUnit() {
+        if (dueUnits.isNotEmpty()) {
+            _currentUnit.value = dueUnits.removeAt(0)
+        } else {
+            _currentUnit.value = null
+        }
+        unitShownAt = System.currentTimeMillis()
+    }
+
+    /** Localized cause → effect line for the just-committed rating ("why is it scheduled there?"). */
+    private fun buildReasonText(
+        memory: MemoryRating,
+        understanding: UnderstandingRating,
+        highYield: Boolean,
+        intervalDays: Double,
+        firstStudy: Boolean,
+    ): String {
+        val fa = getApplication<android.app.Application>()
+            .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+            .getString("app_language", "en") == "fa"
+        val d = Math.round(intervalDays).toInt().coerceAtLeast(1)
+        val days = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر" else if (d <= 1) "in 1 day" else "in $d days"
+        val core = when {
+            firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else "Logged — first check-in $days."
+            memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else "Forgot — it's back tomorrow to relearn."
+            memory == MemoryRating.Hard -> if (fa) "سخت بود، پس فاصله کوتاه ماند — مرور بعدی $days." else "It felt hard, so the gap stayed short — next $days."
+            memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else "Easy — pushed out, next $days."
+            else -> if (fa) "خوب به یاد آوردی — مرور بعدی $days." else "Recalled well — next $days."
+        }
+        val note = if (memory != MemoryRating.Forgot && !firstStudy) when (understanding) {
+            UnderstandingRating.Confused -> if (fa) " چون گیج‌کننده بود، کمی زودتر." else " A bit sooner because it was confusing."
+            UnderstandingRating.Partial -> if (fa) " چون فهم ناقص بود، کمی زودتر." else " Slightly sooner for partial understanding."
+            else -> ""
+        } else ""
+        val yield = if (highYield && memory != MemoryRating.Forgot) (if (fa) " (فشرده‌تر چون مهم است.)" else " (Kept tighter — it's important.)") else ""
+        return core + note + yield
+    }
+
+    fun undoLastRating() {
+        if (isProcessing) return
+        val historyItem = ratedStack.removeLastOrNull() ?: return
+        isProcessing = true
+
+        viewModelScope.launch {
+            try {
+                // One transaction: restore the unit AND delete its log together (see undoReview).
+                repository.undoReview(historyItem.unitBeforeRating, historyItem.logId)
+                com.example.widget.DueWidgetProvider.updateAll(getApplication()) // undo changes the due count
+
+                // Counters adjust only AFTER the undo transaction succeeds (mirror of rateCurrentUnit).
+                canUndo = ratedStack.isNotEmpty()
+                sessionCount = (sessionCount - 1).coerceAtLeast(0)
+                when (historyItem.ratingGiven) {
+                    MemoryRating.Forgot -> sessionForgot = (sessionForgot - 1).coerceAtLeast(0)
+                    MemoryRating.Hard -> sessionHard = (sessionHard - 1).coerceAtLeast(0)
+                    MemoryRating.Good, MemoryRating.Easy -> sessionGood = (sessionGood - 1).coerceAtLeast(0)
+                }
+
+                val current = _currentUnit.value
+                if (current != null) {
+                    dueUnits.add(0, current)
+                }
+                _currentUnit.value = historyItem.unitBeforeRating
+            } catch (t: Throwable) {
+                ratedStack.add(historyItem) // undo failed: keep the history item so Undo stays possible
+            } finally {
+                isProcessing = false
+            }
+        }
+    }
+
+    fun rateCurrentUnit(memoryRating: MemoryRating, understandingRating: UnderstandingRating, understandingAsked: Boolean = true) {
+        if (isProcessing) return
+        val currentId = _currentUnit.value?.id ?: return
+        isProcessing = true
+
+        viewModelScope.launch {
+          try {
+            // Reload from the DB so edits made on the Edit screen aren't clobbered by a stale copy.
+            val unit = repository.getUnitById(currentId) ?: return@launch
+
+            val now = System.currentTimeMillis()
+            // Clamped: a future-dated topic reviewed early would otherwise log NEGATIVE elapsed days
+            // (the FSRS math clamps internally, but the log/export data must stay clean too).
+            val elapsedDays = ((now - (unit.lastReviewedAt ?: unit.studiedAt)) / 86400000.0).coerceAtLeast(0.0)
+
+            // Fresh first study (studied today) vs back-dated recall (honors elapsed time). Same rule is
+            // reused by the rating-correction replay so live and replayed schedules always agree.
+            val reviewNumber = MedScheduler.effectiveReviewNumber(unit.studiedAt, now, unit.reviewCount)
+
+            // Single source of truth: the same MedScheduler.review() that powers the button preview.
+            val outcome = MedScheduler.review(
+                stability = unit.stability,
+                difficulty = unit.difficulty,
+                elapsedDays = elapsedDays,
+                memoryRating = memoryRating,
+                understanding = understandingRating,
+                highYield = unit.highYield,
+                reviewNumber = reviewNumber,
+            )
+
+            // Deterministic ±5% fuzz (seeded by unit + prior review count) de-clumps cohorts; same
+            // value the preview buttons showed, and the same value the history replay will recompute.
+            val nextInterval = MedScheduler.fuzzedInterval(outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount)
+            val newReviewCount = unit.reviewCount + 1
+            val nextState = MedScheduler.masteryState(
+                stability = outcome.state.stability,
+                justForgot = memoryRating == MemoryRating.Forgot,
+            )
+
+            val updatedUnit = unit.copy(
+                lastReviewedAt = now,
+                nextReviewAt = now + (nextInterval * 86400000).toLong(),
+                currentIntervalDays = nextInterval,
+                reviewCount = newReviewCount,
+                lapseCount = if (memoryRating == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
+                state = nextState.name,
+                difficulty = outcome.state.difficulty,
+                stability = outcome.state.stability,
+                retrievability = outcome.retrievabilityAtReview,
+                updatedAt = now
+            )
+
+            val log = com.example.data.local.entity.ReviewLogEntity(
+                studyUnitId = unit.id,
+                reviewedAt = now,
+                memoryRating = memoryRating.name,
+                // Data honesty: when the understanding question was skipped (the Forgot fast-commit),
+                // record that it was never asked instead of fabricating an answer the user never gave.
+                understandingRating = if (understandingAsked) understandingRating.name else "NotAsked",
+                previousIntervalDays = unit.currentIntervalDays,
+                nextIntervalDays = nextInterval,
+                previousState = unit.state,
+                nextState = nextState.name,
+                retrievabilityAtReview = outcome.retrievabilityAtReview,
+                elapsedDays = elapsedDays,
+                // FIRST_STUDY rows carry a difficulty answer, not a recall grade — tagged so exports
+                // and calibration never mix the two signals.
+                logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
+                // Per-review context (v4): what the user actually chose + the settings in force —
+                // the data future weight-tuning can't backfill.
+                initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(memoryRating) else null,
+                reviewDurationMs = (now - unitShownAt).coerceIn(0L, 30 * 60 * 1000L),
+                wasImportantAtReview = if (unit.highYield) 1 else 0,
+                desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
+                schedulerVersion = MedScheduler.SCHEDULER_VERSION,
+            )
+            // Update the unit's schedule AND insert its log atomically (one Room transaction), then
+            // remember the exact log id so Undo deletes precisely this log.
+            val logId = repository.commitReview(updatedUnit, log)
+            // Session counters update only AFTER the commit succeeds — a failed write must never be
+            // counted as a completed review in the session summary.
+            sessionCount++
+            when (memoryRating) {
+                MemoryRating.Forgot -> sessionForgot++
+                MemoryRating.Hard -> sessionHard++
+                MemoryRating.Good, MemoryRating.Easy -> sessionGood++
+            }
+            ratedStack.add(ReviewHistoryItem(unit.copy(), logId, memoryRating))
+            canUndo = ratedStack.isNotEmpty()
+            com.example.widget.DueWidgetProvider.updateAll(getApplication())
+            lastReason = buildReasonText(memoryRating, understandingRating, unit.highYield, nextInterval, reviewNumber == 0)
+
+            advanceUnit()
+          } catch (t: Throwable) {
+            // Persistence failed: nothing was counted, the card stays current, and the user sees why
+            // instead of the app silently losing (or worse, crashing over) a review.
+            lastReason = if (getApplication<android.app.Application>()
+                    .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                    .getString("app_language", "en") == "fa"
+            ) "ذخیرهٔ این مرور ناموفق بود — مبحث تغییری نکرد. دوباره تلاش کن." else "This review couldn't be saved — the topic is unchanged. Please try again."
+          } finally {
+            isProcessing = false
+          }
+        }
+    }
+
+    /**
+     * "Not today" for the current topic: move it to tomorrow morning WITHOUT logging a review, so the
+     * FSRS memory state is untouched. It leaves today's queue and returns tomorrow.
+     */
+    fun procrastinateCurrentUnit() {
+        if (isProcessing) return
+        val currentId = _currentUnit.value?.id ?: return
+        isProcessing = true
+        viewModelScope.launch {
+            try {
+                val unit = repository.getUnitById(currentId) ?: return@launch
+                val tomorrow = java.util.Calendar.getInstance().apply {
+                    add(java.util.Calendar.DAY_OF_YEAR, 1)
+                    set(java.util.Calendar.HOUR_OF_DAY, 8)
+                    set(java.util.Calendar.MINUTE, 0)
+                    set(java.util.Calendar.SECOND, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                repository.updateUnit(unit.copy(nextReviewAt = tomorrow, updatedAt = System.currentTimeMillis()))
+                repository.logEvent("PROCRASTINATE", unitId = unit.id, detail = "${unit.nextReviewAt}->$tomorrow")
+                com.example.notifications.NotificationScheduler.scheduleDailyReminder(getApplication())
+                com.example.widget.DueWidgetProvider.updateAll(getApplication())
+                advanceUnit()
+            } finally {
+                isProcessing = false
+            }
+        }
+    }
+}
+
+@Composable
+fun ReviewSessionScreen(
+    repository: MedReviewRepository,
+    unitId: Long = -1L,
+    onNavigateToEdit: (Long) -> Unit,
+    onFinish: () -> Unit
+) {
+    val context = LocalContext.current
+    val application = context.applicationContext as android.app.Application
+    val viewModel: ReviewViewModel = viewModel(factory = ReviewViewModelFactory(application, repository))
+    
+    LaunchedEffect(unitId) {
+        val endOfDay = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 23)
+            set(java.util.Calendar.MINUTE, 59)
+            set(java.util.Calendar.SECOND, 59)
+        }.timeInMillis
+        viewModel.loadNext(endOfDay, unitId = unitId)
+    }
+    
+    val currentUnitState by viewModel.currentUnit.collectAsStateWithLifecycle()
+    val subjects by viewModel.subjects.collectAsStateWithLifecycle()
+    val strings = com.example.ui.i18n.LocalStrings.current
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // Localized numerals: Persian digits in fa, Latin otherwise.
+    val num: (Any) -> String = { if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(it.toString()) else it.toString() }
+    
+    var showNotes by remember(currentUnitState) { mutableStateOf(false) }
+    var selectedMemory by remember(currentUnitState) { mutableStateOf<MemoryRating?>(null) }
+
+    // Back steps BACKWARDS through the rating flow and cancels — nothing is committed to the DB until
+    // the understanding rating is tapped. So leaving mid-rating (difficulty chosen, understanding not)
+    // never counts as a review. At the first step, back exits the session.
+    androidx.activity.compose.BackHandler {
+        when {
+            selectedMemory != null -> selectedMemory = null   // understanding step -> back to difficulty
+            showNotes -> showNotes = false                    // difficulty step -> back to recall prompt
+            else -> onFinish()                                // recall step -> exit session
+        }
+    }
+
+    // "Why scheduled?" — the reason line appears briefly after each rating (calm, dismissible),
+    // teaching cause → effect so the schedule feels explainable instead of arbitrary.
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+    LaunchedEffect(viewModel.lastReason) {
+        viewModel.lastReason?.let { reason ->
+            viewModel.consumeReason()
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(reason, duration = androidx.compose.material3.SnackbarDuration.Short)
+        }
+    }
+
+    Scaffold(snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) }) { padding ->
+        val currentUnit = currentUnitState
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (currentUnit == null && viewModel.isLoading) {
+                Spacer(modifier = Modifier.weight(1f))
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.weight(1f))
+            } else if (currentUnit == null) {
+                Spacer(modifier = Modifier.weight(1f))
+                Text(strings.sessionComplete, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Expose session stats as an elegant summary card:
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = if (strings.languageCode == "fa") "خلاصه جلسه مرور" else "Session summary",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(text = num(viewModel.sessionCount), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                Text(text = if (strings.languageCode == "fa") "کل مرورها" else "Reviewed", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(text = num(viewModel.sessionGood), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.secondary)
+                                Text(text = if (strings.languageCode == "fa") "آسان/خوب" else "Good/Easy", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(text = num(viewModel.sessionHard), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Hard).solid)
+                                Text(text = if (strings.languageCode == "fa") "سخت" else "Hard", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(text = num(viewModel.sessionForgot), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Forgot).solid)
+                                Text(text = if (strings.languageCode == "fa") "فراموش شده" else "Forgot", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(32.dp))
+                Button(
+                    onClick = onFinish, 
+                    modifier = Modifier.fillMaxWidth(0.6f).heightIn(min = 56.dp),
+                    shape = RoundedCornerShape(percent = 50)
+                ) {
+                    Text(strings.done, style = MaterialTheme.typography.titleMedium)
+                }
+                Spacer(modifier = Modifier.weight(1f))
+            } else {
+                val formattedState = strings.stateLabel(currentUnit.state)
+                val subject = subjects.find { it.id == currentUnit.subjectId }
+                // First study (studied today, never reviewed) vs a recall review (back-dated or later).
+                val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.studiedAt, System.currentTimeMillis(), currentUnit.reviewCount)
+                val isFreshFirstStudy = previewReviewNumber == 0
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val isFarsi = strings.languageCode == "fa"
+                    TextButton(onClick = onFinish) {
+                        Text(if (isFarsi) "پایان" else "Done")
+                    }
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (subject?.colorHex != null) {
+                            Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(subject.colorHex)) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        Text(
+                            text = "${(subject?.name ?: currentUnit.studyType).uppercase()} • ${formattedState.uppercase()}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            // Tracking helps ALL-CAPS Latin labels but breaks Arabic-script letter joining.
+                            letterSpacing = if (strings.languageCode == "fa") 0.sp else 1.sp
+                        )
+                    }
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (viewModel.canUndo) {
+                            IconButton(enabled = !viewModel.isProcessing, onClick = {
+                                viewModel.undoLastRating()
+                                showNotes = false
+                                selectedMemory = null
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Undo,
+                                    contentDescription = "Undo Last Rating",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        IconButton(onClick = { onNavigateToEdit(currentUnit.id) }) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = if (strings.languageCode == "fa") "ویرایش مبحث" else "Edit topic", // not a flashcard app
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        // Study-count badge: count the original study too if this topic was back-dated
+                        // (studied before it was added), so a back-dated topic's first review reads "2nd study".
+                        val studiedBeforeAdded = isEarlierLocalDay(currentUnit.studiedAt, currentUnit.createdAt)
+                        val repNum = currentUnit.reviewCount + 1 + (if (studiedBeforeAdded) 1 else 0)
+                        val formattedStage = strings.stateLabel(currentUnit.state)
+                        
+                        val lastDateStr = currentUnit.lastReviewedAt?.let {
+                            val diffMs = System.currentTimeMillis() - it
+                            val hrs = (diffMs / 3600000).toInt()
+                            if (hrs < 1) {
+                                val mins = (diffMs / 60000).toInt()
+                                if (mins < 1) {
+                                    if (strings.languageCode == "fa") "همین الان" else "just now"
+                                } else {
+                                    if (strings.languageCode == "fa") "${num(mins)} دقیقه پیش" else "${mins}m ago"
+                                }
+                            } else if (hrs < 24) {
+                                if (strings.languageCode == "fa") "${num(hrs)} ساعت پیش" else "${hrs}h ago"
+                             } else {
+                                val days = hrs / 24
+                                if (strings.languageCode == "fa") "${num(days)} روز پیش" else "${days}d ago"
+                            }
+                        } ?: (if (strings.languageCode == "fa") "هرگز" else "Never")
+
+                        val intervalStr = if (currentUnit.currentIntervalDays <= 0.0) {
+                            if (strings.languageCode == "fa") "۰ روز" else "0 days"
+                        } else {
+                            val rounded = (currentUnit.currentIntervalDays * 10).toInt() / 10.0
+                            if (strings.languageCode == "fa") "${num(rounded)} روز" else "$rounded days"
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                ),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    text = when {
+                                        isFreshFirstStudy && strings.languageCode == "fa" -> "مطالعه‌ی اول"
+                                        isFreshFirstStudy -> "First study"
+                                        strings.languageCode == "fa" -> "مطالعه‌ی ${num(repNum)}‌اُم"
+                                        else -> "${ordinalEn(repNum)} study"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                            
+                            Text(
+                                text = "${if (strings.languageCode == "fa") "مرحله" else "Stage"}: $formattedStage",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                        
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${if (strings.languageCode == "fa") "فاصله" else "Interval"}: $intervalStr",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                            Text(
+                                text = "${if (strings.languageCode == "fa") "آخرین" else "Last"}: $lastDateStr",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                        
+                        HorizontalDivider()
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = currentUnit.title,
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                        
+                        if (!currentUnit.recallPrompt.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Text(
+                                text = currentUnit.recallPrompt!!,
+                                style = MaterialTheme.typography.titleMedium,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(32.dp))
+                        
+                        if (!showNotes && !isFreshFirstStudy) {
+                            Text(
+                                strings.recallFirstPrompt,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                        } else {
+                            if (!currentUnit.notes.isNullOrBlank()) {
+                                HorizontalDivider()
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = currentUnit.notes!!,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            if (!currentUnit.source.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                val src = currentUnit.source!!.trim()
+                                // Bare domains ("wikipedia.org/...") open too — normalized to https.
+                                // A source with spaces is prose (book/page), not a link.
+                                val openUrl = when {
+                                    src.startsWith("http://") || src.startsWith("https://") -> src
+                                    "." in src && " " !in src -> "https://$src"
+                                    else -> null
+                                }
+                                Text(
+                                    text = src,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (openUrl != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = if (openUrl != null) {
+                                        Modifier.fillMaxWidth().clickable { runCatching { uriHandler.openUri(openUrl) } }
+                                    } else {
+                                        Modifier.fillMaxWidth()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (isFreshFirstStudy && selectedMemory == null) {
+                    // FIRST STUDY: you just studied this today — rate how hard the topic was (not recall).
+                    Text(if (strings.languageCode == "fa") "این مبحث چقدر سخت بود؟" else "How difficult was this topic?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    // Retrieval nudge: a rating that follows a real recall attempt is far more diagnostic
+                    // than a "felt fluent while reading" judgment. Costs nothing, reinforces active recall.
+                    Text(
+                        // Semantically honest: minutes after studying, "recall without looking" is a
+                        // fluency check, not delayed retrieval. Frame it as the check-in it really is.
+                        if (strings.languageCode == "fa") "این ثبت اولیه، اولین مرور را تنظیم می‌کند — سنجش واقعی حافظه از مرور بعدی و پس از گذشت زمان شروع می‌شود." else "This check-in sets your first review — real memory testing starts next time, after time has passed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        // Difficulty maps to the FSRS initial grade: an easy topic gets a longer first gap.
+                        // Same warm→cool ramp as recall: Easy = steel (cool), Medium = sage, Hard = ochre.
+                        listOf(MemoryRating.Easy, MemoryRating.Good, MemoryRating.Hard).forEach { rating ->
+                            val tone = com.example.ui.theme.ratingTone(rating)
+                            Button(
+                                onClick = { selectedMemory = rating },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tone.container,
+                                    contentColor = tone.onContainer,
+                                ),
+                                modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    when (rating) {
+                                        MemoryRating.Easy -> if (strings.languageCode == "fa") "آسان" else "Easy"
+                                        MemoryRating.Good -> if (strings.languageCode == "fa") "متوسط" else "Medium"
+                                        else -> if (strings.languageCode == "fa") "سخت" else "Hard"
+                                    },
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else if (!isFreshFirstStudy && !showNotes) {
+                    Button(
+                        onClick = { showNotes = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 56.dp),
+                        shape = RoundedCornerShape(percent = 50)
+                    ) {
+                        Text(strings.showNotes, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(
+                        onClick = {
+                            viewModel.procrastinateCurrentUnit()
+                            showNotes = false
+                            selectedMemory = null
+                        },
+                        enabled = !viewModel.isProcessing,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(strings.notToday)
+                    }
+                } else if (selectedMemory == null) {
+                    Text(strings.memoryRating, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        MemoryRating.entries.forEach { rating ->
+                            // No interval on the memory buttons: the final interval also depends on
+                            // the understanding rating (chosen next), so it's shown on those buttons.
+                            // Warm→cool rating ramp; "Forgot" is calm sienna, never alarm-red.
+                            val tone = com.example.ui.theme.ratingTone(rating)
+                            Button(
+                                onClick = {
+                                    if (rating == MemoryRating.Forgot) {
+                                        // Forgot → relearn tomorrow regardless of understanding, so commit
+                                        // now and skip that moot second question (less friction on a miss).
+                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        viewModel.rateCurrentUnit(MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false)
+                                    } else {
+                                        selectedMemory = rating
+                                    }
+                                },
+                                enabled = !viewModel.isProcessing,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = tone.container,
+                                    contentColor = tone.onContainer,
+                                ),
+                                modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    when(rating) {
+                                        MemoryRating.Forgot -> strings.ratingFail
+                                        MemoryRating.Hard -> strings.ratingHard
+                                        MemoryRating.Good -> strings.ratingGood
+                                        MemoryRating.Easy -> strings.ratingEasy
+                                    },
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Text(strings.understandingRating, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        UnderstandingRating.entries.forEach { rating ->
+                            val now = System.currentTimeMillis()
+                            val elapsedDays = (now - (currentUnit.lastReviewedAt ?: currentUnit.studiedAt)) / 86400000.0
+                            // Both choices are known here, so this is the actual interval that commits
+                            // (including the same deterministic fuzz the commit path applies).
+                            val previewOutcome = MedScheduler.review(
+                                stability = currentUnit.stability,
+                                difficulty = currentUnit.difficulty,
+                                elapsedDays = elapsedDays,
+                                memoryRating = selectedMemory!!,
+                                understanding = rating,
+                                highYield = currentUnit.highYield,
+                                reviewNumber = previewReviewNumber,
+                            )
+                            val finalInterval = MedScheduler.fuzzedInterval(
+                                previewOutcome.intervalDays,
+                                previewOutcome.baseIntervalDays,
+                                currentUnit.id,
+                                currentUnit.reviewCount,
+                            )
+                            val intervalStr = if (finalInterval < 1.0) {
+                                val hrs = (finalInterval * 24).toInt()
+                                if (hrs < 1) "<1h" else "${hrs}h"
+                            } else {
+                                "${(finalInterval * 10).toInt() / 10.0}d".replace(".0d", "d")
+                            }
+                            Button(
+                                onClick = {
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    viewModel.rateCurrentUnit(selectedMemory!!, rating)
+                                },
+                                enabled = !viewModel.isProcessing,
+                                modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    "${
+                                        when(rating) {
+                                            UnderstandingRating.Confused -> strings.urConfused
+                                            UnderstandingRating.Partial -> strings.urPartial
+                                            UnderstandingRating.Clear -> strings.urClear
+                                            else -> rating.name
+                                        }
+                                    }\n$intervalStr",
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget background: brand sage with rounded corners ("Quiet Momentum"); reads well on any wallpaper
+     and in both light/dark modes, so no per-mode variant is needed. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#4E7A5A" />
+    <corners android:radius="24dp" />
+</shape>
