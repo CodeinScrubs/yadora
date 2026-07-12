@@ -19,7 +19,8 @@ import com.example.domain.model.UnderstandingRating
  *     - UNDERSTANDING is a transparent product-layer multiplier applied ON TOP of the FSRS interval
  *       (Clear keeps it, Partial ~90%, Confused ~80%). You remembered it, but if you didn't really
  *       understand it, it comes back sooner. This never contaminates the FSRS memory state.
- *  3. High-yield items schedule for a slightly higher desired retention (tighter, principled).
+ *  3. High-yield items schedule for a higher desired retention (~30% shorter intervals — see
+ *     [HIGH_YIELD_RETENTION] for the honest math).
  *
  * Preview and commit go through the SAME [review] call, so the interval is consistent.
  * Exam-deadline compression is a Phase 3 feature.
@@ -29,7 +30,12 @@ object MedScheduler {
     /** Target recall probability for ordinary items. */
     const val BASE_RETENTION = 0.90
 
-    /** Tighter target for high-yield items: they recur a little sooner. */
+    /**
+     * Tighter target for high-yield items. Deliberate and NOT subtle: on the FSRS forgetting curve,
+     * 0.93 vs 0.90 shortens intervals by roughly a third (ln 0.93 / ln 0.90 ≈ 0.69), i.e. important
+     * topics come back ~30% sooner and cost ~40–50% more reviews. That extra workload IS the feature —
+     * "important" should mean "seen more often" — but keep the trade-off in mind before widening it.
+     */
     const val HIGH_YIELD_RETENTION = 0.93
 
     /** User-chosen desired retention (0.85..0.95), set from Settings at startup; defaults to BASE. */

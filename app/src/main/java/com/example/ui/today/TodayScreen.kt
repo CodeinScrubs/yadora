@@ -103,6 +103,11 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // -1 = not loaded yet: the first-run welcome must never flash for an existing user while the DB
+    // is still emitting, so the UI only treats a REAL 0 as "library is empty".
+    val totalActive: StateFlow<Int> = repository.totalActiveCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
+
     fun redistributeOverdueUnits(context: android.content.Context) {
         viewModelScope.launch {
             val overdueList = overdueUnits.value
@@ -155,6 +160,7 @@ fun TodayScreen(
     val dueToday by viewModel.dueTodayUnits.collectAsStateWithLifecycle()
     val upcoming by viewModel.upcomingUnits.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
+    val totalActive by viewModel.totalActive.collectAsStateWithLifecycle()
         val strings = com.example.ui.i18n.LocalStrings.current
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
 
@@ -341,24 +347,47 @@ fun TodayScreen(
                                     .padding(20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text(
-                                    text = if (isFarsi) "برای امروز تمام شد" else "All caught up for today",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                // Honest next-review line: the real date of the next upcoming item,
-                                // not a hardcoded "tomorrow" (which was simply wrong for longer gaps).
-                                val nextUp = upcoming.firstOrNull()
-                                Text(
-                                    text = if (nextUp == null) (if (isFarsi) "فعلاً چیزی در برنامه نیست." else "Nothing scheduled yet.")
-                                           else (if (isFarsi) "مرور بعدی: " else "Next review: ") + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
+                                // First run (library truly empty, count loaded): "caught up" would be
+                                // confusing before anything was ever added — greet and point at "+".
+                                if (totalActive == 0) {
+                                    Text(
+                                        text = when (strings.languageCode) { "fa" -> "به یادورا خوش آمدی"; "de" -> "Willkommen bei Yadora"; else -> "Welcome to Yadora" },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = when (strings.languageCode) {
+                                            "fa" -> "اولین مبحثی که خوانده‌ای را با دکمهٔ + ثبت کن؛ برنامهٔ مرورش از همان‌جا ساخته می‌شود."
+                                            "de" -> "Tippe auf +, um dein erstes gelerntes Thema einzutragen — Yadora plant die Wiederholungen ab dort."
+                                            else -> "Tap + to log the first topic you studied — Yadora schedules its reviews from there."
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                } else {
+                                    Text(
+                                        text = if (isFarsi) "برای امروز تمام شد" else "All caught up for today",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    // Honest next-review line: the real date of the next upcoming item,
+                                    // not a hardcoded "tomorrow" (which was simply wrong for longer gaps).
+                                    val nextUp = upcoming.firstOrNull()
+                                    Text(
+                                        text = if (nextUp == null) (if (isFarsi) "فعلاً چیزی در برنامه نیست." else "Nothing scheduled yet.")
+                                               else (if (isFarsi) "مرور بعدی: " else "Next review: ") + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
                             }
                         }
                     }
