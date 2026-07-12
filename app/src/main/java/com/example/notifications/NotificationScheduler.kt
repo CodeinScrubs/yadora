@@ -252,22 +252,26 @@ object NotificationScheduler {
         val count = due.size
         val hy = due.count { it.second }
 
+        val isDe = (sp.getString("app_language", "en") ?: "en") == "de"
         val title = when {
-            count <= 0 -> if (isFa) "زمان مرور فرا رسیده!" else "Time to review!"
+            count <= 0 -> if (isFa) "زمان مرور فرا رسیده!" else if (isDe) "Zeit zum Wiederholen!" else "Time to review!"
             isFa -> "${n(count)} مبحث برای مرور"
+            isDe -> if (count == 1) "1 Thema zur Wiederholung" else "$count Themen zur Wiederholung"
             else -> "$count ${if (count == 1) "topic" else "topics"} to review"
         }
         val text = when {
-            hy > 0 -> if (isFa) "${n(hy)} مبحث مهم" else "$hy important"
-            count > 0 -> if (isFa) "برای مرور آماده‌اند." else "Ready when you are."
-            else -> if (isFa) "مباحثی برای مرور آماده‌اند." else "You have study topics ready to review."
+            hy > 0 -> if (isFa) "${n(hy)} مبحث مهم" else if (isDe) "$hy wichtig" else "$hy important"
+            count > 0 -> if (isFa) "برای مرور آماده‌اند." else if (isDe) "Bereit, wenn du es bist." else "Ready when you are."
+            else -> if (isFa) "مباحثی برای مرور آماده‌اند." else if (isDe) "Themen sind bereit zur Wiederholung." else "You have study topics ready to review."
         }
-        val reviewNowLabel = if (isFa) "مرور" else "Review now"
-        val snoozeLabel = if (isFa) "بعداً" else "Snooze"
-        val notTodayLabel = if (isFa) "امروز نه" else "Not today"
+        val reviewNowLabel = if (isFa) "مرور" else if (isDe) "Jetzt wiederholen" else "Review now"
+        val snoozeLabel = if (isFa) "بعداً" else if (isDe) "Später" else "Snooze"
+        val notTodayLabel = if (isFa) "امروز نه" else if (isDe) "Heute nicht" else "Not today"
 
         val openIntent = Intent(context, com.example.MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            // SINGLE_TOP (not CLEAR_TASK): if the app is already open, deliver via onNewIntent — which
+            // MainActivity implements for open_review — instead of destroying in-progress UI state.
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("open_review", true)
         }
         val openPi = PendingIntent.getActivity(
@@ -312,6 +316,15 @@ object NotificationScheduler {
             val body = due.take(5).joinToString("\n") { "• ${it.first}" } + if (count > 5) "\n…" else ""
             builder.setStyle(NotificationCompat.BigTextStyle().bigText(body))
             builder.addAction(0, notTodayLabel, notTodayPi)
+            // Lock-screen privacy: what the user studies is their business. The public (locked) version
+            // shows only the count; topic titles appear after unlock.
+            val publicVersion = NotificationCompat.Builder(context, channel)
+                .setSmallIcon(com.example.R.drawable.ic_notification)
+                .setColor(0xFF4E7A5A.toInt())
+                .setContentTitle(title)
+                .setContentText(if (isFa) "برای دیدن مباحث، قفل را باز کن." else if (isDe) "Entsperren, um die Themen zu sehen." else "Unlock to see your topics.")
+                .build()
+            builder.setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(publicVersion)
         }
         if (alarmMode) {
             // Full-screen "alarm clock": fires AlarmRingActivity over the lock screen and rings.

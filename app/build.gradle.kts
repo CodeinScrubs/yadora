@@ -29,13 +29,21 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // Only wire release signing when the credentials actually exist. Otherwise assembleRelease/bundleRelease
+  // fails EARLY with a clear message instead of dying mid-build on a null password or a missing keystore
+  // (or, worse, quietly depending on a file that only exists on one machine).
+  val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+  val hasReleaseSigning = file(keystorePath).exists() &&
+    System.getenv("STORE_PASSWORD") != null && System.getenv("KEY_PASSWORD") != null
+
   signingConfigs {
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+    if (hasReleaseSigning) {
+      create("release") {
+        storeFile = file(keystorePath)
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
+      }
     }
   }
 
@@ -45,7 +53,12 @@ android {
       isMinifyEnabled = true
       isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      if (hasReleaseSigning) {
+        signingConfig = signingConfigs.getByName("release")
+      }
+      // No signing config otherwise: the release artifact builds UNSIGNED and Android Studio's own
+      // "Generate Signed Bundle/APK" wizard (or env vars KEYSTORE_PATH/STORE_PASSWORD/KEY_PASSWORD)
+      // provides the identity at release time.
     }
     debug {
       // Uses Android's default debug signing (~/.android/debug.keystore), auto-created by Android Studio.

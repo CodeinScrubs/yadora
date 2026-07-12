@@ -502,7 +502,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     var langExpanded by remember { mutableStateOf(false) }
                     Box {
                         TextButton(onClick = { langExpanded = true }) {
-                            Text(if (language == "fa") strings.persianLanguage else strings.englishLanguage)
+                            Text(when (language) { "fa" -> strings.persianLanguage; "de" -> strings.germanLanguage; else -> strings.englishLanguage })
                         }
                         DropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
                             DropdownMenuItem(text = { Text(strings.englishLanguage) }, onClick = {
@@ -514,6 +514,12 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             DropdownMenuItem(text = { Text(strings.persianLanguage) }, onClick = {
                                 language = "fa"
                                 sharedPrefs.edit().putString("app_language", "fa").apply()
+                                langExpanded = false
+                                onLanguageChange(language)
+                            })
+                            DropdownMenuItem(text = { Text(strings.germanLanguage) }, onClick = {
+                                language = "de"
+                                sharedPrefs.edit().putString("app_language", "de").apply()
                                 langExpanded = false
                                 onLanguageChange(language)
                             })

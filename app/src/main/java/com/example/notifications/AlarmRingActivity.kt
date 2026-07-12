@@ -151,7 +151,9 @@ class AlarmRingActivity : ComponentActivity() {
         runCatching {
             startActivity(
                 android.content.Intent(this, com.example.MainActivity::class.java).apply {
-                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    // SINGLE_TOP (not CLEAR_TASK): reuse a running MainActivity via onNewIntent
+                    // instead of destroying whatever the user had open.
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_review", true)
                 }
             )

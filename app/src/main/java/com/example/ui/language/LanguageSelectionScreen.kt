@@ -83,6 +83,24 @@ fun LanguageSelectionScreen(onLanguageSelected: (String) -> Unit) {
             )
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedCard(
+            onClick = { selectedLang = "de" },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.outlinedCardColors(
+                containerColor = if (selectedLang == "de") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Text(
+                "Deutsch (German)",
+                modifier = Modifier.padding(16.dp),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (selectedLang == "de") FontWeight.Bold else FontWeight.Normal
+            )
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
 
         Button(

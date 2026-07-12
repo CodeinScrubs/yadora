@@ -62,7 +62,11 @@ class MainActivity : ComponentActivity() {
 
       MyApplicationTheme(darkTheme = darkTheme, accent = accent, languageCode = currentLanguage) {
         val layoutDirection = if (currentLanguage == "fa") androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr
-        val appStrings = if (currentLanguage == "fa") com.example.ui.i18n.PersianStrings else com.example.ui.i18n.EnglishStrings
+        val appStrings = when (currentLanguage) {
+            "fa" -> com.example.ui.i18n.PersianStrings
+            "de" -> com.example.ui.i18n.GermanStrings
+            else -> com.example.ui.i18n.EnglishStrings
+        }
         
         val useJalali = when (calendarFormat) { "jalali" -> true; "gregorian" -> false; else -> currentLanguage == "fa" }
         androidx.compose.runtime.CompositionLocalProvider(

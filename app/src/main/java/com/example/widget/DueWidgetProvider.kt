@@ -62,7 +62,9 @@ class DueWidgetProvider : AppWidgetProvider() {
             }
 
             val openIntent = Intent(context, com.example.MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                // SINGLE_TOP (not CLEAR_TASK): reuse a running MainActivity via onNewIntent
+                // instead of destroying whatever the user had open.
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 // One-tap studying: when reviews are waiting, the widget goes straight into the
                 // review session instead of just opening the app.
                 if (due > 0) putExtra("open_review", true)

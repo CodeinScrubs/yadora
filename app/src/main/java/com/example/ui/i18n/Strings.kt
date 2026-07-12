@@ -93,6 +93,7 @@ data class AppStrings(
     val language: String = "Language",
     val persianLanguage: String = "فارسی (Persian)",
     val englishLanguage: String = "English",
+    val germanLanguage: String = "Deutsch (German)",
     val soundVibration: String = "Sound & Vibration",
     val reminderSound: String = "Reminder Sound",
     val vibration: String = "Vibration",
@@ -243,6 +244,126 @@ val PersianStrings = AppStrings(
     ratingEasy = "آسان",
 )
 
+val GermanStrings = AppStrings(
+    // Global
+    languageCode = "de",
+    cancel = "Abbrechen",
+    delete = "Löschen",
+    save = "Speichern",
+    done = "Fertig",
+    selectAll = "Alle auswählen",
+    notToday = "Heute nicht",
+
+    // Bottom Nav
+    navToday = "Heute",
+    navLibrary = "Bibliothek",
+    navAdd = "Hinzufügen",
+    navProgress = "Fortschritt",
+    navSettings = "Einstellungen",
+
+    // Today Screen
+    todayDateTitle = "Heutige Wiederholung",
+    overdue = "ÜBERFÄLLIG",
+    priorityFocus = "PRIORITÄT",
+    upcoming = "ANSTEHEND",
+    noDueItems = "Keine fälligen Themen.",
+    noUpcomingItems = "Keine anstehenden Themen.",
+    todayEstTime = "ca. %d Min.",
+    startReview = "Wiederholung starten",
+    nextReview = "Nächste: %s",
+    sessionComplete = "Sitzung abgeschlossen",
+    timeLabel = "Zeit",
+
+    // Understanding Ratings
+    urConfused = "Unklar",
+    urPartial = "Teilweise",
+    urClear = "Klar",
+
+    // Add Screen
+    addEditTopic = "Thema bearbeiten",
+    addNewTopic = "Neues Thema",
+    topicTitleLabel = "Thementitel (z. B. Photosynthese)",
+    subjectFolder = "Fach / Ordner",
+    noSubject = "Kein Fach",
+    addNewSubject = "+ Neues Fach",
+    subjectName = "Fachname",
+    newSubjectTitle = "Neues Fach",
+    add = "Hinzufügen",
+    highYieldTopic = "Wichtiges Thema",
+    activeRecallPrompt = "Aktive Abruffrage",
+    activeRecallPlaceholder = "Was ist der grundlegende Mechanismus …?",
+    notesExplanation = "Notizen / Erklärung",
+    notesPlaceholder = "Wichtige Details zum Merken …",
+    reviewLogs = "Wiederholungsverlauf",
+    neverReviewed = "Noch nie wiederholt",
+    scheduling = "Zeitplanung",
+    lastStudiedAdded = "Zuletzt gelernt / hinzugefügt",
+    today = "Heute",
+    nextReviewDate = "Nächster Wiederholungstermin",
+    defaultTomorrow = "Standard (morgen)",
+    okBtn = "OK",
+    appName = "Yadora",
+
+    // Library Screen
+    library = "Bibliothek",
+    searchUnits = "Themen durchsuchen …",
+    itemsCount = "%d Einträge",
+    deleteTopic = "Thema löschen?",
+    deleteTopicConfirm = "„%s“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
+    archiveTopicConfirm = "„%s“ archivieren? Du kannst es jederzeit aus dem Archiv wiederherstellen.",
+    restoreTopicConfirm = "„%s“ zurück in deine aktive Bibliothek holen?",
+
+    // Progress Screen
+    progress = "Fortschritt",
+    overview = "Überblick",
+    activeTopics = "Aktive Themen",
+    highYield = "Wichtig",
+    needsRelearn = "Neu lernen",
+    knowledgeState = "Wissensstand",
+    totalTopics = "Themen gesamt",
+    past7days = "Wiederholungen (7 Tage)",
+    strong = "Gefestigt",
+    learning = "Im Lernen",
+
+    // Settings Screen
+    settings = "Einstellungen",
+    notifications = "Benachrichtigungen",
+    dailyReviewReminder = "Tägliche Erinnerung",
+    dailyReviewReminderTime = "täglich 20:00 Uhr",
+    appearanceRegion = "Darstellung & Region",
+    language = "Sprache",
+    persianLanguage = "فارسی (Persisch)",
+    englishLanguage = "English",
+    germanLanguage = "Deutsch",
+    soundVibration = "Ton & Vibration",
+    reminderSound = "Erinnerungston",
+    vibration = "Vibration",
+    algorithmControl = "Algorithmus",
+    spacedRepAlgorithm = "Spaced-Repetition-Algorithmus",
+    algorithmDesc = "Yadora nutzt %s, um dein Behalten zu optimieren. Deine Themen werden anhand deiner Abruf-Bewertungen geplant.",
+    limitsConstraints = "Limits",
+    dailyReviewLimit = "Tägliches Wiederholungslimit",
+    appSubtitle = "Für ernsthafte Lernende.",
+
+    // Language Selection Screen
+    selectLanguage = "Select Language / انتخاب زبان",
+    continueBtn = "Weiter",
+
+    // Review Session Screen
+    showNotes = "Notizen anzeigen",
+    memoryRating = "Erinnerung",
+    understandingRating = "Verständnis",
+    recallFirstPrompt = "Erst abrufen: Erkläre aus dem Gedächtnis, bevor du nachliest.",
+    dueNow = "Jetzt fällig",
+    needsRelearnState = "Neu lernen",
+
+    // Ratings
+    ratingFail = "Vergessen", // never "Fehler" — forgetting is data, not failure (no-shame rule)
+    ratingHard = "Schwer",
+    ratingGood = "Gut",
+    ratingEasy = "Leicht",
+)
+
 val LocalStrings = staticCompositionLocalOf { EnglishStrings }
 
 /**
@@ -254,7 +375,7 @@ fun AppStrings.stateLabel(state: String): String = when (state) {
     "NeedsRelearn" -> needsRelearnState
     "Strong" -> strong
     "Learning" -> learning
-    "Building" -> if (languageCode == "fa") "در حال ساخت" else "Building"
-    "New" -> if (languageCode == "fa") "جدید" else "New"
+    "Building" -> when (languageCode) { "fa" -> "در حال ساخت"; "de" -> "Im Aufbau"; else -> "Building" }
+    "New" -> when (languageCode) { "fa" -> "جدید"; "de" -> "Neu"; else -> "New" }
     else -> state
 }
