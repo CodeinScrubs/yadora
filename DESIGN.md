@@ -180,3 +180,35 @@ UI (no hollow "no items" boxes) · every item self-explains in one sentence · f
   real weak-topic ranking; i18n cleanup (kill the `cancel == "لغو"` hack, move all literals into AppStrings).
 
 Each phase behind a Room migration.
+
+---
+
+## 8. v2 candidate ideas (curated from external reviews, 2026-07)
+
+Two long external reviews proposed full redesigns. Most of their content was either already
+implemented, contradicted settled decisions (see CLAUDE.md), or v1 bloat — but these ideas are
+genuinely worth considering for v2. Kept here so they aren't lost:
+
+- **Split `nextReviewAt` into `modelDueAt` + `deferredUntil`.** Today "Not today"/redistribute
+  overwrite the model's due date (event log partially compensates). Separating "what the memory
+  model said" from "what the user chose" makes deferral honest and calibration cleaner. Needs a
+  migration + touch of every due-date read.
+- **Batch commitment + in-progress resume.** Commit to min(batchSize, dueCount) per session;
+  closing the app preserves the batch and completed reviews; resume later. Better than the daily
+  cap for habit psychology.
+- **Capped lateness credit.** A successful very-late review currently gets full elapsed-time
+  stability credit; capping the bonus (e.g. +25% of scheduled interval) is a defensible hypothesis.
+  Must be versioned per log — breaks replay otherwise.
+- **Split-topic suggestion.** After repeated Easy↔Forgot reversals on one topic, gently suggest
+  splitting it (never automatic). Good fit for the topic-level model.
+- **Policy versioning per log** (`schedulerPolicyVersion`, factor snapshot or config hash), so a
+  future change to understanding factors doesn't silently rewrite replayed history.
+- **DB-level duplicate uniqueness** on (subjectId, NFKC-normalized title) instead of the current
+  app-side check; add fuzzy-similarity warnings.
+- **Scheduler interface extraction** (`TopicScheduler` with modelVersion) to slot FSRS-6 in when
+  per-user data exists to justify it.
+
+Explicitly rejected for any version (re-litigated multiple times): first rating at Add time;
+"Forgot" in red; removing the retention slider; ABORT on log insert (REPLACE is the replay
+mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
+streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
