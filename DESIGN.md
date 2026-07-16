@@ -206,6 +206,20 @@ genuinely worth considering for v2. Kept here so they aren't lost:
   app-side check; add fuzzy-similarity warnings.
 - **Scheduler interface extraction** (`TopicScheduler` with modelVersion) to slot FSRS-6 in when
   per-user data exists to justify it.
+- **Content-currency status, separate from memory** (from the 2026-07 research review): a physician
+  can perfectly remember an outdated guideline. A per-topic "source may need updating" flag (set
+  manually, or by source date) is cheap, honest, and independent of the scheduler. Small.
+- **Per-topic retention horizon** ("exam in 1 month" vs "lifelong"): the spacing literature's most
+  consistent finding is that optimal gaps scale with the desired retention interval. Today one
+  global retention target serves everyone; a per-topic horizon would feed
+  `desiredRetentionOverride`, which the scheduler ALREADY accepts per review. Medium.
+- **Risk-per-minute queue refinement**: divide `priorityScore` by expected review minutes (user's
+  observed median) so limited time buys the most retention. Needs per-topic duration estimates —
+  the `reviewDurationMs` data being logged since v4 is exactly this. Medium.
+- **Validation note**: an external FSRS-6 workload analysis (unverified simulation, but consistent
+  with known FSRS workload curves) puts the efficient retention band at ~0.88–0.92, with ~0.92 for
+  critical items. Yadora's shipped defaults (0.90 standard / 0.93 important) sit essentially inside
+  that band — keep them; revisit only with real user data.
 
 Explicitly rejected for any version (re-litigated multiple times): first rating at Add time;
 "Forgot" in red; removing the retention slider; ABORT on log insert (REPLACE is the replay
