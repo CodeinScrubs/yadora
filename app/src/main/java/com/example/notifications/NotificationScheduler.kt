@@ -165,10 +165,35 @@ object NotificationScheduler {
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_FIRE))
     }
 
-    /** Re-show the reminder ~3h later WITHOUT changing any topic's due date (a true snooze). */
-    fun scheduleSnooze(context: Context, delayMillis: Long = 3L * 60 * 60 * 1000) {
-        // Clamp into waking hours so a late-evening snooze never rings in the middle of the night.
-        armAlarm(context, clampToWakingWindow(System.currentTimeMillis() + delayMillis), REQ_SNOOZE_FIRE, ACTION_FIRE)
+    /**
+     * The snooze button is a human choice, not a vague delay: before late afternoon it means
+     * "this evening" (18:00 today); after that it means "tomorrow" (the user's reminder time).
+     * Returns the target millis; [snoozeIsEvening] tells the UI which label to show.
+     */
+    fun snoozeIsEvening(now: Calendar = Calendar.getInstance()): Boolean = now.get(Calendar.HOUR_OF_DAY) < 17
+
+    private fun snoozeTargetMillis(context: Context): Long {
+        val now = Calendar.getInstance()
+        return if (snoozeIsEvening(now)) {
+            Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 18); set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        } else {
+            val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+            Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, sp.getInt("reminder_hour", 20))
+                set(Calendar.MINUTE, sp.getInt("reminder_minute", 0))
+                set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                add(Calendar.DAY_OF_YEAR, 1)
+            }.timeInMillis
+        }
+    }
+
+    /** Re-show the reminder at the snooze target WITHOUT changing any topic's due date (a true snooze). */
+    fun scheduleSnooze(context: Context) {
+        // Clamp into waking hours so an edge case never rings in the middle of the night.
+        armAlarm(context, clampToWakingWindow(snoozeTargetMillis(context)), REQ_SNOOZE_FIRE, ACTION_FIRE)
     }
 
     /** Push a trigger time into the 08:00–22:00 waking window (next 08:00 if it lands at night). */
@@ -265,7 +290,11 @@ object NotificationScheduler {
             else -> if (isFa) "مباحثی برای مرور آماده‌اند." else if (isDe) "Themen sind bereit zur Wiederholung." else "You have study topics ready to review."
         }
         val reviewNowLabel = if (isFa) "مرور" else if (isDe) "Jetzt wiederholen" else "Review now"
-        val snoozeLabel = if (isFa) "بعداً" else if (isDe) "Später" else "Snooze"
+        // Human snooze: the label says WHEN it will come back (evening before ~17:00, else tomorrow).
+        val snoozeLabel = if (snoozeIsEvening())
+            (if (isFa) "عصر امروز" else if (isDe) "Heute Abend" else "This evening")
+        else
+            (if (isFa) "فردا" else if (isDe) "Morgen" else "Tomorrow")
         val notTodayLabel = if (isFa) "امروز نه" else if (isDe) "Heute nicht" else "Not today"
 
         val openIntent = Intent(context, com.example.MainActivity::class.java).apply {

@@ -122,7 +122,8 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             val total = prioritized.size
             val updated = prioritized.mapIndexed { index, unit ->
                 val target = OverdueRedistributor.targetMillis(now, OverdueRedistributor.dayOffset(index, total))
-                unit.copy(nextReviewAt = target, updatedAt = now)
+                // Recorded as a DEFERRAL (v5): the model's own due date stays in modelDueAt untouched.
+                unit.copy(nextReviewAt = target, deferredUntil = target, updatedAt = now)
             }
             // One transaction: a crash mid-redistribution must not leave a half-applied plan.
             repository.updateUnitsAtomic(updated)

@@ -143,6 +143,15 @@ object MedScheduler {
     const val SCHEDULER_VERSION = "FSRS-5"
 
     /**
+     * Version of the YADORA POLICY BUNDLE around the memory model — everything product-layer:
+     * understanding factors (1.0/0.9/0.8), relearn step (1d), first-study caps (1–3d seed, 5d first
+     * rating), high-yield retention (+0.03), fuzz (±5%, base ≥ 3d), max interval (365d). Bump this
+     * whenever ANY of those numbers changes; each review log stores the version + the understanding
+     * factor actually applied, so history replays under its original policy instead of the new one.
+     */
+    const val POLICY_VERSION = "YADORA-1"
+
+    /**
      * The difficulty label a first-study memory-rating stands for (the UI buttons say
      * Easy/Medium/Hard but store the FSRS grade mapping). Logged separately so first-study data
      * stays semantically honest in exports.
@@ -154,7 +163,8 @@ object MedScheduler {
         MemoryRating.Forgot -> "Hard" // not reachable from the first-study UI; safe fallback
     }
 
-    private fun understandingFactor(understanding: UnderstandingRating): Double = when (understanding) {
+    /** Public so the commit path can LOG the factor it applied (per-log policy snapshot, DB v5). */
+    fun understandingFactor(understanding: UnderstandingRating): Double = when (understanding) {
         UnderstandingRating.Clear -> 1.0
         UnderstandingRating.Partial -> UNDERSTANDING_PARTIAL_FACTOR
         UnderstandingRating.Confused -> UNDERSTANDING_CONFUSED_FACTOR
@@ -204,6 +214,10 @@ object MedScheduler {
         // since DB v4), so editing an old rating after changing settings replays the past faithfully
         // instead of rewriting it under today's settings. Live reviews leave this null.
         desiredRetentionOverride: Double? = null,
+        // Same idea for the understanding multiplier (stored per-log since DB v5): if the policy's
+        // factors ever change, replay applies the factor that was ORIGINALLY used. Live reviews and
+        // rating EDITS leave this null (an edited rating should get the current policy's factor).
+        understandingFactorOverride: Double? = null,
     ): Outcome {
         val p = params(highYield, desiredRetentionOverride)
         val before = MemoryState(stability = stability, difficulty = difficulty)
@@ -229,7 +243,8 @@ object MedScheduler {
             // just-studied "Easy" topic isn't scheduled ~2 weeks out before it's ever recalled.
             if (reviewNumber <= 0) fsrsInterval = fsrsInterval.coerceAtMost(FIRST_STUDY_MAX_DAYS)
             baseInterval = fsrsInterval
-            interval = (fsrsInterval * understandingFactor(understanding))
+            val factor = understandingFactorOverride ?: understandingFactor(understanding)
+            interval = (fsrsInterval * factor)
                 .coerceIn(MIN_INTERVAL_DAYS, p.maximumIntervalDays)
         }
 

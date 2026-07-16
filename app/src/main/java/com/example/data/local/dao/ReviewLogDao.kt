@@ -29,6 +29,10 @@ interface ReviewLogDao {
     @Query("DELETE FROM review_logs WHERE id = :logId")
     suspend fun deleteLogById(logId: Long)
 
+    /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
+    @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")
+    suspend fun deleteLogsForUnits(unitIds: List<Long>)
+
     @Query("DELETE FROM review_logs")
     suspend fun deleteAllLogs()
 }

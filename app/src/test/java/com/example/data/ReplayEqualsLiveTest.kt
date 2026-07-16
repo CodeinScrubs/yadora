@@ -62,6 +62,8 @@ class ReplayEqualsLiveTest {
         val updated = unit.copy(
             lastReviewedAt = now,
             nextReviewAt = now + (nextInterval * 86400000).toLong(),
+            modelDueAt = now + (nextInterval * 86400000).toLong(),
+            deferredUntil = null,
             currentIntervalDays = nextInterval,
             reviewCount = unit.reviewCount + 1,
             lapseCount = if (memory == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
@@ -77,6 +79,8 @@ class ReplayEqualsLiveTest {
             previousState = unit.state, nextState = nextState.name,
             retrievabilityAtReview = outcome.retrievabilityAtReview, elapsedDays = elapsedDays,
             logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
+            schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
+            understandingFactorAtReview = MedScheduler.understandingFactor(understanding),
         )
         repo.commitReview(updated, log)
     }
@@ -115,6 +119,7 @@ class ReplayEqualsLiveTest {
         assertEquals("difficulty", live.difficulty, replayed.difficulty, 1e-9)
         assertEquals("interval", live.currentIntervalDays, replayed.currentIntervalDays, 1e-9)
         assertEquals("nextReviewAt", live.nextReviewAt, replayed.nextReviewAt)
+        assertEquals("modelDueAt equals effective date after replay", replayed.nextReviewAt, replayed.modelDueAt)
         assertEquals("reviewCount", live.reviewCount, replayed.reviewCount)
         assertEquals("lapseCount", live.lapseCount, replayed.lapseCount)
         assertEquals("state", live.state, replayed.state)
@@ -187,6 +192,73 @@ class ReplayEqualsLiveTest {
 
         org.junit.Assert.assertNotEquals(
             "moving studiedAt must change the schedule", before.nextReviewAt, after.nextReviewAt)
+    }
+
+    @Test
+    fun `procrastinating records a deferral and preserves the model due date`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Nephron", studyType = "Pathology",
+                stability = seed.state.stability, difficulty = seed.state.difficulty,
+                retrievability = 1.0, state = "New",
+                studiedAt = now - 3 * day, nextReviewAt = now - day, modelDueAt = now - day,
+                currentIntervalDays = 0.0, reviewCount = 1, lapseCount = 0,
+            )
+        )
+        val tomorrow = now + day
+        db.studyUnitDao().procrastinateAllDue(now, tomorrow, now)
+        val after = repo.getUnitById(unitId)!!
+
+        assertEquals("effective date moved", tomorrow, after.nextReviewAt)
+        assertEquals("deferral recorded", tomorrow, after.deferredUntil)
+        assertEquals("model's opinion untouched", now - day, after.modelDueAt)
+
+        // A real review then clears the deferral and re-unifies the two dates.
+        liveReview(unitId, now, MemoryRating.Good, UnderstandingRating.Clear)
+        val reviewed = repo.getUnitById(unitId)!!
+        org.junit.Assert.assertNull("review spends the deferral", reviewed.deferredUntil)
+        assertEquals("model date is the effective date again", reviewed.nextReviewAt, reviewed.modelDueAt)
+    }
+
+    @Test
+    fun `soft delete hides the topic but restore brings it back with history`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Krebs cycle", studyType = "Pathology",
+                stability = seed.state.stability, difficulty = seed.state.difficulty,
+                retrievability = 1.0, state = "New",
+                studiedAt = now, nextReviewAt = now, modelDueAt = now,
+                currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0,
+            )
+        )
+        liveReview(unitId, now, MemoryRating.Good, UnderstandingRating.Clear)
+
+        repo.softDeleteUnit(unitId)
+        val deleted = repo.getUnitById(unitId)!!
+        org.junit.Assert.assertNotNull("deletedAt stamped", deleted.deletedAt)
+        org.junit.Assert.assertTrue("hidden from active lists", deleted.archived)
+        assertEquals("still recoverable", 1, repo.recentlyDeleted.first().size)
+
+        // Within the grace window the purge must NOT touch it.
+        repo.purgeExpiredDeleted()
+        org.junit.Assert.assertNotNull("survives purge inside grace", repo.getUnitById(unitId))
+
+        repo.restoreDeletedUnit(unitId)
+        val restored = repo.getUnitById(unitId)!!
+        org.junit.Assert.assertNull("no longer deleted", restored.deletedAt)
+        org.junit.Assert.assertFalse("back in the active library", restored.archived)
+        assertEquals("history intact", 1, db.reviewLogDao().getLogsForUnit(unitId).first().size)
+
+        // Past the grace window the purge removes the topic AND its history.
+        repo.softDeleteUnit(unitId)
+        repo.purgeExpiredDeleted(graceMillis = -1L) // cutoff in the future → everything deleted qualifies
+        org.junit.Assert.assertNull("purged after grace", repo.getUnitById(unitId))
+        assertEquals("history purged with it", 0, db.reviewLogDao().getLogsForUnit(unitId).first().size)
     }
 
     @Test

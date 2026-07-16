@@ -34,5 +34,18 @@ data class StudyUnitEntity(
     val currentIntervalDays: Double = 0.0,
     val reviewCount: Int = 0,
     val lapseCount: Int = 0,
-    val archived: Boolean = false
+    val archived: Boolean = false,
+    // Honest scheduling data (added in DB v5). nextReviewAt stays THE effective/actionable date every
+    // query uses; these record WHY it is what it is:
+    //  - modelDueAt: what the memory model last computed. A review sets both to the same value.
+    //  - deferredUntil: set when the USER moved the date (Not today / redistribute / manual edit)
+    //    without a review — the model's opinion in modelDueAt is preserved, so deferral can never
+    //    masquerade as science. NULL = the schedule is purely the model's.
+    // 0 = pre-v5 row whose model date was never distinguishable from its effective date.
+    val modelDueAt: Long = 0,
+    val deferredUntil: Long? = null,
+    // Soft delete (added in DB v5): a deleted topic keeps its data for 30 days (recoverable from the
+    // archive screen), then is purged on app start. NULL = not deleted. Deleted rows also have
+    // archived=true so every active-list query excludes them for free.
+    val deletedAt: Long? = null,
 )

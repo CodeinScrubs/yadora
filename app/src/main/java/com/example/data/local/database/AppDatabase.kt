@@ -22,7 +22,7 @@ import com.example.data.local.entity.SystemEntity
         ReviewLogEntity::class,
         EventLogEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -80,6 +80,26 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_review_logs_studyUnitId` ON `review_logs` (`studyUnitId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_review_logs_reviewedAt` ON `review_logs` (`reviewedAt`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_event_logs_type` ON `event_logs` (`type`)")
+            }
+        }
+
+        /**
+         * v4 → v5 (additive, like every migration here):
+         *  - study_units.modelDueAt/deferredUntil: separate what the memory model computed from what
+         *    the user chose (deferrals stop overwriting the model's due date). Existing rows backfill
+         *    modelDueAt from nextReviewAt — the best available truth for pre-v5 data.
+         *  - study_units.deletedAt: 30-day recoverable soft delete.
+         *  - review_logs.schedulerPolicyVersion/understandingFactorAtReview: per-log policy snapshot
+         *    so future product-layer changes can't silently rewrite replayed history.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE study_units ADD COLUMN modelDueAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE study_units SET modelDueAt = nextReviewAt")
+                db.execSQL("ALTER TABLE study_units ADD COLUMN deferredUntil INTEGER")
+                db.execSQL("ALTER TABLE study_units ADD COLUMN deletedAt INTEGER")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN schedulerPolicyVersion TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN understandingFactorAtReview REAL NOT NULL DEFAULT -1.0")
             }
         }
     }

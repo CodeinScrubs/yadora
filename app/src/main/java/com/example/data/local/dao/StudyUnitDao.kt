@@ -23,8 +23,12 @@ interface StudyUnitDao {
     @Query("SELECT * FROM study_units WHERE archived = 0 AND nextReviewAt <= :cutoffTime ORDER BY highYield DESC, nextReviewAt ASC")
     suspend fun getDueUnitsList(cutoffTime: Long): List<StudyUnitEntity>
 
-    /** Push every currently-due unit to [tomorrow] ("Not today" / procrastinate all). */
-    @Query("UPDATE study_units SET nextReviewAt = :tomorrow, updatedAt = :stamp WHERE archived = 0 AND nextReviewAt <= :now")
+    /**
+     * Push every currently-due unit to [tomorrow] ("Not today" / procrastinate all). Records it as a
+     * DEFERRAL: the model's opinion (modelDueAt) is untouched, so the data stays honest about what
+     * was science and what was the user's choice.
+     */
+    @Query("UPDATE study_units SET nextReviewAt = :tomorrow, deferredUntil = :tomorrow, updatedAt = :stamp WHERE archived = 0 AND nextReviewAt <= :now")
     suspend fun procrastinateAllDue(now: Long, tomorrow: Long, stamp: Long)
 
     @Query("SELECT * FROM study_units WHERE id = :id")
@@ -34,14 +38,36 @@ interface StudyUnitDao {
     @Query("SELECT * FROM study_units WHERE archived = 0 AND lower(trim(title)) = lower(trim(:title))")
     suspend fun findActiveByTitle(title: String): List<StudyUnitEntity>
 
+    /** Same-title lookup across active AND archived — for the archived-duplicate restore offer. */
+    @Query("SELECT * FROM study_units WHERE lower(trim(title)) = lower(trim(:title))")
+    suspend fun findByTitleAnyState(title: String): List<StudyUnitEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUnit(unit: StudyUnitEntity): Long
 
     @Update
     suspend fun updateUnit(unit: StudyUnitEntity)
 
-    @Query("SELECT * FROM study_units WHERE archived = 1 ORDER BY nextReviewAt ASC")
+    @Query("SELECT * FROM study_units WHERE archived = 1 AND deletedAt IS NULL ORDER BY nextReviewAt ASC")
     fun getArchivedUnits(): Flow<List<StudyUnitEntity>>
+
+    // --- 30-day recoverable soft delete (DB v5). archived=1 keeps every active-list query clean. ---
+
+    @Query("UPDATE study_units SET deletedAt = :now, archived = 1, updatedAt = :now WHERE id = :id")
+    suspend fun softDeleteUnit(id: Long, now: Long)
+
+    /** Restore straight to the ACTIVE library — the user asked for it back; don't hide it in the archive. */
+    @Query("UPDATE study_units SET deletedAt = NULL, archived = 0, updatedAt = :stamp WHERE id = :id")
+    suspend fun restoreDeletedUnit(id: Long, stamp: Long)
+
+    @Query("SELECT * FROM study_units WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    fun getRecentlyDeleted(): Flow<List<StudyUnitEntity>>
+
+    @Query("SELECT id FROM study_units WHERE deletedAt IS NOT NULL AND deletedAt < :cutoff")
+    suspend fun getPurgeCandidateIds(cutoff: Long): List<Long>
+
+    @Query("DELETE FROM study_units WHERE id IN (:ids)")
+    suspend fun hardDeleteUnits(ids: List<Long>)
 
     @Query("UPDATE study_units SET archived = 1, updatedAt = :stamp WHERE id = :id")
     suspend fun archiveUnit(id: Long, stamp: Long)

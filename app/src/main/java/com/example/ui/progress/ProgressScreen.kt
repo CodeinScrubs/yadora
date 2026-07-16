@@ -22,6 +22,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 
 import com.example.data.repository.MedReviewRepository
 import com.example.ui.theme.HighYieldOrange
@@ -67,6 +68,20 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
     val relearnCount = repository.getCountByState("NeedsRelearn")
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
         
+    // Growth visual (0..1): one permanent sprout fed by committed study actions in event_logs, so
+    // earned growth survives topic deletion. Per local day: 1 unit for the first action + 0.25 for
+    // each of the next four (max 2/day — more study still counts in stats, just not in the visual).
+    // Target 180 units → full plant in 90 active days (5+ actions/day) to 180 (1/day). Never resets.
+    val growthProgress: StateFlow<Float> = repository.studyActionTimes()
+        .map { times ->
+            fun localDay(ms: Long): Int = ((ms + java.util.TimeZone.getDefault().getOffset(ms)) / (1000L * 60 * 60 * 24)).toInt()
+            val units = times.groupingBy { localDay(it) }.eachCount().values.sumOf { actions ->
+                1.0 + 0.25 * (actions - 1).coerceIn(0, 4)
+            }
+            (units / 180.0).coerceIn(0.0, 1.0).toFloat()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0f)
+
     // Counted from all logs with a FRESH 7-day window each emission, so it can't go stale overnight.
     val reviewsLast7Days = repository.getLogsSince(0L)
         .map { logs ->
@@ -174,6 +189,7 @@ fun ProgressScreen(repository: MedReviewRepository) {
     val relearn by viewModel.relearnCount.collectAsStateWithLifecycle()
     val reviews7d by viewModel.reviewsLast7Days.collectAsStateWithLifecycle()
     
+    val growthProgress by viewModel.growthProgress.collectAsStateWithLifecycle()
     val retentionData by viewModel.retentionChartData.collectAsStateWithLifecycle()
     val consistencyData by viewModel.consistencyChartData.collectAsStateWithLifecycle()
     val subjectDifficultyData by viewModel.subjectDifficultyData.collectAsStateWithLifecycle()
@@ -220,7 +236,43 @@ fun ProgressScreen(repository: MedReviewRepository) {
                         StatCard(title = strings.past7days, value = reviews7d.toString(), modifier = Modifier.weight(1f))
                     }
                 }
-                
+
+                // One permanent sprout, grown by real study days (max 2 units/day; full in 90–180
+                // active days; never resets — see growthProgress). Quiet by design: no numbers, no
+                // levels, no rewards — just a plant that is visibly further along than last month.
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            GrowthSprout(progress = growthProgress, modifier = Modifier.size(96.dp))
+                            Spacer(modifier = Modifier.width(20.dp))
+                            Column {
+                                Text(
+                                    when (strings.languageCode) { "fa" -> "رشد"; "de" -> "Wachstum"; else -> "Growth" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    when (strings.languageCode) {
+                                        "fa" -> "با هر روزِ مطالعه کمی رشد می‌کند — و هیچ‌وقت صفر نمی‌شود."
+                                        "de" -> "Wächst mit jedem Lerntag ein Stück — und wird nie zurückgesetzt."
+                                        else -> "Grows a little for every day you study — and never resets."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item {
                     Text(strings.knowledgeState, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                 }
@@ -726,5 +778,65 @@ fun StateRow(label: String, count: Int, color: androidx.compose.ui.graphics.Colo
             Text(label, style = MaterialTheme.typography.bodyLarge)
         }
         Text(count.toString(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * The permanent growth sprout: a stem that rises with [progress] (0..1) and gains leaf pairs along
+ * the way; at 1.0 a small blossom appears and stays forever. Deliberately quiet — brand sage, no
+ * numbers, no animation. Drawn bottom-up so partial progress still looks like a healthy young plant.
+ */
+@Composable
+fun GrowthSprout(progress: Float, modifier: Modifier = Modifier) {
+    val stemColor = MaterialTheme.colorScheme.primary
+    val leafColor = MaterialTheme.colorScheme.secondary
+    val bloomColor = MaterialTheme.colorScheme.tertiary
+    val groundColor = MaterialTheme.colorScheme.outlineVariant
+    androidx.compose.foundation.Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val p = progress.coerceIn(0f, 1f)
+        // Ground line.
+        drawLine(
+            color = groundColor,
+            start = androidx.compose.ui.geometry.Offset(w * 0.15f, h * 0.95f),
+            end = androidx.compose.ui.geometry.Offset(w * 0.85f, h * 0.95f),
+            strokeWidth = h * 0.02f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        // Stem: even a fresh plant shows a little sprout (15%), fully grown at p = 1.
+        val stemTop = h * 0.95f - (h * 0.15f + h * 0.72f * p)
+        drawLine(
+            color = stemColor,
+            start = androidx.compose.ui.geometry.Offset(w / 2f, h * 0.95f),
+            end = androidx.compose.ui.geometry.Offset(w / 2f, stemTop),
+            strokeWidth = h * 0.035f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        // Leaf pairs appear as the stem passes them (6 leaves over the journey).
+        repeat(6) { i ->
+            val threshold = (i + 1) / 7f
+            if (p >= threshold) {
+                val leafY = h * 0.95f - (h * 0.15f + h * 0.72f * threshold)
+                val leftLeaf = i % 2 == 0
+                val dir = if (leftLeaf) -1f else 1f
+                val leafW = w * 0.22f
+                val leafH = h * 0.09f
+                rotate(degrees = dir * 32f, pivot = androidx.compose.ui.geometry.Offset(w / 2f, leafY)) {
+                    drawOval(
+                        color = leafColor,
+                        topLeft = androidx.compose.ui.geometry.Offset(
+                            if (leftLeaf) w / 2f - leafW else w / 2f,
+                            leafY - leafH / 2f
+                        ),
+                        size = androidx.compose.ui.geometry.Size(leafW, leafH),
+                    )
+                }
+            }
+        }
+        // Fully grown: one calm blossom, permanent.
+        if (p >= 1f) {
+            drawCircle(color = bloomColor, radius = h * 0.06f, center = androidx.compose.ui.geometry.Offset(w / 2f, stemTop))
+        }
     }
 }

@@ -189,20 +189,19 @@ Two long external reviews proposed full redesigns. Most of their content was eit
 implemented, contradicted settled decisions (see CLAUDE.md), or v1 bloat — but these ideas are
 genuinely worth considering for v2. Kept here so they aren't lost:
 
-- **Split `nextReviewAt` into `modelDueAt` + `deferredUntil`.** Today "Not today"/redistribute
-  overwrite the model's due date (event log partially compensates). Separating "what the memory
-  model said" from "what the user chose" makes deferral honest and calibration cleaner. Needs a
-  migration + touch of every due-date read.
+- ✅ **DONE (DB v5): `modelDueAt` + `deferredUntil` split.** Deferrals (Not today, redistribute,
+  manual date edits) no longer overwrite the model's due date; a real review re-unifies the two.
 - **Batch commitment + in-progress resume.** Commit to min(batchSize, dueCount) per session;
   closing the app preserves the batch and completed reviews; resume later. Better than the daily
   cap for habit psychology.
 - **Capped lateness credit.** A successful very-late review currently gets full elapsed-time
   stability credit; capping the bonus (e.g. +25% of scheduled interval) is a defensible hypothesis.
   Must be versioned per log — breaks replay otherwise.
-- **Split-topic suggestion.** After repeated Easy↔Forgot reversals on one topic, gently suggest
-  splitting it (never automatic). Good fit for the topic-level model.
-- **Policy versioning per log** (`schedulerPolicyVersion`, factor snapshot or config hash), so a
-  future change to understanding factors doesn't silently rewrite replayed history.
+- ✅ **DONE: Split-topic suggestion.** After ≥2 strong↔Forgot reversals across ≥4 recalls, a
+  dismissible hint appears on the review screen (suppressed 5 reviews after dismissal).
+- ✅ **DONE (DB v5): Policy versioning per log** (`schedulerPolicyVersion` +
+  `understandingFactorAtReview`); replay honors stored factors for untouched rows. This is the
+  foundation for capped lateness credit, mature-Forgot flows, and personalization.
 - **DB-level duplicate uniqueness** on (subjectId, NFKC-normalized title) instead of the current
   app-side check; add fuzzy-similarity warnings.
 - **Scheduler interface extraction** (`TopicScheduler` with modelVersion) to slot FSRS-6 in when

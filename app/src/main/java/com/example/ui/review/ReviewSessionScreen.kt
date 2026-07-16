@@ -113,6 +113,43 @@ class ReviewViewModel(
     // doesn't record a 9-hour "review".
     private var unitShownAt = System.currentTimeMillis()
 
+    // Split-topic hint: true when the CURRENT topic's recall history whiplashes (strong↔Forgot
+    // reversals), which usually means it bundles parts developing at different rates. Advisory only —
+    // Yadora never splits automatically, and a dismissal suppresses it for 5 more reviews (via prefs).
+    var splitSuggestion by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    fun dismissSplitSuggestion() {
+        val unit = _currentUnit.value ?: return
+        getApplication<android.app.Application>()
+            .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+            .edit().putInt("split_dismiss_${unit.id}", unit.reviewCount).apply()
+        splitSuggestion = false
+    }
+
+    private fun checkSplitSuggestion(unit: StudyUnitEntity) {
+        splitSuggestion = false
+        viewModelScope.launch {
+            runCatching {
+                val dismissedAt = getApplication<android.app.Application>()
+                    .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                    .getInt("split_dismiss_${unit.id}", -1)
+                if (dismissedAt >= 0 && unit.reviewCount < dismissedAt + 5) return@launch
+                val recalls = repository.getLogsForUnit(unit.id).first()
+                    .filter { it.logType == "RECALL" }
+                    .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+                if (recalls.size < 4) return@launch
+                // A "reversal" = adjacent ratings jumping between strong (Good/Easy) and Forgot.
+                fun strong(r: String) = r == "Good" || r == "Easy"
+                val reversals = recalls.zipWithNext().count { (a, b) ->
+                    (strong(a.memoryRating) && b.memoryRating == "Forgot") ||
+                        (a.memoryRating == "Forgot" && strong(b.memoryRating))
+                }
+                if (reversals >= 2 && _currentUnit.value?.id == unit.id) splitSuggestion = true
+            }
+        }
+    }
+
     fun loadNext(cutoffTime: Long, unitId: Long = -1L) {
         viewModelScope.launch {
             if (dueUnits.isEmpty() && _currentUnit.value == null) {
@@ -149,6 +186,7 @@ class ReviewViewModel(
             _currentUnit.value = null
         }
         unitShownAt = System.currentTimeMillis()
+        _currentUnit.value?.let { checkSplitSuggestion(it) } ?: run { splitSuggestion = false }
     }
 
     /** Localized cause → effect line for the just-committed rating ("why is it scheduled there?"). */
@@ -255,6 +293,10 @@ class ReviewViewModel(
             val updatedUnit = unit.copy(
                 lastReviewedAt = now,
                 nextReviewAt = now + (nextInterval * 86400000).toLong(),
+                // A real review resets the honest-scheduling pair (DB v5): the model's date IS the
+                // effective date again, and any earlier user deferral is spent.
+                modelDueAt = now + (nextInterval * 86400000).toLong(),
+                deferredUntil = null,
                 currentIntervalDays = nextInterval,
                 reviewCount = newReviewCount,
                 lapseCount = if (memoryRating == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
@@ -288,6 +330,10 @@ class ReviewViewModel(
                 wasImportantAtReview = if (unit.highYield) 1 else 0,
                 desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
                 schedulerVersion = MedScheduler.SCHEDULER_VERSION,
+                // v5 policy snapshot: which Yadora policy bundle + which understanding factor actually
+                // shaped this interval — so future policy changes replay history faithfully.
+                schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
+                understandingFactorAtReview = MedScheduler.understandingFactor(understandingRating),
             )
             // Update the unit's schedule AND insert its log atomically (one Room transaction), then
             // remember the exact log id so Undo deletes precisely this log.
@@ -302,6 +348,9 @@ class ReviewViewModel(
             }
             ratedStack.add(ReviewHistoryItem(unit.copy(), logId, memoryRating))
             canUndo = ratedStack.isNotEmpty()
+            // Growth-visual feed: one event per committed study action, kept in event_logs (NOT tied
+            // to the topic row) so earned growth survives topic deletion. Best-effort by design.
+            runCatching { repository.logEvent("STUDY_ACTION", unitId = unit.id) }
             com.example.widget.DueWidgetProvider.updateAll(getApplication())
             lastReason = buildReasonText(memoryRating, understandingRating, unit.highYield, nextInterval, reviewNumber == 0)
 
@@ -648,7 +697,41 @@ fun ReviewSessionScreen(
                         }
                         
                         Spacer(modifier = Modifier.height(32.dp))
-                        
+
+                        // Split-topic hint: shown only when this topic's recall history whiplashes
+                        // (see checkSplitSuggestion). Advisory and dismissible — never automatic.
+                        if (viewModel.splitSuggestion) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        text = when (strings.languageCode) {
+                                            "fa" -> "این مبحث شاید بخش‌هایی با سرعت‌های متفاوت داشته باشد. یکجا نگه داشتنش کاملاً درست است، ولی تقسیمش می‌تواند مرورها را کارآمدتر کند."
+                                            "de" -> "Dieses Thema enthält womöglich Teile, die sich unterschiedlich schnell festigen. Zusammenlassen ist völlig in Ordnung — Aufteilen kann künftige Wiederholungen effizienter machen."
+                                            else -> "This topic may contain parts developing at different rates. Keeping it together is completely fine, but splitting it may make future reviews more efficient."
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                        TextButton(onClick = { viewModel.dismissSplitSuggestion() }) {
+                                            Text(when (strings.languageCode) { "fa" -> "یکجا می‌ماند"; "de" -> "Zusammenlassen"; else -> "Keep as one" })
+                                        }
+                                        TextButton(onClick = {
+                                            viewModel.dismissSplitSuggestion()
+                                            onNavigateToEdit(currentUnit.id)
+                                        }) {
+                                            Text(when (strings.languageCode) { "fa" -> "تقسیم مبحث"; "de" -> "Thema aufteilen"; else -> "Split topic" })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if (!showNotes && !isFreshFirstStudy) {
                             Text(
                                 strings.recallFirstPrompt,

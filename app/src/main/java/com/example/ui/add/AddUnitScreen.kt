@@ -66,6 +66,14 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
         }
     }
     
+    /** Restore an archived topic (with its whole history) instead of creating a duplicate. */
+    fun restoreArchived(id: Long, onRestored: () -> Unit) {
+        viewModelScope.launch {
+            repository.unarchiveUnit(id)
+            onRestored()
+        }
+    }
+
     fun saveSubject(name: String, colorHex: String?, onSaved: (Long) -> Unit = {}) {
         viewModelScope.launch {
             // Reuse an existing subject with the same (normalized) name instead of creating a duplicate.
@@ -75,12 +83,20 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
         }
     }
 
-    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}) {
+    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}) {
         viewModelScope.launch {
             // Block true duplicates on NEW topics only (editing an existing one is never a dup of itself).
             if (existingUnit == null && repository.isDuplicate(title, subjectId, notes, source)) {
                 onDuplicate()
                 return@launch
+            }
+            // An ARCHIVED topic with this title: offer to restore it (with its whole history) instead
+            // of creating a fresh duplicate that starts from zero.
+            if (existingUnit == null) {
+                repository.findArchivedDuplicate(title)?.let { archived ->
+                    onArchivedDuplicate(archived)
+                    return@launch
+                }
             }
             // The DB write runs NonCancellable: navigating back clears this ViewModel and cancels its
             // scope, and without this guard the insert/update could be aborted mid-flight, silently
@@ -91,7 +107,11 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                 val current = existingUnit
                 if (current != null) {
                     val newStudiedAt = studiedAt ?: current.studiedAt
-                    val updated = current.copy(
+                    val newNext = nextReviewAt ?: current.nextReviewAt
+                    // A MANUAL next-date change is a user deferral (v5): record it in deferredUntil and
+                    // leave the model's own opinion (modelDueAt) untouched.
+                    val manualDateChange = newNext != current.nextReviewAt
+                    var updated = current.copy(
                         title = title,
                         subjectId = subjectId,
                         systemId = systemId,
@@ -102,9 +122,27 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                         highYield = highYield,
                         studiedAt = newStudiedAt,
                         lastReviewedAt = current.lastReviewedAt,
-                        nextReviewAt = nextReviewAt ?: current.nextReviewAt,
+                        nextReviewAt = newNext,
+                        deferredUntil = if (manualDateChange) newNext else current.deferredUntil,
                         updatedAt = System.currentTimeMillis()
                     )
+                    // Turning IMPORTANT ON responds immediately (#15): recompute the current interval
+                    // under the tighter retention target from the stored memory state, never later than
+                    // what was already scheduled. A subsequent history edit recomputes from the logs
+                    // (which store per-review importance), so this is a one-time convenience reschedule.
+                    if (highYield && !current.highYield && current.reviewCount > 0 && !manualDateChange && current.lastReviewedAt != null) {
+                        val tighter = com.example.domain.srs.Fsrs.intervalDays(
+                            current.stability, MedScheduler.effectiveRetention(true)
+                        ).coerceIn(1.0, 365.0)
+                        val tighterNext = current.lastReviewedAt!! + (tighter * 86400000).toLong()
+                        if (tighterNext < updated.nextReviewAt) {
+                            updated = updated.copy(
+                                nextReviewAt = tighterNext,
+                                modelDueAt = tighterNext,
+                                currentIntervalDays = tighter,
+                            )
+                        }
+                    }
                     // The study date is the replay origin: if it moved and real reviews exist, the
                     // whole history is recomputed from the new origin, atomically with the edit —
                     // this is what backs the "recalculates this topic's review history" caption.
@@ -139,6 +177,10 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             studiedAt = baseTime,
                             lastReviewedAt = null,
                             nextReviewAt = nextReviewAt ?: computedNext,
+                            // v5 honest-scheduling pair: the model's date is the study date itself; a
+                            // custom first date chosen by the user is recorded as a deferral.
+                            modelDueAt = computedNext,
+                            deferredUntil = nextReviewAt?.takeIf { it != computedNext },
                             // 0 = no interval has elapsed yet: the topic is due ON its study date and
                             // hasn't been rated. Storing the seed's ~1.1d here made the first log's
                             // previousIntervalDays claim an interval that never existed (and disagree
@@ -235,6 +277,7 @@ fun AddUnitScreen(
     var studiedAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var nextReviewAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var archivedDuplicate by remember { mutableStateOf<StudyUnitEntity?>(null) }
     var editingLog by remember { mutableStateOf<ReviewLogEntity?>(null) }
 
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
@@ -300,6 +343,10 @@ fun AddUnitScreen(
                                             if (strings.languageCode == "fa") "این مبحث از قبل وجود دارد. برای تفکیک، درس یا یادداشت متفاوتی اضافه کن." else "This topic already exists. To keep both, give one a different subject or note.",
                                             android.widget.Toast.LENGTH_LONG
                                         ).show()
+                                    },
+                                    onArchivedDuplicate = { archived ->
+                                        saving = false
+                                        archivedDuplicate = archived
                                     })
                             }
                         },
@@ -311,6 +358,31 @@ fun AddUnitScreen(
             )
         }
     ) { padding ->
+        // Re-adding a topic that lives in the ARCHIVE: restoring it keeps its whole review history —
+        // almost always what the user wants over a fresh duplicate that starts from zero.
+        archivedDuplicate?.let { arch ->
+            AlertDialog(
+                onDismissRequest = { archivedDuplicate = null },
+                title = { Text(when (strings.languageCode) { "fa" -> "در بایگانی موجود است"; "de" -> "Im Archiv vorhanden"; else -> "Already in your archive" }) },
+                text = { Text(when (strings.languageCode) {
+                    "fa" -> "«${arch.title}» در بایگانی‌ات هست. بازگرداندنش تمام تاریخچهٔ مرور را حفظ می‌کند."
+                    "de" -> "„${arch.title}“ liegt in deinem Archiv. Wiederherstellen behält den gesamten Wiederholungsverlauf."
+                    else -> "\"${arch.title}\" is in your archive. Restoring it keeps its whole review history."
+                }) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.restoreArchived(arch.id) {
+                            com.example.widget.DueWidgetProvider.updateAll(reminderContext)
+                            archivedDuplicate = null
+                            onBack()
+                        }
+                    }) { Text(when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" }) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { archivedDuplicate = null }) { Text(strings.cancel) }
+                }
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

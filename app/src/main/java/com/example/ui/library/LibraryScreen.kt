@@ -114,6 +114,18 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
             repository.unarchiveUnit(unitId)
         }
     }
+
+    // 30-day recoverable soft delete (DB v5): only reachable from the archive view.
+    val recentlyDeleted: StateFlow<List<StudyUnitEntity>> = repository.recentlyDeleted
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun softDelete(unitId: Long) {
+        viewModelScope.launch { repository.softDeleteUnit(unitId) }
+    }
+
+    fun restoreDeleted(unitId: Long) {
+        viewModelScope.launch { repository.restoreDeletedUnit(unitId) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,6 +136,7 @@ fun LibraryScreen(
 ) {
     val viewModel: LibraryViewModel = viewModel(factory = LibraryViewModelFactory(repository))
     val units by viewModel.filteredUnits.collectAsStateWithLifecycle()
+    val recentlyDeleted by viewModel.recentlyDeleted.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val showArchived by viewModel.showArchived.collectAsStateWithLifecycle()
@@ -347,15 +360,30 @@ fun LibraryScreen(
                                 }
                             },
                             dismissButton = {
-                                TextButton(
-                                    onClick = {
-                                        coroutineScope.launch {
-                                            dismissState.reset()
+                                Row {
+                                    // Archived topics can also be DELETED (recoverable for 30 days,
+                                    // then purged) — the only per-topic delete path in the app.
+                                    if (showArchived) {
+                                        TextButton(
+                                            onClick = {
+                                                viewModel.softDelete(unit.id)
+                                                showDeleteConfirm = false
+                                            },
+                                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                        ) {
+                                            Text(when (strings.languageCode) { "fa" -> "حذف"; "de" -> "Löschen"; else -> "Delete" })
                                         }
-                                        showDeleteConfirm = false
                                     }
-                                ) {
-                                    Text(strings.cancel)
+                                    TextButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                dismissState.reset()
+                                            }
+                                            showDeleteConfirm = false
+                                        }
+                                    ) {
+                                        Text(strings.cancel)
+                                    }
                                 }
                             }
                         )
@@ -415,6 +443,49 @@ fun LibraryScreen(
                                     ?: subjects.find { it.id == unit.subjectId }?.name)
                             else null
                         )
+                    }
+                }
+
+                // Recently deleted (archive view only): recoverable for 30 days, then purged on app
+                // start. Plain rows with a Restore action — deliberately quieter than real topics.
+                if (showArchived && recentlyDeleted.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            when (strings.languageCode) { "fa" -> "حذف‌شده‌های اخیر"; "de" -> "Kürzlich gelöscht"; else -> "Recently deleted" },
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            when (strings.languageCode) {
+                                "fa" -> "تا ۳۰ روز قابل بازگردانی است؛ بعد از آن برای همیشه پاک می‌شود."
+                                "de" -> "30 Tage wiederherstellbar, danach endgültig gelöscht."
+                                else -> "Recoverable for 30 days, then removed forever."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    items(recentlyDeleted, key = { "del_${it.id}" }) { del ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                        ) {
+                            Text(
+                                del.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1
+                            )
+                            TextButton(onClick = {
+                                viewModel.restoreDeleted(del.id)
+                                com.example.widget.DueWidgetProvider.updateAll(libContext)
+                            }) {
+                                Text(when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" })
+                            }
+                        }
                     }
                 }
             }

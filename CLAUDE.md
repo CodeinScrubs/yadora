@@ -53,8 +53,19 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/2_3/3_4`,
+- **Room migrations are additive only** (`MIGRATION_1_2/…/4_5`,
   `exportSchema=true`). Never `fallbackToDestructiveMigration`.
+- **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
+  query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
+  only by user deferrals (Not today / redistribute / manual edit) and cleared by
+  a real review. Deferrals must NEVER write `modelDueAt`.
+- **Per-topic delete is SOFT** (`deletedAt`, 30-day grace, purge on app start,
+  restore from the archive screen). The only hard deletes are the purge and
+  "Delete all data".
+- **Policy versioning**: bump `MedScheduler.POLICY_VERSION` whenever any
+  product-layer number changes (understanding factors, relearn step, caps,
+  fuzz, high-yield retention). Logs store the version + applied factor;
+  replay honors the stored factor for untouched rows.
 - `USE_EXACT_ALARM` is intended; only strip it if publishing rules require it.
 
 ## Testing

@@ -96,6 +96,39 @@ class MedReviewRepository(
     suspend fun unarchiveUnit(id: Long) {
         studyUnitDao.unarchiveUnit(id, System.currentTimeMillis())
     }
+
+    // --- 30-day recoverable soft delete (DB v5) ---
+
+    val recentlyDeleted: Flow<List<StudyUnitEntity>> = studyUnitDao.getRecentlyDeleted()
+
+    suspend fun softDeleteUnit(id: Long) {
+        studyUnitDao.softDeleteUnit(id, System.currentTimeMillis())
+    }
+
+    suspend fun restoreDeletedUnit(id: Long) {
+        studyUnitDao.restoreDeletedUnit(id, System.currentTimeMillis())
+    }
+
+    /** Hard-delete topics whose 30-day grace expired, HISTORY FIRST so a crash can't orphan logs. */
+    suspend fun purgeExpiredDeleted(graceMillis: Long = 30L * 24 * 60 * 60 * 1000) {
+        val cutoff = System.currentTimeMillis() - graceMillis
+        val ids = studyUnitDao.getPurgeCandidateIds(cutoff)
+        if (ids.isEmpty()) return
+        database.withTransaction {
+            reviewLogDao.deleteLogsForUnits(ids)
+            studyUnitDao.hardDeleteUnits(ids)
+        }
+    }
+
+    /**
+     * An ARCHIVED (non-deleted) topic with this exact normalized title, if one exists — so re-adding
+     * a topic you archived offers "restore it, with its whole history" instead of a duplicate.
+     */
+    suspend fun findArchivedDuplicate(title: String): StudyUnitEntity? {
+        fun norm(s: String) = s.trim().lowercase()
+        return studyUnitDao.findByTitleAnyState(title)
+            .firstOrNull { it.archived && it.deletedAt == null && norm(it.title) == norm(title) }
+    }
     
     // Progress / Stats
     val totalActiveCount: Flow<Int> = studyUnitDao.getTotalActiveUnitsCount()
@@ -128,6 +161,9 @@ class MedReviewRepository(
     suspend fun deleteLogById(logId: Long) {
         reviewLogDao.deleteLogById(logId)
     }
+
+    /** Every committed study action's timestamp — feeds the growth visual (survives topic deletion). */
+    fun studyActionTimes(): Flow<List<Long>> = database.eventLogDao().observeStudyActionTimes()
 
     /** Record a non-review action (procrastinate / redistribute / snooze) for the behavioural log. */
     suspend fun logEvent(type: String, unitId: Long? = null, detail: String? = null) {
@@ -232,6 +268,9 @@ class MedReviewRepository(
             // whole history under today's settings. Pre-v4 rows (-1 sentinels) fall back to current.
             val histRetention = log.desiredRetentionAtReview.takeIf { it in 0.70..0.99 }
             val histImportant = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
+            // Policy snapshot (v5): an UNTOUCHED log replays under the understanding factor originally
+            // applied; the log being EDITED gets the current policy's factor (it's a new decision).
+            val histFactor = if (log.id != logId) log.understandingFactorAtReview.takeIf { it > 0.0 } else null
             val outcome = MedScheduler.review(
                 stability = stability,
                 difficulty = difficulty,
@@ -241,6 +280,7 @@ class MedReviewRepository(
                 highYield = histImportant,
                 reviewNumber = reviewNumber,
                 desiredRetentionOverride = histRetention,
+                understandingFactorOverride = histFactor,
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.
@@ -262,6 +302,10 @@ class MedReviewRepository(
                     // Derived the same way live does; backfills pre-v4 rows as a side effect. All
                     // other v4 context fields (duration, retention-at-review…) are preserved by copy().
                     initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(mem) else null,
+                    // v5 policy snapshot: record the factor actually used this replay (the stored one
+                    // for untouched rows, the current policy's for the edited row / pre-v5 backfill).
+                    schedulerPolicyVersion = log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION },
+                    understandingFactorAtReview = histFactor ?: MedScheduler.understandingFactor(und),
                 )
             )
 
@@ -290,6 +334,9 @@ class MedReviewRepository(
             currentIntervalDays = lastInterval,
             lastReviewedAt = lastReviewedAt,
             nextReviewAt = lastReviewedAt + (lastInterval * 86400000).toLong(),
+            // A replay recomputes the MODEL's truth, and any prior user deferral is superseded by it.
+            modelDueAt = lastReviewedAt + (lastInterval * 86400000).toLong(),
+            deferredUntil = null,
             updatedAt = System.currentTimeMillis(),
         )
         database.withTransaction {

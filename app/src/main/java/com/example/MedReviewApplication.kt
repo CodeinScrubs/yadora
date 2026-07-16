@@ -40,7 +40,7 @@ class MedReviewApplication : Application() {
             AppDatabase::class.java,
             "medreview_db"
         )
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
             .build()
 
         repository = MedReviewRepository(
@@ -51,6 +51,12 @@ class MedReviewApplication : Application() {
         )
 
         // No demo data is seeded: the user's database only ever contains topics they add themselves.
+
+        // Purge topics whose 30-day soft-delete grace expired. Background + best-effort: a failed
+        // purge just retries next launch; it must never delay or crash startup.
+        Thread {
+            runCatching { kotlinx.coroutines.runBlocking { repository.purgeExpiredDeleted() } }
+        }.start()
 
         // Initialize notification channel and schedule reminders based on saved settings
         NotificationScheduler.createNotificationChannel(this)

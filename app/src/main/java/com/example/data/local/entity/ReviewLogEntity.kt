@@ -42,5 +42,12 @@ data class ReviewLogEntity(
     val reviewDurationMs: Long = -1,
     val wasImportantAtReview: Int = -1,             // 1/0; -1 = unknown (pre-v4)
     val desiredRetentionAtReview: Double = -1.0,
-    val schedulerVersion: String = ""
+    val schedulerVersion: String = "",
+    // Policy snapshot (added in DB v5) — the foundation for ever changing a product-layer number
+    // safely. schedulerVersion above names the MEMORY MODEL (FSRS-5); this names the Yadora policy
+    // bundle around it, and understandingFactorAtReview freezes the multiplier actually applied, so
+    // a future factor change replays old reviews under their ORIGINAL factor instead of silently
+    // rewriting history. -1/'' = recorded before v5 (replay falls back to current constants).
+    val schedulerPolicyVersion: String = "",
+    val understandingFactorAtReview: Double = -1.0,
 )

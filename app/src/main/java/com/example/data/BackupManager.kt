@@ -24,7 +24,9 @@ object BackupManager {
     // v3: adds review_logs.logType and the user's settings (reminder time, retention, language, exam…)
     // so a restore on a NEW phone recreates the whole study setup, not just the data. Restore stays
     // tolerant of v1/v2 files (missing fields fall back to defaults; missing settings are skipped).
-    const val BACKUP_VERSION = 4 // v4: adds per-review context fields (initialDifficulty, duration, …)
+    // v5: honest-scheduling fields (modelDueAt/deferredUntil), soft delete (deletedAt), per-log
+    // policy snapshot (schedulerPolicyVersion/understandingFactorAtReview).
+    const val BACKUP_VERSION = 5
 
     // The user-preference keys worth carrying across devices (deliberately excludes transient state
     // like last_notif_shown_at).
@@ -38,7 +40,11 @@ object BackupManager {
         val db = (context.applicationContext as MedReviewApplication).database
         val subjects = db.categoryDao().getAllSubjects().first()
         val systems = db.categoryDao().getAllSystems().first()
-        val units = db.studyUnitDao().getAllActiveUnits().first() + db.studyUnitDao().getArchivedUnits().first()
+        // Recently-deleted units MUST be exported too: their logs are still in the DB, and a backup
+        // whose logs reference a missing topic would (correctly) fail restore preflight.
+        val units = db.studyUnitDao().getAllActiveUnits().first() +
+            db.studyUnitDao().getArchivedUnits().first() +
+            db.studyUnitDao().getRecentlyDeleted().first()
         val logs = db.reviewLogDao().getLogsSince(0L).first()
         val events = db.eventLogDao().getAll()
 
@@ -70,6 +76,8 @@ object BackupManager {
                 put("lastReviewedAt", u.lastReviewedAt ?: JSONObject.NULL); put("nextReviewAt", u.nextReviewAt)
                 put("currentIntervalDays", u.currentIntervalDays); put("reviewCount", u.reviewCount)
                 put("lapseCount", u.lapseCount); put("archived", u.archived)
+                put("modelDueAt", u.modelDueAt); put("deferredUntil", u.deferredUntil ?: JSONObject.NULL)
+                put("deletedAt", u.deletedAt ?: JSONObject.NULL)
             })
         })
         root.put("reviewLogs", JSONArray().apply {
@@ -83,6 +91,8 @@ object BackupManager {
                 put("initialDifficulty", l.initialDifficulty ?: JSONObject.NULL)
                 put("reviewDurationMs", l.reviewDurationMs); put("wasImportantAtReview", l.wasImportantAtReview)
                 put("desiredRetentionAtReview", l.desiredRetentionAtReview); put("schedulerVersion", l.schedulerVersion)
+                put("schedulerPolicyVersion", l.schedulerPolicyVersion)
+                put("understandingFactorAtReview", l.understandingFactorAtReview)
             })
         })
         root.put("eventLogs", JSONArray().apply {
@@ -155,7 +165,11 @@ object BackupManager {
                 nextReviewAt = o.optLong("nextReviewAt", System.currentTimeMillis()),
                 currentIntervalDays = o.optDouble("currentIntervalDays", 0.0),
                 reviewCount = o.optInt("reviewCount", 0), lapseCount = o.optInt("lapseCount", 0),
-                archived = o.optBoolean("archived", false)
+                archived = o.optBoolean("archived", false),
+                // Pre-v5 backups: the effective date was the only date — same backfill the migration uses.
+                modelDueAt = o.optLong("modelDueAt", o.optLong("nextReviewAt", System.currentTimeMillis())),
+                deferredUntil = o.longOrNull("deferredUntil"),
+                deletedAt = o.longOrNull("deletedAt"),
             )
         }
         // Whole-file preflight: reject structurally corrupt topics BEFORE any current data is deleted.
@@ -203,7 +217,9 @@ object BackupManager {
                 reviewDurationMs = o.optLong("reviewDurationMs", -1L),
                 wasImportantAtReview = o.optInt("wasImportantAtReview", -1),
                 desiredRetentionAtReview = o.optDouble("desiredRetentionAtReview", -1.0),
-                schedulerVersion = o.optString("schedulerVersion", "")
+                schedulerVersion = o.optString("schedulerVersion", ""),
+                schedulerPolicyVersion = o.optString("schedulerPolicyVersion", ""),
+                understandingFactorAtReview = o.optDouble("understandingFactorAtReview", -1.0),
             )
         }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.
