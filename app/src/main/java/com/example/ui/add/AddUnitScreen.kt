@@ -140,6 +140,9 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             updated = updated.copy(
                                 nextReviewAt = tighterNext,
                                 modelDueAt = tighterNext,
+                                // The model reclaimed the schedule — a stale deferral marker would
+                                // make this honest-scheduling data lie about who chose the date.
+                                deferredUntil = null,
                                 currentIntervalDays = tighter,
                             )
                         }
