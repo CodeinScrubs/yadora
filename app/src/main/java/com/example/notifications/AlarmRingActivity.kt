@@ -35,11 +35,25 @@ import com.example.ui.theme.MyApplicationTheme
  */
 class AlarmRingActivity : ComponentActivity() {
 
+    companion object {
+        // The ringing lives in this activity, so a notification action or the main app opening needs
+        // a way to silence it from outside. Same-process only; cleared in onDestroy.
+        @Volatile
+        private var active: AlarmRingActivity? = null
+
+        /** Silence + close the ringing alarm screen if one exists. Safe to call from anywhere. */
+        fun dismissActive() {
+            val a = active ?: return
+            a.runOnUiThread { runCatching { a.stopAndFinish() } }
+        }
+    }
+
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        active = this
 
         // Show over the lock screen and wake the display, like a real alarm clock.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -100,7 +114,9 @@ class AlarmRingActivity : ComponentActivity() {
     }
 
     private fun startRinging() {
-        runCatching {
+        val sp = getSharedPreferences("medreview_settings", MODE_PRIVATE)
+        // Respect the user's sound toggle: sound off + alarm mode on = a silent, vibrating alarm.
+        if (sp.getBoolean("sound_enabled", true)) runCatching {
             val uri = RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             ringtone = RingtoneManager.getRingtone(this, uri)?.apply {
@@ -116,7 +132,6 @@ class AlarmRingActivity : ComponentActivity() {
             }
         }
         runCatching {
-            val sp = getSharedPreferences("medreview_settings", MODE_PRIVATE)
             if (!sp.getBoolean("vibration_enabled", true)) return@runCatching
             vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 (getSystemService(VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager).defaultVibrator
@@ -161,13 +176,24 @@ class AlarmRingActivity : ComponentActivity() {
         finish()
     }
 
-    private fun stopAndFinish() {
+    internal fun stopAndFinish() {
         stopRinging()
         finish()
     }
 
+    override fun onStop() {
+        // The user left (Home button, another app): a ringing alarm with no visible Dismiss button is
+        // a trap — stop the noise and close. (Skip during rotation, which also passes through onStop.)
+        if (!isChangingConfigurations && !isFinishing) {
+            stopRinging()
+            finish()
+        }
+        super.onStop()
+    }
+
     override fun onDestroy() {
         stopRinging()
+        if (active === this) active = null
         super.onDestroy()
     }
 }

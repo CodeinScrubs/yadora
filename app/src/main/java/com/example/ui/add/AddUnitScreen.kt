@@ -422,8 +422,13 @@ fun AddUnitScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
             Text(strings.subjectFolder, style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = when (strings.languageCode) { "fa" -> "مثلاً: شیمی، آناتومی"; "de" -> "z. B.: Chemie, Anatomie"; else -> "e.g. Chemistry, Anatomy" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             ExposedDropdownMenuBox(
                 expanded = showSubjectDropdown,
                 onExpandedChange = { showSubjectDropdown = it }
@@ -517,6 +522,20 @@ fun AddUnitScreen(
             }
             
             Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = when (strings.languageCode) { "fa" -> "یادداشت / توضیح (اختیاری)"; "de" -> "Notizen / Erklärung (optional)"; else -> "Notes / Explanation (optional)" },
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                text = when (strings.languageCode) {
+                    "fa" -> "نکات کلیدی، یک خلاصه، یا چیزی که موقع مرور کمکت می‌کند به یاد بیاوری."
+                    "de" -> "Kernpunkte, eine kurze Zusammenfassung oder was dir beim Wiederholen hilft."
+                    else -> "Key points, a short summary, or anything that helps you recall it at review time."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = notes,
                 onValueChange = { notes = it },
@@ -536,12 +555,26 @@ fun AddUnitScreen(
                 } else null,
                 shape = RoundedCornerShape(12.dp)
             )
-            
+
             Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = when (strings.languageCode) { "fa" -> "منبع (اختیاری)"; "de" -> "Quelle (optional)"; else -> "Source (optional)" },
+                style = MaterialTheme.typography.titleSmall
+            )
+            Text(
+                text = when (strings.languageCode) {
+                    "fa" -> "از کجا خواندی؟ مثلاً جزوه، فلش‌کارت، اسلاید، ویدیو."
+                    "de" -> "Womit hast du gelernt? z. B. Notizen, Karteikarten, Vorlesung, Video."
+                    else -> "What did you study from? e.g. notes, flashcards, lectures, videos."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
                 value = sourceLink,
                 onValueChange = { sourceLink = it },
-                label = { Text(if (strings.languageCode == "fa") "منبع (اختیاری)" else "Source (Optional)") },
+                label = { Text(when (strings.languageCode) { "fa" -> "منبع"; "de" -> "Quelle"; else -> "Source" }) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
@@ -566,6 +599,11 @@ fun AddUnitScreen(
                     supportingContent = {
                         Column {
                             Text(studiedAt?.let { fmtDate(it) } ?: strings.today)
+                            Text(
+                                text = when (strings.languageCode) { "fa" -> "تاریخی که این را خواندی انتخاب کن"; "de" -> "Wähle den Tag, an dem du es gelernt hast"; else -> "Choose the day you studied this" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             // The study date is the replay origin: changing it after real reviews exist
                             // rebuilds this topic's whole schedule history — warn, don't surprise.
                             if ((viewModel.existingUnit?.reviewCount ?: 0) > 0) {

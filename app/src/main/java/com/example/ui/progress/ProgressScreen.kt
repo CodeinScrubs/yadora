@@ -83,10 +83,12 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0f)
 
     // Counted from all logs with a FRESH 7-day window each emission, so it can't go stale overnight.
+    // FIRST_STUDY rows are difficulty check-ins, not recall reviews — excluded so the count means
+    // "reviews done", consistent with the retention chart (which also excludes them).
     val reviewsLast7Days = repository.getLogsSince(0L)
         .map { logs ->
             val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-            logs.count { it.reviewedAt >= cutoff }
+            logs.count { it.reviewedAt >= cutoff && it.logType != "FIRST_STUDY" }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
         
@@ -132,6 +134,9 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
             fun localDay(ms: Long): Int = ((ms + java.util.TimeZone.getDefault().getOffset(ms)) / (1000L * 60 * 60 * 24)).toInt()
             val counts = mutableMapOf<Int, Int>()
             for (log in list) {
+                // Review consistency, not activity — exclude first-study check-ins so this chart
+                // agrees with the 7-day review count and the retention chart beside it.
+                if (log.logType == "FIRST_STUDY") continue
                 val day = localDay(log.reviewedAt)
                 counts[day] = counts.getOrDefault(day, 0) + 1
             }
@@ -202,6 +207,13 @@ fun ProgressScreen(repository: MedReviewRepository) {
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
     val tabTitles = if (isFarsiLanguage) listOf("نمای کلی", "تقویم مرور") else listOf("Overview", "Calendar Plan")
 
+    // Exam countdown text computed in composable scope (LocalContext can't be read inside LazyColumn items).
+    val examCtx = LocalContext.current
+    val examCountdownText = run {
+        val sp = examCtx.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        com.example.ui.i18n.ExamCountdown.text(sp.getString("exam_name", "") ?: "", sp.getLong("exam_date", 0L), strings.languageCode)
+    }
+
     Scaffold(
         topBar = {
             Column {
@@ -229,7 +241,26 @@ fun ProgressScreen(repository: MedReviewRepository) {
                 item {
                     Text(strings.overview, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-                
+
+                // Exam countdown, consistent with Today/Library (exam day itself not counted).
+                if (examCountdownText != null) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                        ) {
+                            Text(
+                                text = examCountdownText,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                    }
+                }
+
                 item {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatCard(title = strings.totalTopics, value = total.toString(), modifier = Modifier.weight(1f))

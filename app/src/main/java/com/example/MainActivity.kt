@@ -15,6 +15,8 @@ class MainActivity : ComponentActivity() {
 
   override fun onNewIntent(intent: android.content.Intent) {
     super.onNewIntent(intent)
+    // Opening the app always silences a ringing alarm — the app itself is the answer to it.
+    runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
     if (intent.getBooleanExtra("open_review", false)) {
       openReviewSignal.value++
       androidx.core.app.NotificationManagerCompat.from(this).cancel(com.example.notifications.NotificationScheduler.NOTIFICATION_ID)
@@ -27,6 +29,7 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     val app = application as MedReviewApplication
+    runCatching { com.example.notifications.AlarmRingActivity.dismissActive() } // opening the app silences a ringing alarm
     com.example.widget.DueWidgetProvider.updateAll(this) // keep the home-screen count fresh on open
     if (intent?.getBooleanExtra("open_review", false) == true) {
       openReviewSignal.value++

@@ -119,7 +119,8 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
             composable<Screen.Library> {
                 LibraryScreen(
                     repository = repository,
-                    onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) }
+                    onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) },
+                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) }
                 )
             }
             composable<Screen.Progress> {

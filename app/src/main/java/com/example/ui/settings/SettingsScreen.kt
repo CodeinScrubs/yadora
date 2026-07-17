@@ -932,7 +932,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(onClick = { exportLauncher.launch("yadora_analytics.json") }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (language == "fa") "خروجی تحلیلی" else "Export analytics")
+                    Text(when (language) { "fa" -> "استخراج تحلیل‌ها / لاگ‌ها"; "de" -> "Analysen / Logs extrahieren"; else -> "Extract analytics / logs" })
                 }
             }
 
@@ -968,13 +968,34 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         // Opens the Telegram app if installed (it claims telegram.me links), otherwise
                         // the browser — so it works for everyone.
                         Text(
-                            text = if (language == "fa") "ارتباط در تلگرام: @shayan_salehirad" else "Contact on Telegram: @shayan_salehirad",
+                            text = if (language == "fa") "ارتباط با ما در تلگرام: @shayan_salehirad" else "Contact us on Telegram: @shayan_salehirad",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
                                 .padding(top = 2.dp)
                                 .clickable { runCatching { uriHandler.openUri("https://telegram.me/shayan_salehirad") } }
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        // Email: opens the user's mail app with our address prefilled.
+                        val emailContext = androidx.compose.ui.platform.LocalContext.current
+                        Text(
+                            text = when (language) { "fa" -> "ارتباط با ما از طریق ایمیل"; "de" -> "Kontaktiere uns per E-Mail"; else -> "Contact us via email" },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .clickable {
+                                    runCatching {
+                                        emailContext.startActivity(
+                                            android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                                                data = android.net.Uri.parse("mailto:shayanay80@gmail.com")
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, "Yadora")
+                                            }
+                                        )
+                                    }
+                                }
                         )
 
                         Spacer(modifier = Modifier.height(14.dp))

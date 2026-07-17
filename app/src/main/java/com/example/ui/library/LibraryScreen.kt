@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
@@ -132,7 +133,8 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
 @Composable
 fun LibraryScreen(
     repository: MedReviewRepository,
-    onNavigateToEdit: (Long) -> Unit = {}
+    onNavigateToEdit: (Long) -> Unit = {},
+    onNavigateToAdd: () -> Unit = {}
 ) {
     val viewModel: LibraryViewModel = viewModel(factory = LibraryViewModelFactory(repository))
     val units by viewModel.filteredUnits.collectAsStateWithLifecycle()
@@ -243,6 +245,17 @@ fun LibraryScreen(
             } else {
                 TopAppBar(title = { Text(strings.library, fontWeight = FontWeight.Bold) })
             }
+        },
+        floatingActionButton = {
+            // Same quick-add entry point as Today, so adding a topic never requires switching tabs.
+            if (selectedIds.isEmpty()) {
+                FloatingActionButton(
+                    onClick = onNavigateToAdd,
+                    containerColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = strings.addNewTopic, tint = MaterialTheme.colorScheme.onPrimary)
+                }
+            }
         }
     ) { padding ->
         Column(
@@ -250,6 +263,21 @@ fun LibraryScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            // Exam countdown, consistent with Today/Progress (exam day not counted).
+            val examText = com.example.ui.i18n.ExamCountdown.text(
+                libContext.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE).getString("exam_name", "") ?: "",
+                libContext.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE).getLong("exam_date", 0L),
+                strings.languageCode
+            )
+            if (examText != null) {
+                Text(
+                    text = examText,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

@@ -42,6 +42,7 @@ object NotificationScheduler {
     const val ACTION_SNOOZE = "com.example.notifications.ACTION_SNOOZE"
     const val ACTION_TEST = "com.example.notifications.ACTION_TEST"
     const val ACTION_NOT_TODAY = "com.example.notifications.ACTION_NOT_TODAY"
+    const val ACTION_DISMISS = "com.example.notifications.ACTION_DISMISS"
 
     private const val REQ_DAILY = 1001
     private const val REQ_OPEN = 1004
@@ -51,6 +52,7 @@ object NotificationScheduler {
     private const val REQ_FULLSCREEN = 1008
     private const val REQ_NOT_TODAY = 1009
     private const val REQ_DAILY_2 = 1010
+    private const val REQ_DISMISS = 1011
 
     private const val REPEAT_INTERVAL_MS = 3L * 60 * 60 * 1000 // re-nudge every ~3h
     private const val WAKING_START_HOUR = 8
@@ -179,9 +181,16 @@ object NotificationScheduler {
             add(Calendar.DAY_OF_YEAR, 1)
         }.timeInMillis
         armAlarm(context, next, REQ_DAILY, ACTION_FIRE)
-        // The secondary slot fires only when something is due — arming it for tomorrow is safe even
-        // when today is clear (the FIRE handler checks the due count before showing anything).
-        armAlarm(context, nextSecondarySlotTime(context), REQ_DAILY_2, ACTION_FIRE)
+        // This API promises TOMORROW only: nextSecondarySlotTime() could still return TODAY's slot
+        // (harmless — the fire checks the due count — but a pointless wakeup). Arm tomorrow explicitly.
+        val nextSecondary = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, secondaryReminderHour(hour))
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        armAlarm(context, nextSecondary, REQ_DAILY_2, ACTION_FIRE)
     }
 
     /** Arm a one-off TEST reminder that always fires (ignores due count). For verifying the pipeline. */
@@ -311,6 +320,8 @@ object NotificationScheduler {
 
         val isDe = (sp.getString("app_language", "en") ?: "en") == "de"
         val title = when {
+            // A test fire with nothing due should say what it is, not cry wolf.
+            count <= 0 && !markShown -> if (isFa) "یادآور آزمایشی — کار می‌کند." else if (isDe) "Test-Erinnerung — funktioniert." else "Test reminder — it works."
             count <= 0 -> if (isFa) "زمان مرور فرا رسیده!" else if (isDe) "Zeit zum Wiederholen!" else "Time to review!"
             isFa -> "${n(count)} مبحث برای مرور"
             isDe -> if (count == 1) "1 Thema zur Wiederholung" else "$count Themen zur Wiederholung"
@@ -349,6 +360,11 @@ object NotificationScheduler {
             context, REQ_NOT_TODAY, notTodayIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val dismissIntent = Intent(context, ReviewReminderReceiver::class.java).apply { action = ACTION_DISMISS }
+        val dismissPi = PendingIntent.getBroadcast(
+            context, REQ_DISMISS, dismissIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
         val alarmMode = sp.getBoolean("alarm_enabled", false)
         val channel = if (alarmMode) { createAlarmChannel(context); ALARM_CHANNEL_ID } else channelId(context)
@@ -369,7 +385,15 @@ object NotificationScheduler {
             .setAutoCancel(true)
             .setShowWhen(true)
             .addAction(0, reviewNowLabel, openPi)
-            .addAction(0, snoozeLabel, snoozePi)
+        // Android shows at most 3 actions. In alarm mode the ringing MUST be dismissible from the
+        // notification shade (the ring screen can be backgrounded with Home) — Dismiss replaces
+        // Snooze there; in normal mode Snooze stays and swiping the notification away dismisses it.
+        if (alarmMode) {
+            val dismissLabel = if (isFa) "قطع هشدار" else if (isDe) "Stopp" else "Dismiss"
+            builder.addAction(0, dismissLabel, dismissPi)
+        } else {
+            builder.addAction(0, snoozeLabel, snoozePi)
+        }
         if (largeIcon != null) builder.setLargeIcon(largeIcon)
         if (count > 0) {
             // Expandable list of what's waiting + the "Not today" action (procrastinate everything to

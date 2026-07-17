@@ -12,7 +12,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -99,6 +102,12 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
         val end = endOfToday()
         units.filter { TodayBuckets.isUpcoming(it.nextReviewAt, end) }.sortedBy { it.nextReviewAt }.take(5)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // The full upcoming list (not capped at 5), for the "what's coming" calendar dialog.
+    val allUpcoming: StateFlow<List<StudyUnitEntity>> = repository.activeUnits.combine(dayTick) { units, _ ->
+        val end = endOfToday()
+        units.filter { TodayBuckets.isUpcoming(it.nextReviewAt, end) }.sortedBy { it.nextReviewAt }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -143,6 +152,61 @@ class TodayViewModelFactory(private val repository: MedReviewRepository) : ViewM
     }
 }
 
+/**
+ * "What's coming" — upcoming reviews grouped by due date, so the user gets a feel for the days ahead.
+ * Read-only; tapping a topic isn't needed here (that's what Library is for).
+ */
+@Composable
+private fun UpcomingScheduleDialog(
+    upcoming: List<StudyUnitEntity>,
+    useJalali: Boolean,
+    languageCode: String,
+    onDismiss: () -> Unit,
+) {
+    val byDay = remember(upcoming) {
+        upcoming.groupBy {
+            java.util.Calendar.getInstance().apply {
+                timeInMillis = it.nextReviewAt
+                set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }.toSortedMap()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text(when (languageCode) { "fa" -> "بستن"; "de" -> "Schließen"; else -> "Close" }) } },
+        title = { Text(when (languageCode) { "fa" -> "روزهای پیش رو"; "de" -> "Kommende Tage"; else -> "The days ahead" }) },
+        text = {
+            if (byDay.isEmpty()) {
+                Text(when (languageCode) { "fa" -> "فعلاً چیزی در برنامه نیست."; "de" -> "Noch nichts geplant."; else -> "Nothing scheduled yet." })
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    byDay.forEach { (day, topics) ->
+                        item {
+                            Text(
+                                text = com.example.ui.i18n.AppDate.weekdayDate(useJalali, day),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                            )
+                        }
+                        items(topics) { t ->
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (t.highYield) {
+                                    Box(modifier = Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.tertiary))
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text(t.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodayScreen(
@@ -160,8 +224,10 @@ fun TodayScreen(
     val overdue by viewModel.overdueUnits.collectAsStateWithLifecycle()
     val dueToday by viewModel.dueTodayUnits.collectAsStateWithLifecycle()
     val upcoming by viewModel.upcomingUnits.collectAsStateWithLifecycle()
+    val allUpcoming by viewModel.allUpcoming.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val totalActive by viewModel.totalActive.collectAsStateWithLifecycle()
+    var showUpcomingSchedule by remember { mutableStateOf(false) }
         val strings = com.example.ui.i18n.LocalStrings.current
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
 
@@ -195,6 +261,15 @@ fun TodayScreen(
     }
     val displayDue = minOf(totalDue, dailyLimit)
     val estimatedTimeMin = displayDue * 2
+
+    if (showUpcomingSchedule) {
+        UpcomingScheduleDialog(
+            upcoming = allUpcoming,
+            useJalali = useJalali,
+            languageCode = strings.languageCode,
+            onDismiss = { showUpcomingSchedule = false }
+        )
+    }
 
     Scaffold(
             topBar = {
@@ -242,20 +317,19 @@ fun TodayScreen(
                 .background(MaterialTheme.colorScheme.background)
         ) {
             // Exam countdown (top-left), shown only when an exam name + future date are set.
+            // Shared logic (ExamCountdown) — exam day itself is not counted; same text on all screens.
             val examSp = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-            val examNamePref = examSp.getString("exam_name", "") ?: ""
-            val examDatePref = examSp.getLong("exam_date", 0L)
-            if (examNamePref.isNotBlank() && examDatePref > 0L) {
-                val daysLeft = Math.ceil((examDatePref - System.currentTimeMillis()) / 86400000.0).toLong()
-                if (daysLeft >= 0) {
-                    Text(
-                        text = if (strings.languageCode == "fa") "${com.example.ui.i18n.PersianDate.faDigits(daysLeft)} روز تا $examNamePref" else "$daysLeft days until $examNamePref",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(start = 16.dp, top = 2.dp)
-                    )
-                }
+            val examText = com.example.ui.i18n.ExamCountdown.text(
+                examSp.getString("exam_name", "") ?: "", examSp.getLong("exam_date", 0L), strings.languageCode
+            )
+            if (examText != null) {
+                Text(
+                    text = examText,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(start = 16.dp, top = 2.dp)
+                )
             }
             // One calm hero card: greeting, what's on the plate, and the single primary action.
             run {
@@ -370,20 +444,31 @@ fun TodayScreen(
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 } else {
-                                    Text(
-                                        text = if (isFarsi) "برای امروز تمام شد" else "All caught up for today",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = when (strings.languageCode) { "fa" -> "برای امروز تمام شد"; "de" -> "Für heute fertig"; else -> "Finished for today" },
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        // Peek at what's coming: opens a by-day list of upcoming reviews.
+                                        IconButton(onClick = { showUpcomingSchedule = true }, modifier = Modifier.size(28.dp)) {
+                                            Icon(
+                                                imageVector = Icons.Default.DateRange,
+                                                contentDescription = when (strings.languageCode) { "fa" -> "برنامهٔ روزهای آینده"; "de" -> "Kommende Tage"; else -> "Upcoming schedule" },
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(6.dp))
                                     // Honest next-review line: the real date of the next upcoming item,
                                     // not a hardcoded "tomorrow" (which was simply wrong for longer gaps).
                                     val nextUp = upcoming.firstOrNull()
                                     Text(
-                                        text = if (nextUp == null) (if (isFarsi) "فعلاً چیزی در برنامه نیست." else "Nothing scheduled yet.")
-                                               else (if (isFarsi) "مرور بعدی: " else "Next review: ") + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt),
+                                        text = if (nextUp == null) (when (strings.languageCode) { "fa" -> "فعلاً چیزی در برنامه نیست."; "de" -> "Noch nichts geplant."; else -> "Nothing scheduled yet." })
+                                               else (when (strings.languageCode) { "fa" -> "مرور بعدی: "; "de" -> "Nächste: "; else -> "Next: " }) + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -552,17 +637,19 @@ fun StudyUnitCard(
         sy < cy || (sy == cy && sd < cd)
     }
 
-    val backgroundColor = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
-    
-    val borderStroke = when {
-        selected -> androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-        isBackdated -> androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
-        else -> androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    }
+    // Smoothly animated selection (no hard border/shadow snap): a gentle tint + border tween.
+    val targetBg = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
+    val backgroundColor by androidx.compose.animation.animateColorAsState(targetBg, label = "cardBg")
+    val borderColor by androidx.compose.animation.animateColorAsState(
+        when {
+            selected -> MaterialTheme.colorScheme.primary
+            isBackdated -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f)
+            else -> MaterialTheme.colorScheme.outline
+        },
+        label = "cardBorder"
+    )
+    val borderWidth by androidx.compose.animation.core.animateDpAsState(if (selected) 2.dp else 1.dp, label = "cardBorderW")
+    val elevation by androidx.compose.animation.core.animateDpAsState(if (selected) 4.dp else 2.dp, label = "cardElev")
 
     Surface(
         modifier = Modifier
@@ -570,14 +657,15 @@ fun StudyUnitCard(
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    // Gentle tick, not the heavy long-press buzz — this is a light "selected", not an alert.
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onLongClick?.invoke()
                 }
             ),
         shape = RoundedCornerShape(24.dp),
         color = backgroundColor,
-        border = borderStroke,
-        shadowElevation = if (selected) 4.dp else 2.dp
+        border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor),
+        shadowElevation = elevation
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -589,11 +677,14 @@ fun StudyUnitCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    if (selectable) {
-                        Checkbox(
-                            checked = selected,
-                            onCheckedChange = null,
-                            modifier = Modifier.padding(end = 8.dp)
+                    // Selection indicator animates in/out (expand + fade) instead of popping and
+                    // shoving the title sideways — the source of the old "weird" feel.
+                    androidx.compose.animation.AnimatedVisibility(visible = selectable) {
+                        Icon(
+                            imageVector = if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            modifier = Modifier.padding(end = 8.dp).size(22.dp)
                         )
                     }
                     Box(

@@ -333,7 +333,9 @@ class MedReviewRepository(
                     initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(mem) else null,
                     // v5 policy snapshot: record the factor actually used this replay (the stored one
                     // for untouched rows, the current policy's for the edited row / pre-v5 backfill).
-                    schedulerPolicyVersion = log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION },
+                    // The EDITED row is a new decision under the CURRENT policy — its version must say so.
+                    schedulerPolicyVersion = if (log.id == logId) MedScheduler.POLICY_VERSION
+                        else log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION },
                     understandingFactorAtReview = histFactor ?: MedScheduler.understandingFactor(und),
                 )
             )

@@ -38,6 +38,12 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                     try { NotificationScheduler.showReviewNotification(appContext, markShown = false) } finally { pending.finish() }
                 }.start()
             }
+            NotificationScheduler.ACTION_DISMISS -> {
+                // "Dismiss" (alarm mode): silence the ringing screen + clear the notification.
+                // No schedule change, no snooze — the daily chain stays armed for the next slot.
+                AlarmRingActivity.dismissActive()
+                NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
+            }
             NotificationScheduler.ACTION_SNOOZE -> {
                 // Re-remind later WITHOUT changing any topic's schedule.
                 NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)

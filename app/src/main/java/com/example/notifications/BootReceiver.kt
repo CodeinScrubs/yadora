@@ -38,10 +38,17 @@ class BootReceiver : BroadcastReceiver() {
                 val hour = sp.getInt("reminder_hour", 20)
                 val minute = sp.getInt("reminder_minute", 0)
                 val now = Calendar.getInstance()
-                val reminderToday = Calendar.getInstance().apply {
+                // Catch-up threshold = the EARLIER of the two daily slots, so a phone that was off
+                // through the morning slot still catches up before the evening one.
+                val primaryToday = Calendar.getInstance().apply {
                     set(Calendar.HOUR_OF_DAY, hour); set(Calendar.MINUTE, minute)
                     set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
                 }
+                val secondaryToday = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, NotificationScheduler.secondaryReminderHour(hour)); set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                val reminderToday = if (secondaryToday.before(primaryToday)) secondaryToday else primaryToday
                 val endOfToday = Calendar.getInstance().apply {
                     set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
                     set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
