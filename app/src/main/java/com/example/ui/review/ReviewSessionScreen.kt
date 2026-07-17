@@ -348,9 +348,8 @@ class ReviewViewModel(
             }
             ratedStack.add(ReviewHistoryItem(unit.copy(), logId, memoryRating))
             canUndo = ratedStack.isNotEmpty()
-            // Growth-visual feed: one event per committed study action, kept in event_logs (NOT tied
-            // to the topic row) so earned growth survives topic deletion. Best-effort by design.
-            runCatching { repository.logEvent("STUDY_ACTION", unitId = unit.id) }
+            // (The growth event is inserted inside commitReview's transaction, keyed to the log id,
+            // so a committed review and its growth can never disagree — and undo removes both.)
             com.example.widget.DueWidgetProvider.updateAll(getApplication())
             lastReason = buildReasonText(memoryRating, understandingRating, unit.highYield, nextInterval, reviewNumber == 0)
 
@@ -378,7 +377,6 @@ class ReviewViewModel(
         isProcessing = true
         viewModelScope.launch {
             try {
-                val unit = repository.getUnitById(currentId) ?: return@launch
                 val tomorrow = java.util.Calendar.getInstance().apply {
                     add(java.util.Calendar.DAY_OF_YEAR, 1)
                     set(java.util.Calendar.HOUR_OF_DAY, 8)
@@ -386,11 +384,18 @@ class ReviewViewModel(
                     set(java.util.Calendar.SECOND, 0)
                     set(java.util.Calendar.MILLISECOND, 0)
                 }.timeInMillis
-                repository.updateUnit(unit.copy(nextReviewAt = tomorrow, updatedAt = System.currentTimeMillis()))
-                repository.logEvent("PROCRASTINATE", unitId = unit.id, detail = "${unit.nextReviewAt}->$tomorrow")
+                // One transactional deferral (v5 semantics: deferredUntil set, modelDueAt untouched,
+                // audit event atomic with the schedule change).
+                repository.procrastinateUnit(currentId, tomorrow)
                 com.example.notifications.NotificationScheduler.scheduleDailyReminder(getApplication())
                 com.example.widget.DueWidgetProvider.updateAll(getApplication())
                 advanceUnit()
+            } catch (t: Throwable) {
+                // Same contract as rating: a failed write leaves the card in place and tells the user.
+                lastReason = if (getApplication<android.app.Application>()
+                        .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                        .getString("app_language", "en") == "fa"
+                ) "انجام نشد — مبحث تغییری نکرد. دوباره تلاش کن." else "That didn't save — the topic is unchanged. Please try again."
             } finally {
                 isProcessing = false
             }

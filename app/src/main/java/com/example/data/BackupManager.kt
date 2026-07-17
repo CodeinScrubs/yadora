@@ -178,6 +178,18 @@ object BackupManager {
         require(units.map { it.id }.toSet().size == units.size) { "Damaged backup: duplicate topic ids" }
         require(subjects.map { it.id }.toSet().size == subjects.size) { "Damaged backup: duplicate subject ids" }
         require(systems.map { it.id }.toSet().size == systems.size) { "Damaged backup: duplicate collection ids" }
+        // Positive ids only: id 0 would be silently REASSIGNED by Room's autoGenerate on insert,
+        // orphaning every review log that still references the exported id.
+        require(units.all { it.id > 0 }) { "Damaged backup: topic with invalid id" }
+        require(subjects.all { it.id > 0 }) { "Damaged backup: subject with invalid id" }
+        require(systems.all { it.id > 0 }) { "Damaged backup: collection with invalid id" }
+        // Category references must resolve (null = "no subject" is fine; a dangling id is corruption).
+        val subjectIds = subjects.mapTo(HashSet()) { it.id }
+        val systemIds = systems.mapTo(HashSet()) { it.id }
+        units.forEachIndexed { i, u ->
+            require(u.subjectId == null || u.subjectId in subjectIds) { "Damaged backup: topic ${i + 1} references missing subject" }
+            require(u.systemId == null || u.systemId in systemIds) { "Damaged backup: topic ${i + 1} references missing collection" }
+        }
         units.forEachIndexed { i, u ->
             require(u.stability > 0.0 && u.stability.isFinite()) { "Damaged backup: invalid stability (topic ${i + 1})" }
             require(u.difficulty in 1.0..10.0) { "Damaged backup: invalid difficulty (topic ${i + 1})" }
@@ -224,6 +236,7 @@ object BackupManager {
         }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.
         require(logs.map { it.id }.toSet().size == logs.size) { "Damaged backup: duplicate review-log ids" }
+        require(logs.all { it.id > 0 }) { "Damaged backup: review log with invalid id" }
 
         // v1 backups have no eventLogs array; that's fine — restore just clears the table.
         val eventsArr = root.optJSONArray("eventLogs") ?: JSONArray()

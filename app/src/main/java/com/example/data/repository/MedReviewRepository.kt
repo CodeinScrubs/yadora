@@ -165,6 +165,26 @@ class MedReviewRepository(
     /** Every committed study action's timestamp — feeds the growth visual (survives topic deletion). */
     fun studyActionTimes(): Flow<List<Long>> = database.eventLogDao().observeStudyActionTimes()
 
+    /**
+     * Per-topic "Not today": push ONE unit to [until] as a USER DEFERRAL — v5 semantics, exactly like
+     * the bulk paths: nextReviewAt + deferredUntil move together, modelDueAt is untouched, and the
+     * schedule change + its audit event land in ONE transaction (a crash can't record one without
+     * the other). The FSRS memory state is never touched — this is not a review.
+     */
+    suspend fun procrastinateUnit(id: Long, until: Long) {
+        database.withTransaction {
+            val unit = studyUnitDao.getUnitById(id) ?: return@withTransaction
+            studyUnitDao.updateUnit(
+                unit.copy(nextReviewAt = until, deferredUntil = until, updatedAt = System.currentTimeMillis())
+            )
+            database.eventLogDao().insert(
+                com.example.data.local.entity.EventLogEntity(
+                    type = "PROCRASTINATE", unitId = id, detail = "${unit.nextReviewAt}->$until"
+                )
+            )
+        }
+    }
+
     /** Record a non-review action (procrastinate / redistribute / snooze) for the behavioural log. */
     suspend fun logEvent(type: String, unitId: Long? = null, detail: String? = null) {
         database.eventLogDao().insert(
@@ -172,25 +192,34 @@ class MedReviewRepository(
         )
     }
 
-    /** Persist a review atomically: update the unit's schedule AND insert its log. Returns the log id. */
+    /**
+     * Persist a review atomically: the unit's schedule, its log, AND its growth event land in one
+     * transaction (keyed by the log id, so undo can remove exactly this event). Returns the log id.
+     */
     suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity): Long {
         var logId = 0L
         database.withTransaction {
             studyUnitDao.updateUnit(updatedUnit)
             logId = reviewLogDao.insertLog(log)
+            database.eventLogDao().insert(
+                com.example.data.local.entity.EventLogEntity(
+                    type = "STUDY_ACTION", unitId = updatedUnit.id, detail = logId.toString()
+                )
+            )
         }
         return logId
     }
 
     /**
-     * Undo a review atomically — the mirror of [commitReview]. Restoring the unit and deleting the
-     * log must be one transaction; a crash between the two would leave the schedule and the history
-     * disagreeing with each other.
+     * Undo a review atomically — the mirror of [commitReview]. Restoring the unit, deleting the log,
+     * and removing the growth event must be one transaction; a crash between them would leave the
+     * schedule, the history, and the growth visual disagreeing with each other.
      */
     suspend fun undoReview(previousUnit: StudyUnitEntity, logId: Long) {
         database.withTransaction {
             studyUnitDao.updateUnit(previousUnit)
             reviewLogDao.deleteLogById(logId)
+            database.eventLogDao().deleteStudyActionForLog(logId.toString())
         }
     }
 

@@ -224,6 +224,55 @@ class ReplayEqualsLiveTest {
     }
 
     @Test
+    fun `per-topic not-today is a transactional deferral with an audit event`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Gout", studyType = "Pathology",
+                stability = seed.state.stability, difficulty = seed.state.difficulty,
+                retrievability = 1.0, state = "New",
+                studiedAt = now - 2 * day, nextReviewAt = now - day, modelDueAt = now - day,
+                currentIntervalDays = 0.0, reviewCount = 1, lapseCount = 0,
+            )
+        )
+        val tomorrow = now + day
+        repo.procrastinateUnit(unitId, tomorrow)
+        val after = repo.getUnitById(unitId)!!
+
+        assertEquals("effective date moved", tomorrow, after.nextReviewAt)
+        assertEquals("recorded as a USER deferral", tomorrow, after.deferredUntil)
+        assertEquals("model's own date untouched", now - day, after.modelDueAt)
+        org.junit.Assert.assertTrue(
+            "audit event written atomically with the deferral",
+            db.eventLogDao().getAll().any { it.type == "PROCRASTINATE" && it.unitId == unitId })
+    }
+
+    @Test
+    fun `undo removes the growth event so the visual can't count an undone review`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Anemia", studyType = "Pathology",
+                stability = seed.state.stability, difficulty = seed.state.difficulty,
+                retrievability = 1.0, state = "New",
+                studiedAt = now, nextReviewAt = now, modelDueAt = now,
+                currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0,
+            )
+        )
+        val before = repo.getUnitById(unitId)!!
+        val logId = liveReview(unitId, now, MemoryRating.Good, UnderstandingRating.Clear)
+        assertEquals("commit creates exactly one growth event", 1,
+            db.eventLogDao().getAll().count { it.type == "STUDY_ACTION" })
+
+        repo.undoReview(before, logId)
+        assertEquals("undo removes the growth event with the review", 0,
+            db.eventLogDao().getAll().count { it.type == "STUDY_ACTION" })
+    }
+
+    @Test
     fun `soft delete hides the topic but restore brings it back with history`() = runBlocking {
         val now = System.currentTimeMillis()
         val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)

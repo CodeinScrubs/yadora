@@ -23,7 +23,10 @@ object AnalyticsExporter {
         val unitDao = app.database.studyUnitDao()
         val logDao = app.database.reviewLogDao()
 
-        val units = unitDao.getAllActiveUnits().first() + unitDao.getArchivedUnits().first()
+        // Recently-deleted topics included: their logs are still in the DB, and an export where logs
+        // reference a missing topic row would be internally inconsistent for analysis.
+        val units = unitDao.getAllActiveUnits().first() + unitDao.getArchivedUnits().first() +
+            unitDao.getRecentlyDeleted().first()
         val logs = logDao.getLogsSince(0L).first()
         val events = app.database.eventLogDao().getAll()
         val subjects = app.database.categoryDao().getAllSubjects().first()

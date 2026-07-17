@@ -83,16 +83,17 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
         }
     }
 
-    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}) {
+    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
         viewModelScope.launch {
             // Block true duplicates on NEW topics only (editing an existing one is never a dup of itself).
             if (existingUnit == null && repository.isDuplicate(title, subjectId, notes, source)) {
                 onDuplicate()
                 return@launch
             }
-            // An ARCHIVED topic with this title: offer to restore it (with its whole history) instead
-            // of creating a fresh duplicate that starts from zero.
-            if (existingUnit == null) {
+            // An ARCHIVED topic with this title: OFFER to restore it (with its whole history). Only an
+            // offer — the dialog's "Create new" re-invokes save with the check skipped, so a same-title
+            // topic that's genuinely different (e.g. another subject) is never blocked.
+            if (existingUnit == null && !skipArchivedDuplicateCheck) {
                 repository.findArchivedDuplicate(title)?.let { archived ->
                     onArchivedDuplicate(archived)
                     return@launch
@@ -379,7 +380,23 @@ fun AddUnitScreen(
                     }) { Text(when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" }) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { archivedDuplicate = null }) { Text(strings.cancel) }
+                    Row {
+                        // Same title but genuinely different topic (e.g. another subject): the archived
+                        // match is only an OFFER — creating a new topic must never be blocked by it.
+                        TextButton(onClick = {
+                            archivedDuplicate = null
+                            saving = true
+                            viewModel.saveUnit(title, selectedSubjectId, null, "Topic", "", notes, sourceLink, highYield, studiedAt, nextReviewAt,
+                                onSaved = {
+                                    com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
+                                    com.example.widget.DueWidgetProvider.updateAll(reminderContext)
+                                    onBack()
+                                },
+                                onError = { saving = false },
+                                skipArchivedDuplicateCheck = true)
+                        }) { Text(when (strings.languageCode) { "fa" -> "ایجاد مبحث جدید"; "de" -> "Neu anlegen"; else -> "Create new" }) }
+                        TextButton(onClick = { archivedDuplicate = null }) { Text(strings.cancel) }
+                    }
                 }
             )
         }

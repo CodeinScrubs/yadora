@@ -20,6 +20,10 @@ interface EventLogDao {
     @Query("SELECT at FROM event_logs WHERE type = 'STUDY_ACTION' ORDER BY at ASC")
     fun observeStudyActionTimes(): kotlinx.coroutines.flow.Flow<List<Long>>
 
+    /** Undo support: growth events are keyed to their review log (detail = logId) so undo is exact. */
+    @Query("DELETE FROM event_logs WHERE type = 'STUDY_ACTION' AND detail = :logIdStr")
+    suspend fun deleteStudyActionForLog(logIdStr: String)
+
     @Query("DELETE FROM event_logs")
     suspend fun deleteAll()
 }
