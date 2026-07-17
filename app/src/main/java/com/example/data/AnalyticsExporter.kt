@@ -34,7 +34,9 @@ object AnalyticsExporter {
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
 
         val root = JSONObject()
-        root.put("exportVersion", 2)
+        // v3: v5 honest-scheduling fields (modelDueAt/deferredUntil/deletedAt), per-log policy
+        // snapshot, log ids (join key for STUDY_ACTION events), reminder/exam context.
+        root.put("exportVersion", 3)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("scheduler", "FSRS-5")
@@ -71,6 +73,12 @@ object AnalyticsExporter {
             put("userDesiredRetention", sp.getFloat("desired_retention", 0.90f).toDouble())
             put("defaultBaseRetention", com.example.domain.srs.MedScheduler.BASE_RETENTION)
             put("importantRetentionBonus", 0.03)
+            put("policyVersion", com.example.domain.srs.MedScheduler.POLICY_VERSION)
+            // Adherence context: whether reminders were even on, and the exam horizon (a deadline
+            // changes study behavior — the analysis must be able to see it).
+            put("dailyReminderEnabled", sp.getBoolean("daily_reminder", true))
+            put("alarmModeEnabled", sp.getBoolean("alarm_enabled", false))
+            put("examDate", sp.getLong("exam_date", 0L))
         })
 
         val unitsArr = JSONArray()
@@ -92,6 +100,11 @@ object AnalyticsExporter {
                 put("lastReviewedAt", u.lastReviewedAt ?: JSONObject.NULL)
                 put("nextReviewAt", u.nextReviewAt)
                 put("archived", u.archived)
+                // v5 honest scheduling: modelDueAt vs deferredUntil is what lets the analysis tell
+                // "the science said X" apart from "the user moved it to Y".
+                put("modelDueAt", u.modelDueAt)
+                put("deferredUntil", u.deferredUntil ?: JSONObject.NULL)
+                put("deletedAt", u.deletedAt ?: JSONObject.NULL)
             })
         }
         root.put("studyUnits", unitsArr)
@@ -99,6 +112,7 @@ object AnalyticsExporter {
         val logsArr = JSONArray()
         for (l in logs) {
             logsArr.put(JSONObject().apply {
+                put("id", l.id) // join key: STUDY_ACTION events carry the log id in `detail`
                 put("studyUnitId", l.studyUnitId)
                 put("reviewedAt", l.reviewedAt)
                 put("memoryRating", l.memoryRating)
@@ -115,6 +129,8 @@ object AnalyticsExporter {
                 put("wasImportantAtReview", l.wasImportantAtReview)
                 put("desiredRetentionAtReview", l.desiredRetentionAtReview)
                 put("schedulerVersion", l.schedulerVersion)
+                put("schedulerPolicyVersion", l.schedulerPolicyVersion)
+                put("understandingFactorAtReview", l.understandingFactorAtReview)
             })
         }
         root.put("reviewLogs", logsArr)

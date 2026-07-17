@@ -376,7 +376,24 @@ object NotificationScheduler {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, builder.build())
             // Dedup marker: the WorkManager safety net skips today once this is set. Test notifications
             // pass markShown=false so trying the pipeline never suppresses that evening's real safety net.
-            if (markShown) sp.edit().putLong("last_notif_shown_at", System.currentTimeMillis()).apply()
+            if (markShown) {
+                sp.edit().putLong("last_notif_shown_at", System.currentTimeMillis()).apply()
+                // Adherence + reliability research data: WHEN each real reminder fired and how many
+                // topics were waiting. Joined with STUDY_ACTION timestamps this answers "did the
+                // reminder lead to a review?" and "did reminders fire at all on this device?" —
+                // the two questions a field-test period must answer. Best-effort by design.
+                runCatching {
+                    val app = context.applicationContext as? com.example.MedReviewApplication
+                    if (app != null) kotlinx.coroutines.runBlocking {
+                        app.database.eventLogDao().insert(
+                            com.example.data.local.entity.EventLogEntity(
+                                type = "NOTIF_SHOWN",
+                                detail = "due=$count${if (alarmMode) " alarm" else ""}"
+                            )
+                        )
+                    }
+                }
+            }
         }
     }
 
