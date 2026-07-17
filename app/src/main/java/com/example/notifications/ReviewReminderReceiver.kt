@@ -97,13 +97,20 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 val appContext = context.applicationContext
                 Thread {
                     try {
-                        if (dueCountToday(appContext) > 0) {
-                            NotificationScheduler.showReviewNotification(appContext)
-                            // Still due: keep nagging through the day (re-arm the next ~3h nudge).
-                            NotificationScheduler.scheduleDailyReminder(appContext)
-                        } else {
-                            // Caught up: stop waking every ~3h; arm only tomorrow's primary reminder.
-                            NotificationScheduler.scheduleNextDayReminder(appContext)
+                        try {
+                            if (dueCountToday(appContext) > 0) {
+                                NotificationScheduler.showReviewNotification(appContext)
+                                // Still due: keep nagging through the day (re-arm the next ~3h nudge).
+                                NotificationScheduler.scheduleDailyReminder(appContext)
+                            } else {
+                                // Caught up: stop waking every ~3h; arm only tomorrow's reminders.
+                                NotificationScheduler.scheduleNextDayReminder(appContext)
+                            }
+                        } catch (t: Throwable) {
+                            // The chain is self-perpetuating: each fire arms the next. If ANYTHING above
+                            // throws (DB hiccup, notification failure), the re-arm must still happen —
+                            // a broken chain means silent days until the next boot or app open.
+                            runCatching { NotificationScheduler.scheduleDailyReminder(appContext) }
                         }
                     } finally {
                         pending.finish()

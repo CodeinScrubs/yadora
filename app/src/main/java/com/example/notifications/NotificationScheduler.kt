@@ -50,6 +50,7 @@ object NotificationScheduler {
     private const val REQ_SNOOZE_FIRE = 1007
     private const val REQ_FULLSCREEN = 1008
     private const val REQ_NOT_TODAY = 1009
+    private const val REQ_DAILY_2 = 1010
 
     private const val REPEAT_INTERVAL_MS = 3L * 60 * 60 * 1000 // re-nudge every ~3h
     private const val WAKING_START_HOUR = 8
@@ -124,7 +125,18 @@ object NotificationScheduler {
         return am.canScheduleExactAlarms()
     }
 
-    /** Arm the next reminder "nudge" (set time, or the next ~3h repeat through the day). */
+    /**
+     * The guaranteed SECOND daily slot: opposite half of the day from the user's chosen time, so the
+     * two fires are well separated. Evening people (>= 14:00) get a 10:00 morning nudge; morning
+     * people get an 18:00 evening one. Public + pure so it's unit-testable.
+     */
+    fun secondaryReminderHour(primaryHour: Int): Int = if (primaryHour >= 14) 10 else 18
+
+    /**
+     * Arm the next reminder "nudge" (set time, or the next ~3h repeat through the day) PLUS the
+     * guaranteed second daily slot — two independent exact alarms, so one missed fire never means a
+     * silent day.
+     */
     fun scheduleDailyReminder(context: Context) {
         // Self-protecting: many flows (add topic, review, redistribute, restore) re-arm the reminder
         // unconditionally. OFF must mean OFF — if the user disabled reminders, every such call becomes
@@ -135,9 +147,25 @@ object NotificationScheduler {
             return
         }
         armAlarm(context, nextNudgeTime(context), REQ_DAILY, ACTION_FIRE)
+        armAlarm(context, nextSecondarySlotTime(context), REQ_DAILY_2, ACTION_FIRE)
     }
 
-    /** Arm only tomorrow's primary reminder — used when today is cleared, to stop the ~3h nag loop. */
+    /** Next occurrence (today if still ahead, else tomorrow) of the second daily slot. */
+    private fun nextSecondarySlotTime(context: Context): Long {
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        val secHour = secondaryReminderHour(sp.getInt("reminder_hour", 20))
+        val now = Calendar.getInstance()
+        val slot = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, secHour)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        if (!now.before(slot)) slot.add(Calendar.DAY_OF_YEAR, 1)
+        return slot.timeInMillis
+    }
+
+    /** Arm only tomorrow's reminders (both slots) — used when today is cleared, to stop the ~3h nag loop. */
     fun scheduleNextDayReminder(context: Context) {
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
         if (!sp.getBoolean("daily_reminder", true)) { cancelReminder(context); return } // OFF means OFF
@@ -151,6 +179,9 @@ object NotificationScheduler {
             add(Calendar.DAY_OF_YEAR, 1)
         }.timeInMillis
         armAlarm(context, next, REQ_DAILY, ACTION_FIRE)
+        // The secondary slot fires only when something is due — arming it for tomorrow is safe even
+        // when today is clear (the FIRE handler checks the due count before showing anything).
+        armAlarm(context, nextSecondarySlotTime(context), REQ_DAILY_2, ACTION_FIRE)
     }
 
     /** Arm a one-off TEST reminder that always fires (ignores due count). For verifying the pipeline. */
@@ -162,6 +193,7 @@ object NotificationScheduler {
     fun cancelReminder(context: Context) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         am.cancel(firePendingIntent(context, REQ_DAILY, ACTION_FIRE))
+        am.cancel(firePendingIntent(context, REQ_DAILY_2, ACTION_FIRE))
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_FIRE))
     }
 

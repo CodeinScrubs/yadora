@@ -274,6 +274,23 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     }
                 }
 
+                if (dailyReminder) {
+                    // Honest disclosure of the guaranteed second daily slot (10:00 for evening
+                    // reminder times, 18:00 for morning ones) — it fires only while topics are due.
+                    val secHour = NotificationScheduler.secondaryReminderHour(reminderHour)
+                    val secText = "${secHour.toString().padStart(2, '0')}:00"
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "یادآور دومی هم ساعت ${com.example.ui.i18n.PersianDate.faDigits(secText)} می‌آید — فقط وقتی مبحثی منتظر مرور است."
+                            "de" -> "Eine zweite Erinnerung kommt um $secText — nur solange Themen zur Wiederholung anstehen."
+                            else -> "A second reminder arrives at $secText — only while topics are waiting."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = { NotificationScheduler.scheduleTest(context) },
