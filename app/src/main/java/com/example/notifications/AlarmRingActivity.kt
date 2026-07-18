@@ -50,6 +50,13 @@ class AlarmRingActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
+    private val autoStopHandler by lazy { android.os.Handler(mainLooper) }
+    private val autoStopRunnable = Runnable {
+        if (!isFinishing) {
+            stopRinging()
+            finish()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,7 +77,7 @@ class AlarmRingActivity : ComponentActivity() {
 
         startRinging()
         // Don't ring forever — auto-stop after a few minutes like a real alarm clock.
-        android.os.Handler(mainLooper).postDelayed({ if (!isFinishing) { stopRinging(); finish() } }, 5 * 60 * 1000L)
+        autoStopHandler.postDelayed(autoStopRunnable, 5 * 60 * 1000L)
 
         val isFa = (getSharedPreferences("medreview_settings", MODE_PRIVATE)
             .getString("app_language", "en") ?: "en") == "fa"
@@ -192,6 +199,7 @@ class AlarmRingActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        autoStopHandler.removeCallbacks(autoStopRunnable)
         stopRinging()
         if (active === this) active = null
         super.onDestroy()

@@ -49,7 +49,9 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
     // Deep-link from a "Review now" notification/alarm straight into the review session.
     androidx.compose.runtime.LaunchedEffect(openReviewSignal) {
         if (openReviewSignal > 0) {
-            navController.navigate(Screen.ReviewSession(-1L))
+            navController.navigate(Screen.ReviewSession(-1L)) {
+                launchSingleTop = true
+            }
         }
     }
 
@@ -120,11 +122,15 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 LibraryScreen(
                     repository = repository,
                     onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) },
-                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) }
+                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings) }
                 )
             }
             composable<Screen.Progress> {
-                ProgressScreen(repository = repository)
+                ProgressScreen(
+                    repository = repository,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings) }
+                )
             }
             composable<Screen.AddUnit> {
                 AddUnitScreen(

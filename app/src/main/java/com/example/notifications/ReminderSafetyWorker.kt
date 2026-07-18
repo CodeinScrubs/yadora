@@ -57,7 +57,7 @@ class ReminderSafetyWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
             set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
         }.timeInMillis
         if (app.database.studyUnitDao().getDueCount(endOfToday) > 0) {
-            NotificationScheduler.showReviewNotification(ctx)
+            NotificationScheduler.showReviewNotification(ctx, source = "safety_worker")
         }
         return Result.success()
     }

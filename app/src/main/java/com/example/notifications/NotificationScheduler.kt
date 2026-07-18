@@ -40,6 +40,7 @@ object NotificationScheduler {
 
     const val ACTION_FIRE = "com.example.notifications.ACTION_FIRE"
     const val ACTION_SNOOZE = "com.example.notifications.ACTION_SNOOZE"
+    const val ACTION_SNOOZE_FIRE = "com.example.notifications.ACTION_SNOOZE_FIRE"
     const val ACTION_TEST = "com.example.notifications.ACTION_TEST"
     const val ACTION_NOT_TODAY = "com.example.notifications.ACTION_NOT_TODAY"
     const val ACTION_DISMISS = "com.example.notifications.ACTION_DISMISS"
@@ -57,6 +58,8 @@ object NotificationScheduler {
     private const val REPEAT_INTERVAL_MS = 3L * 60 * 60 * 1000 // re-nudge every ~3h
     private const val WAKING_START_HOUR = 8
     private const val WAKING_END_HOUR = 22
+    private const val PREF_SNOOZED_UNTIL = "reminder_snoozed_until"
+    private const val COLLISION_WINDOW_MS = 5L * 60 * 1000
 
     /**
      * True when the CURRENT reminder channel can actually show notifications. Permission alone isn't
@@ -113,7 +116,9 @@ object NotificationScheduler {
                 // The full-screen AlarmRingActivity owns the looping alarm tone; keep the channel itself
                 // silent so the alarm sound doesn't play twice (channel + activity).
                 setSound(null, null)
-                enableVibration(true)
+                // AlarmRingActivity owns vibration too; the channel must stay silent/haptic-free to
+                // avoid a second overlapping pattern and to respect the user's vibration toggle.
+                enableVibration(false)
             }
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
@@ -134,6 +139,10 @@ object NotificationScheduler {
      */
     fun secondaryReminderHour(primaryHour: Int): Int = if (primaryHour >= 14) 10 else 18
 
+    /** True when two independently-planned alarms are close enough to be one user-visible reminder. */
+    fun reminderSlotsCollide(firstMillis: Long, secondMillis: Long): Boolean =
+        kotlin.math.abs(firstMillis - secondMillis) < COLLISION_WINDOW_MS
+
     /**
      * Arm the next reminder "nudge" (set time, or the next ~3h repeat through the day) PLUS the
      * guaranteed second daily slot — two independent exact alarms, so one missed fire never means a
@@ -148,8 +157,30 @@ object NotificationScheduler {
             cancelReminder(context)
             return
         }
-        armAlarm(context, nextNudgeTime(context), REQ_DAILY, ACTION_FIRE)
-        armAlarm(context, nextSecondarySlotTime(context), REQ_DAILY_2, ACTION_FIRE)
+        val now = System.currentTimeMillis()
+        val snoozedUntil = sp.getLong(PREF_SNOOZED_UNTIL, 0L)
+        if (snoozedUntil > now) {
+            // A real snooze suppresses every ordinary reminder until the chosen target. The safety
+            // worker and app-open re-arm paths call this function too, so the state must live in prefs.
+            cancelAlarm(context, REQ_DAILY, ACTION_FIRE)
+            cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
+            armAlarm(context, snoozedUntil, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
+            return
+        } else if (snoozedUntil != 0L) {
+            sp.edit().remove(PREF_SNOOZED_UNTIL).apply()
+        }
+
+        val primary = nextNudgeTime(context)
+        val secondary = nextSecondarySlotTime(context)
+        armAlarm(context, primary, REQ_DAILY, ACTION_FIRE)
+        // A morning primary can produce a 3-hour repeat at exactly the 18:00 secondary slot. Two
+        // different PendingIntents at the same instant create duplicate notifications/full-screen
+        // launches. One fire is enough; the next receiver pass will re-arm the following slot.
+        if (reminderSlotsCollide(primary, secondary)) {
+            cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
+        } else {
+            armAlarm(context, secondary, REQ_DAILY_2, ACTION_FIRE)
+        }
     }
 
     /** Next occurrence (today if still ahead, else tomorrow) of the second daily slot. */
@@ -204,6 +235,9 @@ object NotificationScheduler {
         am.cancel(firePendingIntent(context, REQ_DAILY, ACTION_FIRE))
         am.cancel(firePendingIntent(context, REQ_DAILY_2, ACTION_FIRE))
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_FIRE))
+        am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE))
+        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+            .edit().remove(PREF_SNOOZED_UNTIL).apply()
     }
 
     /**
@@ -234,7 +268,18 @@ object NotificationScheduler {
     /** Re-show the reminder at the snooze target WITHOUT changing any topic's due date (a true snooze). */
     fun scheduleSnooze(context: Context) {
         // Clamp into waking hours so an edge case never rings in the middle of the night.
-        armAlarm(context, clampToWakingWindow(snoozeTargetMillis(context)), REQ_SNOOZE_FIRE, ACTION_FIRE)
+        val target = clampToWakingWindow(snoozeTargetMillis(context))
+        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+            .edit().putLong(PREF_SNOOZED_UNTIL, target).apply()
+        cancelAlarm(context, REQ_DAILY, ACTION_FIRE)
+        cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
+        armAlarm(context, target, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
+    }
+
+    /** Consume persisted snooze state when its dedicated alarm fires. */
+    fun clearSnooze(context: Context) {
+        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+            .edit().remove(PREF_SNOOZED_UNTIL).apply()
     }
 
     /** Push a trigger time into the 08:00–22:00 waking window (next 08:00 if it lands at night). */
@@ -249,6 +294,11 @@ object NotificationScheduler {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
+    }
+
+    private fun cancelAlarm(context: Context, requestCode: Int, action: String) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        am.cancel(firePendingIntent(context, requestCode, action))
     }
 
     private fun armAlarm(context: Context, triggerAtMillis: Long, requestCode: Int, action: String) {
@@ -305,7 +355,11 @@ object NotificationScheduler {
     }
 
     @SuppressLint("MissingPermission")
-    fun showReviewNotification(context: Context, markShown: Boolean = true) {
+    fun showReviewNotification(
+        context: Context,
+        markShown: Boolean = true,
+        source: String = "alarm",
+    ): Boolean {
         createNotificationChannel(context)
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
         val soundEnabled = sp.getBoolean("sound_enabled", true)
@@ -317,6 +371,9 @@ object NotificationScheduler {
         val due = fetchDueSummaries(context)
         val count = due.size
         val hy = due.count { it.second }
+        // The receiver first counts due rows, then this function fetches them again. A review can land
+        // between those operations. Never post/log a real "Time to review" notification with zero due.
+        if (markShown && count == 0) return false
 
         val isDe = (sp.getString("app_language", "en") ?: "en") == "de"
         val title = when {
@@ -366,7 +423,12 @@ object NotificationScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val alarmMode = sp.getBoolean("alarm_enabled", false)
+        val alarmModeRequested = sp.getBoolean("alarm_enabled", false)
+        val canUseFullScreen = Build.VERSION.SDK_INT < 34 ||
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
+        // On Android 14+, Play/system policy can revoke full-screen access. Fall back to an ordinary
+        // audible reminder instead of selecting the silent alarm channel without launching the ringer.
+        val alarmMode = alarmModeRequested && canUseFullScreen
         val channel = if (alarmMode) { createAlarmChannel(context); ALARM_CHANNEL_ID } else channelId(context)
 
         // Professional presentation: the sprout brand glyph as the (system-tinted) status-bar icon,
@@ -444,13 +506,15 @@ object NotificationScheduler {
                         app.database.eventLogDao().insert(
                             com.example.data.local.entity.EventLogEntity(
                                 type = "NOTIF_SHOWN",
-                                detail = "due=$count${if (alarmMode) " alarm" else ""}"
+                                detail = "source=$source due=$count${if (alarmMode) " alarm" else ""}"
                             )
                         )
                     }
                 }
             }
+            return true
         }
+        return false
     }
 
     /** (title, highYield) for every unit due by end of today, high-yield first. Safe on any thread. */

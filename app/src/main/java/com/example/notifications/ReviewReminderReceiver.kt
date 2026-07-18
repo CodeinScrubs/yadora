@@ -28,6 +28,11 @@ class ReviewReminderReceiver : BroadcastReceiver() {
             NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
             return
         }
+        // A dedicated snooze fire consumes the persisted suppression state before normal handling,
+        // so the next daily chain can be planned from the actual current time.
+        if (intent.action == NotificationScheduler.ACTION_SNOOZE_FIRE) {
+            NotificationScheduler.clearSnooze(context)
+        }
         when (intent.action) {
             NotificationScheduler.ACTION_TEST -> {
                 // Off the main thread: showReviewNotification now reads the DB to build a rich reminder.
@@ -35,7 +40,7 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 val pending = goAsync()
                 val appContext = context.applicationContext
                 Thread {
-                    try { NotificationScheduler.showReviewNotification(appContext, markShown = false) } finally { pending.finish() }
+                    try { NotificationScheduler.showReviewNotification(appContext, markShown = false, source = "test") } finally { pending.finish() }
                 }.start()
             }
             NotificationScheduler.ACTION_DISMISS -> {
@@ -105,9 +110,16 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                     try {
                         try {
                             if (dueCountToday(appContext) > 0) {
-                                NotificationScheduler.showReviewNotification(appContext)
-                                // Still due: keep nagging through the day (re-arm the next ~3h nudge).
-                                NotificationScheduler.scheduleDailyReminder(appContext)
+                                val source = if (intent.action == NotificationScheduler.ACTION_SNOOZE_FIRE) "snooze" else "alarm"
+                                val posted = NotificationScheduler.showReviewNotification(appContext, source = source)
+                                if (posted) {
+                                    // Still due: keep nagging through the day (re-arm the next ~3h nudge).
+                                    NotificationScheduler.scheduleDailyReminder(appContext)
+                                } else {
+                                    // Due count changed between the count and the richer fetch, or the OS
+                                    // cannot post. Do not manufacture a zero-due reminder or duplicate chain.
+                                    NotificationScheduler.scheduleNextDayReminder(appContext)
+                                }
                             } else {
                                 // Caught up: stop waking every ~3h; arm only tomorrow's reminders.
                                 NotificationScheduler.scheduleNextDayReminder(appContext)

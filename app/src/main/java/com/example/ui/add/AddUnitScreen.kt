@@ -207,12 +207,18 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
     }
 
     /** Correct a past review's ratings; the repository replays history to recompute the schedule. */
-    fun editReviewRating(logId: Long, mem: com.example.domain.model.MemoryRating, und: UnderstandingRating) {
-        val unitId = existingUnit?.id ?: return
+    fun editReviewRating(
+        logId: Long,
+        mem: com.example.domain.model.MemoryRating,
+        und: UnderstandingRating?,
+        onComplete: (Boolean) -> Unit,
+    ) {
+        val unitId = existingUnit?.id ?: return onComplete(false)
         viewModelScope.launch {
             // If replay aborts (a corrupt log), the topic is left untouched — never half-replayed.
-            runCatching { repository.editReviewRating(unitId, logId, mem, und) }
-            existingUnit = repository.getUnitById(unitId)
+            val result = runCatching { repository.editReviewRating(unitId, logId, mem, und) }
+            if (result.isSuccess) existingUnit = repository.getUnitById(unitId)
+            onComplete(result.isSuccess)
         }
     }
 }
@@ -283,6 +289,8 @@ fun AddUnitScreen(
     var saving by remember { mutableStateOf(false) }
     var archivedDuplicate by remember { mutableStateOf<StudyUnitEntity?>(null) }
     var editingLog by remember { mutableStateOf<ReviewLogEntity?>(null) }
+    var editingLogSaving by remember { mutableStateOf(false) }
+    var editingLogError by remember { mutableStateOf(false) }
 
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     var showSubjectDropdown by remember { mutableStateOf(false) }
@@ -657,7 +665,7 @@ fun AddUnitScreen(
                 Spacer(modifier = Modifier.height(32.dp))
                 Text(strings.reviewLogs, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    text = if (strings.languageCode == "fa") "برای اصلاح یادآوری/درک، روی یک مرور بزن." else "Tap a review to correct its recall / understanding.",
+                    text = if (strings.languageCode == "fa") "برای اصلاح ارزیابی، روی یک مورد بزن." else "Tap an entry to correct its rating.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -693,7 +701,10 @@ fun AddUnitScreen(
                                     shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text(
-                                        text = when (logRating) {
+                                        text = if (log.logType == "FIRST_STUDY") {
+                                            val d = log.initialDifficulty ?: com.example.domain.srs.MedScheduler.difficultyLabelFor(logRating)
+                                            if (strings.languageCode == "fa") "مطالعهٔ اول · $d" else "First study · $d"
+                                        } else when (logRating) {
                                             com.example.domain.model.MemoryRating.Easy -> strings.ratingEasy
                                             com.example.domain.model.MemoryRating.Good -> strings.ratingGood
                                             com.example.domain.model.MemoryRating.Hard -> strings.ratingHard
@@ -722,17 +733,25 @@ fun AddUnitScreen(
 
     editingLog?.let { log ->
         val fa = strings.languageCode == "fa"
+        val isFirstStudy = log.logType == "FIRST_STUDY"
         var mem by remember(log.id) { mutableStateOf(runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrDefault(MemoryRating.Good)) }
-        var und by remember(log.id) { mutableStateOf(runCatching { UnderstandingRating.valueOf(log.understandingRating) }.getOrDefault(UnderstandingRating.Clear)) }
+        var und by remember(log.id) {
+            mutableStateOf(
+                if (log.understandingRating == "NotAsked") null
+                else runCatching { UnderstandingRating.valueOf(log.understandingRating) }.getOrDefault(UnderstandingRating.Clear)
+            )
+        }
+        val ratingOptions = if (isFirstStudy) listOf(MemoryRating.Easy, MemoryRating.Good, MemoryRating.Hard) else MemoryRating.entries
+        val understandingRequired = mem != MemoryRating.Forgot
         AlertDialog(
             onDismissRequest = { editingLog = null },
-            title = { Text(if (fa) "اصلاح ارزیابی" else "Correct this rating") },
+            title = { Text(if (fa) "اصلاح ارزیابی" else if (isFirstStudy) "Correct first-study rating" else "Correct this rating") },
             text = {
                 Column {
-                    Text(strings.memoryRating, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(if (isFirstStudy) (if (fa) "سختی اولیه" else "Initial difficulty") else strings.memoryRating, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        MemoryRating.entries.forEach { r ->
+                        ratingOptions.forEach { r ->
                             FilterChip(
                                 selected = mem == r,
                                 onClick = { mem = r },
@@ -752,7 +771,7 @@ fun AddUnitScreen(
                         UnderstandingRating.entries.forEach { r ->
                             FilterChip(
                                 selected = und == r,
-                                onClick = { und = r },
+                                onClick = { und = r; editingLogError = false },
                                 label = { Text(when (r) {
                                     UnderstandingRating.Confused -> strings.urConfused
                                     UnderstandingRating.Partial -> strings.urPartial
@@ -760,6 +779,14 @@ fun AddUnitScreen(
                                 }) }
                             )
                         }
+                    }
+                    if (und == null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (fa) "در ارزیابی اصلی، درک پرسیده نشد. اگر امتیاز دیگر فراموشی نیست، یک گزینه انتخاب کن." else "Understanding was not asked originally. Choose one if the rating is no longer Forgot.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (editingLogError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
@@ -769,13 +796,29 @@ fun AddUnitScreen(
                     )
                 }
             },
-            confirmButton = { TextButton(onClick = {
-                viewModel.editReviewRating(log.id, mem, und)
-                // Replay can move the due date → keep the reminder + widget in sync.
-                com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
-                com.example.widget.DueWidgetProvider.updateAll(reminderContext)
-                editingLog = null
-            }) { Text(strings.save) } },
+            confirmButton = { TextButton(
+                enabled = !editingLogSaving,
+                onClick = {
+                    if (understandingRequired && und == null) {
+                        editingLogError = true
+                        return@TextButton
+                    }
+                    editingLogSaving = true
+                    editingLogError = false
+                    viewModel.editReviewRating(log.id, mem, und) { success ->
+                        editingLogSaving = false
+                        if (success) {
+                            // Replay can move the due date → keep the reminder + widget in sync only
+                            // after the database transaction has completed.
+                            com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
+                            com.example.widget.DueWidgetProvider.updateAll(reminderContext)
+                            editingLog = null
+                        } else {
+                            editingLogError = true
+                        }
+                    }
+                }
+            ) { Text(if (editingLogSaving) "…" else strings.save) } },
             dismissButton = { TextButton(onClick = { editingLog = null }) { Text(strings.cancel) } }
         )
     }

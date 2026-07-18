@@ -1,8 +1,10 @@
-# MedReview
+# Yadora
 
-A spaced-repetition **study-review scheduler** for medical students — Android, Kotlin + Jetpack Compose, fully offline (no backend, no login).
+A spaced-review **topic scheduler** for students — Android, Kotlin + Jetpack Compose, with no app backend or login.
 
-You log a topic after you study it and rate how hard it was and how well you understood it. The app uses the **FSRS** memory model to schedule when to review it next, so you revisit each topic right before you'd forget it — and reminds you when it's due.
+You log a topic after studying it. On its study date, Yadora asks for an initial difficulty and understanding rating; later reviews ask how well you recalled it. An FSRS-5-derived model uses those ratings to choose an adaptive next review date. The model estimates a useful schedule; it does not know the exact moment an individual topic will be forgotten.
+
+Data is stored in the on-device Room database. The current Android configuration also opts the database and preferences into the operating system's encrypted Auto Backup / device-transfer mechanisms; manual JSON backup and analytics export are available from Settings.
 
 See **[DESIGN.md](DESIGN.md)** for the full product/technical design and roadmap.
 

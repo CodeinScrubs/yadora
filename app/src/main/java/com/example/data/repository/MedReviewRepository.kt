@@ -97,6 +97,17 @@ class MedReviewRepository(
         studyUnitDao.unarchiveUnit(id, System.currentTimeMillis())
     }
 
+    /** Batch archive/unarchive is one transaction so selection-mode actions are all-or-nothing. */
+    suspend fun archiveUnits(ids: Collection<Long>) {
+        val stamp = System.currentTimeMillis()
+        database.withTransaction { ids.forEach { studyUnitDao.archiveUnit(it, stamp) } }
+    }
+
+    suspend fun unarchiveUnits(ids: Collection<Long>) {
+        val stamp = System.currentTimeMillis()
+        database.withTransaction { ids.forEach { studyUnitDao.unarchiveUnit(it, stamp) } }
+    }
+
     // --- 30-day recoverable soft delete (DB v5) ---
 
     val recentlyDeleted: Flow<List<StudyUnitEntity>> = studyUnitDao.getRecentlyDeleted()
@@ -237,7 +248,7 @@ class MedReviewRepository(
         unitId: Long,
         logId: Long,
         newMemory: MemoryRating,
-        newUnderstanding: UnderstandingRating,
+        newUnderstanding: UnderstandingRating?,
     ) {
         val unit = studyUnitDao.getUnitById(unitId) ?: return
         // Deterministic ordering: two logs can share a millisecond (restored/synthetic data) — break
@@ -273,14 +284,19 @@ class MedReviewRepository(
             // "NotAsked" = the understanding question was skipped (Forgot fast-commit). Math-neutral:
             // Forgot's interval ignores understanding entirely, so Partial stands in for computation
             // while the stored string stays honestly NotAsked (undStored below).
+            val editingThis = log.id == logId
             val und = when {
-                log.id == logId -> newUnderstanding
+                editingThis && newUnderstanding != null -> newUnderstanding
                 log.understandingRating == "NotAsked" -> UnderstandingRating.Partial
                 else -> runCatching { UnderstandingRating.valueOf(log.understandingRating) }
                     .getOrElse { throw IllegalStateException("Review log ${log.id} has an invalid understanding rating '${log.understandingRating}'") }
             }
-            val undStored = if (log.id == logId) newUnderstanding.name
-                else if (log.understandingRating == "NotAsked") "NotAsked" else und.name
+            val undStored = when {
+                editingThis && newUnderstanding != null -> newUnderstanding.name
+                editingThis -> log.understandingRating // preserve honest NotAsked when only recall is edited
+                log.understandingRating == "NotAsked" -> "NotAsked"
+                else -> und.name
+            }
             val elapsed = ((log.reviewedAt - prevTime) / 86400000.0).coerceAtLeast(0.0)
 
             // Timezone-stable classification: trust the logType RECORDED at review time. Recomputing
@@ -299,7 +315,9 @@ class MedReviewRepository(
             val histImportant = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
             // Policy snapshot (v5): an UNTOUCHED log replays under the understanding factor originally
             // applied; the log being EDITED gets the current policy's factor (it's a new decision).
-            val histFactor = if (log.id != logId) log.understandingFactorAtReview.takeIf { it > 0.0 } else null
+            val histFactor = if (log.id != logId || newUnderstanding == null)
+                log.understandingFactorAtReview.takeIf { it > 0.0 }
+            else null
             val outcome = MedScheduler.review(
                 stability = stability,
                 difficulty = difficulty,

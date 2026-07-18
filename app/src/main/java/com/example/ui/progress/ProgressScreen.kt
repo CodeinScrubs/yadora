@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Canvas
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -184,7 +186,7 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProgressScreen(repository: MedReviewRepository) {
+fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> Unit = {}) {
     val viewModel: ProgressViewModel = viewModel(factory = ProgressViewModelFactory(repository))
     val total by viewModel.totalCount.collectAsStateWithLifecycle()
     val strong by viewModel.strongCount.collectAsStateWithLifecycle()
@@ -217,7 +219,14 @@ fun ProgressScreen(repository: MedReviewRepository) {
     Scaffold(
         topBar = {
             Column {
-                TopAppBar(title = { Text(strings.progress, fontWeight = FontWeight.Bold) })
+                TopAppBar(
+                    title = { Text(strings.progress, fontWeight = FontWeight.Bold) },
+                    actions = {
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = strings.settings)
+                        }
+                    }
+                )
                 TabRow(selectedTabIndex = selectedTab) {
                     tabTitles.forEachIndexed { index, title ->
                         Tab(

@@ -1,6 +1,7 @@
 package com.example.notifications
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,5 +32,12 @@ class ReminderSlotsTest {
             assertTrue("slots for $h:00 and $sec:00 are at least 4h apart",
                 kotlin.math.abs(h - sec) >= 4)
         }
+    }
+
+    @Test
+    fun duplicate_slot_collision_is_coalesced() {
+        val eighteen = 18L * 60 * 60 * 1000
+        assertTrue(NotificationScheduler.reminderSlotsCollide(eighteen, eighteen + 30_000))
+        assertFalse(NotificationScheduler.reminderSlotsCollide(eighteen, eighteen + 10 * 60_000))
     }
 }

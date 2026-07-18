@@ -1,4 +1,4 @@
-# MedReview — Product & Technical Design
+# Yadora — Product & Technical Design
 
 > MedReview is a **study-review scheduler** for medical students, not a flashcard app.
 > The unit of value is *when* to review a studied topic, driven by forgetting-curve science,
@@ -10,11 +10,13 @@
 ## 1. The core loop
 
 1. Student studies a topic for the **first time** (e.g. "Beta blockers — contraindications in asthma").
-2. Logs it; rates **difficulty** (how hard it was) + **understanding** (how well they grasped it).
-3. App schedules the **next review** using an FSRS-derived model and arms a reliable reminder.
-4. At review: student **recalls from memory**, then re-rates **memory** (Forgot/Hard/Good/Easy)
-   and **understanding** (Confused/Partial/Clear).
-5. Interval **expands** per the memory model. Repeat → durable long-term retention.
+2. Logs the topic. It becomes due on the selected study date.
+3. On the Review screen, review #0 records **initial difficulty** (Easy/Medium/Hard) and
+   **understanding** (Confused/Partial/Clear). This row is tagged `FIRST_STUDY`, not counted as recall.
+4. Yadora schedules the first delayed review using its FSRS-5-derived policy and arms reminders.
+5. At later reviews, the student recalls from memory, rates **memory** (Forgot/Hard/Good/Easy),
+   then rates understanding. These rows are tagged `RECALL`.
+6. The interval adapts from the model state. Repeat to maintain the topic efficiently.
 
 A study unit may be tiny or large; treated identically.
 
@@ -59,9 +61,10 @@ parameter. So understanding is used as:
 Not as a hard interval cap (the current app's approach corrupts the model).
 
 ### First-study event
-The first log seeds S₀/D₀ from the self-rated difficulty + understanding (no forced immediate recall —
-recall right after studying is trivially easy and wastes a rep). First reminder ≈ 1–3 days out,
-conservative because the item is untested.
+The Add screen stores a neutral seed and makes the topic due on its study date. Review #0 then records
+initial difficulty + understanding and establishes the first model interval. It is explicitly tagged
+`FIRST_STUDY`; retention and calibration analytics exclude it. A back-dated topic is treated as a real
+recall because time has elapsed since study.
 
 ### Procrastinate / snooze
 `snoozedUntil` overrides the queue/alarm time but does **not** alter S/D — snoozing is not a memory

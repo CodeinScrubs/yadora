@@ -66,7 +66,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
   product-layer number changes (understanding factors, relearn step, caps,
   fuzz, high-yield retention). Logs store the version + applied factor;
   replay honors the stored factor for untouched rows.
-- `USE_EXACT_ALARM` is intended; only strip it if publishing rules require it.
+- Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
+  fallback + Reminder Health + permission-regrant receiver handle denial).
+  `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
+- Snooze is REAL: `reminder_snoozed_until` pref suppresses the whole chain until
+  the target; colliding primary/secondary slots (±5 min) are coalesced to one.
 
 ## Testing
 

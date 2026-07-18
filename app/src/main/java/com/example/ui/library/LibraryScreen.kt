@@ -5,11 +5,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -89,9 +91,14 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
                     (systemList.find { it.id == u.systemId }?.name?.contains(query, ignoreCase = true) == true)
             }
         }
-        val now = System.currentTimeMillis()
+        val endOfToday = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 23)
+            set(java.util.Calendar.MINUTE, 59)
+            set(java.util.Calendar.SECOND, 59)
+            set(java.util.Calendar.MILLISECOND, 999)
+        }.timeInMillis
         result = when (activeFilter) {
-            LibraryFilter.DUE -> result.filter { it.nextReviewAt <= now }
+            LibraryFilter.DUE -> result.filter { it.nextReviewAt <= endOfToday }
             LibraryFilter.WEAK -> result.filter { it.state == "NeedsRelearn" || it.state == "Learning" || it.lapseCount > 0 }
             LibraryFilter.HIGH_YIELD -> result.filter { it.highYield }
             LibraryFilter.ALL -> result
@@ -104,15 +111,31 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         result
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun archiveUnit(unitId: Long) {
+    fun archiveUnit(unitId: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             repository.archiveUnit(unitId)
+            onComplete()
         }
     }
 
-    fun unarchiveUnit(unitId: Long) {
+    fun unarchiveUnit(unitId: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             repository.unarchiveUnit(unitId)
+            onComplete()
+        }
+    }
+
+    fun archiveUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.archiveUnits(unitIds)
+            onComplete()
+        }
+    }
+
+    fun unarchiveUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.unarchiveUnits(unitIds)
+            onComplete()
         }
     }
 
@@ -134,7 +157,8 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
 fun LibraryScreen(
     repository: MedReviewRepository,
     onNavigateToEdit: (Long) -> Unit = {},
-    onNavigateToAdd: () -> Unit = {}
+    onNavigateToAdd: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val viewModel: LibraryViewModel = viewModel(factory = LibraryViewModelFactory(repository))
     val units by viewModel.filteredUnits.collectAsStateWithLifecycle()
@@ -165,10 +189,8 @@ fun LibraryScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        coroutineScope.launch {
-                            selectedIds.forEach { id ->
-                                viewModel.archiveUnit(id)
-                            }
+                        val ids = selectedIds
+                        viewModel.archiveUnits(ids) {
                             com.example.widget.DueWidgetProvider.updateAll(libContext) // due count changed
                             selectedIds = emptySet()
                             showBatchDeleteConfirm = false
@@ -219,8 +241,8 @@ fun LibraryScreen(
                         }
                         if (showArchived) {
                             IconButton(onClick = { 
-                                coroutineScope.launch {
-                                    selectedIds.forEach { id -> viewModel.unarchiveUnit(id) }
+                                val ids = selectedIds
+                                viewModel.unarchiveUnits(ids) {
                                     com.example.widget.DueWidgetProvider.updateAll(libContext)
                                     selectedIds = emptySet()
                                 }
@@ -242,8 +264,39 @@ fun LibraryScreen(
                         }
                     }
                 )
+            } else if (showArchived) {
+                // Distinct archive header: centered, serif + bold so it's unmistakably a different
+                // place, with an explicit way back to the main library on both sides.
+                CenterAlignedTopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { viewModel.showArchived.value = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = when (strings.languageCode) { "fa" -> "بازگشت"; "de" -> "Zurück"; else -> "Back" })
+                        }
+                    },
+                    title = {
+                        Text(
+                            text = when (strings.languageCode) { "fa" -> "کتابخانه · بایگانی"; "de" -> "Bibliothek · Archiv"; else -> "Library · Archived" },
+                            fontWeight = FontWeight.Black,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    },
+                    actions = {
+                        TextButton(onClick = { viewModel.showArchived.value = false }) {
+                            Text(when (strings.languageCode) { "fa" -> "برگشت به اصلی"; "de" -> "Zur Hauptliste"; else -> "Return to main" })
+                        }
+                    }
+                )
             } else {
-                TopAppBar(title = { Text(strings.library, fontWeight = FontWeight.Bold) })
+                TopAppBar(
+                    title = { Text(strings.library, fontWeight = FontWeight.Bold) },
+                    actions = {
+                        IconButton(onClick = onNavigateToSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = strings.settings, tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                )
             }
         },
         floatingActionButton = {
@@ -373,13 +426,15 @@ fun LibraryScreen(
                             confirmButton = {
                                 TextButton(
                                     onClick = {
-                                        if (showArchived) {
-                                            viewModel.unarchiveUnit(unit.id)
-                                        } else {
-                                            viewModel.archiveUnit(unit.id)
+                                        val done = {
+                                            com.example.widget.DueWidgetProvider.updateAll(libContext)
+                                            showDeleteConfirm = false
                                         }
-                                        com.example.widget.DueWidgetProvider.updateAll(libContext)
-                                        showDeleteConfirm = false
+                                        if (showArchived) {
+                                            viewModel.unarchiveUnit(unit.id, done)
+                                        } else {
+                                            viewModel.archiveUnit(unit.id, done)
+                                        }
                                     },
                                     colors = ButtonDefaults.textButtonColors(contentColor = if (showArchived) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                                 ) {
