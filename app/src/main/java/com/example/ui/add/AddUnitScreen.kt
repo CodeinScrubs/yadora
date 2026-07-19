@@ -352,7 +352,7 @@ fun AddUnitScreen(
                                         saving = false
                                         android.widget.Toast.makeText(
                                             reminderContext,
-                                            if (strings.languageCode == "fa") "این مبحث از قبل وجود دارد. برای تفکیک، درس یا یادداشت متفاوتی اضافه کن." else "This topic already exists. To keep both, give one a different subject or note.",
+                                            if (strings.languageCode == "fa") "این مبحث از قبل وجود دارد. برای تفکیک، درس یا یادداشت متفاوتی اضافه کن." else if (strings.languageCode == "de") "Dieses Thema gibt es schon. Gib einem der beiden ein anderes Fach oder eine andere Notiz." else "This topic already exists. To keep both, give one a different subject or note.",
                                             android.widget.Toast.LENGTH_LONG
                                         ).show()
                                     },
@@ -557,6 +557,7 @@ fun AddUnitScreen(
                     {
                         Text(
                             if (strings.languageCode == "fa") "مباحث کوچک‌تر دقیق‌تر زمان‌بندی می‌شوند — اگر می‌شود، این را به چند مبحث بشکن."
+                            else if (strings.languageCode == "de") "Kleinere Themen lassen sich genauer planen — teile dieses lieber in mehrere auf."
                             else "Smaller topics schedule more precisely — consider splitting this into a few."
                         )
                     }
@@ -594,7 +595,7 @@ fun AddUnitScreen(
             
             if (unitId == null) {
                 Text(
-                    text = if (strings.languageCode == "fa") "این مبحث برای اولین مرور در تب «امروز» نمایش داده می‌شود؛ همان‌جا سختی و میزان درکت را ثبت می‌کنی." else "This appears in Today for its first review — you'll rate difficulty & understanding there.",
+                    text = if (strings.languageCode == "fa") "این مبحث برای اولین مرور در تب «امروز» نمایش داده می‌شود؛ همان‌جا سختی و میزان درکت را ثبت می‌کنی." else if (strings.languageCode == "de") "Es erscheint unter Heute zur ersten Wiederholung — dort bewertest du Schwierigkeit & Verständnis." else "This appears in Today for its first review — you'll rate difficulty & understanding there.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -616,7 +617,7 @@ fun AddUnitScreen(
                             // rebuilds this topic's whole schedule history — warn, don't surprise.
                             if ((viewModel.existingUnit?.reviewCount ?: 0) > 0) {
                                 Text(
-                                    if (strings.languageCode == "fa") "تغییر این تاریخ، تاریخچهٔ مرور این مبحث را بازمحاسبه می‌کند." else "Changing this date recalculates this topic's review history.",
+                                    if (strings.languageCode == "fa") "تغییر این تاریخ، تاریخچهٔ مرور این مبحث را بازمحاسبه می‌کند." else if (strings.languageCode == "de") "Wenn du dieses Datum änderst, wird der Wiederholungsverlauf neu berechnet." else "Changing this date recalculates this topic's review history.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.tertiary
                                 )
@@ -635,7 +636,7 @@ fun AddUnitScreen(
                 OutlinedCard(onClick = { showNextReviewAtPicker = true }) {
                     ListItem(
                         headlineContent = { Text(strings.nextReviewDate) },
-                        supportingContent = { Text(nextReviewAt?.let { fmtDate(it) } ?: (if (strings.languageCode == "fa") "پیش‌فرض: روز مطالعه" else "Default: on study date")) },
+                        supportingContent = { Text(nextReviewAt?.let { fmtDate(it) } ?: (if (strings.languageCode == "fa") "پیش‌فرض: روز مطالعه" else if (strings.languageCode == "de") "Standard: am Lerntag" else "Default: on study date")) },
                         trailingContent = { Icon(Icons.Default.DateRange, contentDescription = null) }
                     )
                 }
@@ -654,7 +655,7 @@ fun AddUnitScreen(
             viewModel.existingUnit?.let { unit ->
                 if (unit.reviewCount > 0) {
                     Spacer(modifier = Modifier.height(24.dp))
-                    Text(if (strings.languageCode == "fa") "منحنی فراموشی" else "Forgetting curve", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(if (strings.languageCode == "fa") "منحنی فراموشی" else if (strings.languageCode == "de") "Vergessenskurve" else "Forgetting curve", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
                     ForgettingCurve(stability = unit.stability, modifier = Modifier.fillMaxWidth().height(100.dp))
                 }
@@ -665,7 +666,7 @@ fun AddUnitScreen(
                 Spacer(modifier = Modifier.height(32.dp))
                 Text(strings.reviewLogs, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    text = if (strings.languageCode == "fa") "برای اصلاح ارزیابی، روی یک مورد بزن." else "Tap an entry to correct its rating.",
+                    text = if (strings.languageCode == "fa") "برای اصلاح ارزیابی، روی یک مورد بزن." else if (strings.languageCode == "de") "Tippe auf einen Eintrag, um die Bewertung zu korrigieren." else "Tap an entry to correct its rating.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -703,7 +704,7 @@ fun AddUnitScreen(
                                     Text(
                                         text = if (log.logType == "FIRST_STUDY") {
                                             val d = log.initialDifficulty ?: com.example.domain.srs.MedScheduler.difficultyLabelFor(logRating)
-                                            if (strings.languageCode == "fa") "مطالعهٔ اول · $d" else "First study · $d"
+                                            if (strings.languageCode == "fa") "مطالعهٔ اول · $d" else if (strings.languageCode == "de") "Erstes Lernen · $d" else "First study · $d"
                                         } else when (logRating) {
                                             com.example.domain.model.MemoryRating.Easy -> strings.ratingEasy
                                             com.example.domain.model.MemoryRating.Good -> strings.ratingGood

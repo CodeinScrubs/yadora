@@ -52,9 +52,9 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
     var accent by remember { mutableStateOf(sp.getString("accent_color", "") ?: "") }
 
     val modes = listOf(
-        "system" to (if (isFa) "سیستم" else "System"),
-        "light" to (if (isFa) "روشن" else "Light"),
-        "dark" to (if (isFa) "تیره" else "Dark")
+        "system" to (if (isFa) "سیستم" else if (strings.languageCode == "de") "System" else "System"),
+        "light" to (if (isFa) "روشن" else if (strings.languageCode == "de") "Hell" else "Light"),
+        "dark" to (if (isFa) "تیره" else if (strings.languageCode == "de") "Dunkel" else "Dark")
     )
     // storage value -> swatch color. "" is the default sage brand. A small, curated set that all
     // harmonize with the warm-paper surface (no neon); none collide with the reserved rating hues.
@@ -68,10 +68,10 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isFa) "تم و رنگ‌ها" else "Theme & Colors") },
+                title = { Text(if (isFa) "تم و رنگ‌ها" else if (strings.languageCode == "de") "Design & Farben" else "Theme & Colors") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = if (isFa) "بازگشت" else "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = if (isFa) "بازگشت" else if (strings.languageCode == "de") "Zurück" else "Back")
                     }
                 }
             )
@@ -84,7 +84,7 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
                 .padding(20.dp)
         ) {
             Text(
-                text = if (isFa) "حالت" else "Appearance",
+                text = if (isFa) "حالت" else if (strings.languageCode == "de") "Darstellung" else "Appearance",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -105,7 +105,7 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
 
             Spacer(Modifier.height(28.dp))
             Text(
-                text = if (isFa) "رنگ اصلی" else "Accent color",
+                text = if (isFa) "رنگ اصلی" else if (strings.languageCode == "de") "Akzentfarbe" else "Accent color",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -134,7 +134,7 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
 
             Spacer(Modifier.height(20.dp))
             Text(
-                text = if (isFa) "تغییرات بلافاصله اعمال می‌شوند." else "Changes apply instantly.",
+                text = if (isFa) "تغییرات بلافاصله اعمال می‌شوند." else if (strings.languageCode == "de") "Änderungen gelten sofort." else "Changes apply instantly.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

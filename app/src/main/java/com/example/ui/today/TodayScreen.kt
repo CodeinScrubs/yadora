@@ -341,9 +341,9 @@ fun TodayScreen(
                 val isFa = strings.languageCode == "fa"
                 val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
                 val greeting = when {
-                    hour < 12 -> if (isFa) "صبح بخیر" else "Good morning"
-                    hour < 18 -> if (isFa) "بعدازظهر بخیر" else "Good afternoon"
-                    else -> if (isFa) "عصر بخیر" else "Good evening"
+                    hour < 12 -> if (isFa) "صبح بخیر" else if (strings.languageCode == "de") "Guten Morgen" else "Good morning"
+                    hour < 18 -> if (isFa) "بعدازظهر بخیر" else if (strings.languageCode == "de") "Guten Tag" else "Good afternoon"
+                    else -> if (isFa) "عصر بخیر" else if (strings.languageCode == "de") "Guten Abend" else "Good evening"
                 }
                 Card(
                     modifier = Modifier
@@ -359,7 +359,7 @@ fun TodayScreen(
                         Text(
                             // The run block above returns early when totalDue == 0, so this hero card
                             // only ever renders the "N reviews" case (the caught-up card lives below).
-                            text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(displayDue)} مرور · حدود ${com.example.ui.i18n.PersianDate.faDigits(estimatedTimeMin)} دقیقه" else "$displayDue ${if (displayDue == 1) "review" else "reviews"} · about $estimatedTimeMin min",
+                            text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(displayDue)} مرور · حدود ${com.example.ui.i18n.PersianDate.faDigits(estimatedTimeMin)} دقیقه" else if (strings.languageCode == "de") "$displayDue ${if (displayDue == 1) "Wiederholung" else "Wiederholungen"} · ca. $estimatedTimeMin Min." else "$displayDue ${if (displayDue == 1) "review" else "reviews"} · about $estimatedTimeMin min",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -367,7 +367,7 @@ fun TodayScreen(
                         if (highYieldCount > 0 || weakCount > 0) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(highYieldCount)} مهم · ${com.example.ui.i18n.PersianDate.faDigits(weakCount)} ضعیف" else "$highYieldCount important · $weakCount weak",
+                                text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(highYieldCount)} مهم · ${com.example.ui.i18n.PersianDate.faDigits(weakCount)} ضعیف" else if (strings.languageCode == "de") "$highYieldCount wichtig · $weakCount schwach" else "$highYieldCount important · $weakCount weak",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -377,7 +377,7 @@ fun TodayScreen(
                             // highest-priority items got today's slots, the rest wait.
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(totalDue - displayDue)} مورد طبق سقف روزانه‌ات برای بعد نگه داشته شد" else "${totalDue - displayDue} held for later by your daily limit",
+                                text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(totalDue - displayDue)} مورد طبق سقف روزانه‌ات برای بعد نگه داشته شد" else if (strings.languageCode == "de") "${totalDue - displayDue} durch dein Tageslimit für später aufgehoben" else "${totalDue - displayDue} held for later by your daily limit",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -516,7 +516,7 @@ fun TodayScreen(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(
-                                            text = if (isFarsi) "مدتی دور بودی" else "You were away",
+                                            text = if (isFarsi) "مدتی دور بودی" else if (strings.languageCode == "de") "Du warst eine Weile weg" else "You were away",
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = over.main
@@ -526,6 +526,8 @@ fun TodayScreen(
                                     Text(
                                         text = if (isFarsi) {
                                             "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ۳ روز پخش کنی."
+                                        } else if (strings.languageCode == "de") {
+                                            "${overdue.size} Wiederholungen warten. Holen wir zuerst die wichtigsten nach — du kannst sie auf 3 Tage verteilen."
                                         } else {
                                             "${overdue.size} reviews are waiting. Let's recover the important ones first — you can spread them over 3 days."
                                         },
@@ -543,7 +545,7 @@ fun TodayScreen(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(
-                                            text = if (isFarsi) "توزیع مجدد و پخش مباحث عقب‌افتاده" else "Spread Out Overdue Topics",
+                                            text = if (isFarsi) "توزیع مجدد و پخش مباحث عقب‌افتاده" else if (strings.languageCode == "de") "Überfällige Themen verteilen" else "Spread Out Overdue Topics",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.Bold
                                         )

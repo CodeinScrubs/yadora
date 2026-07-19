@@ -197,24 +197,26 @@ class ReviewViewModel(
         intervalDays: Double,
         firstStudy: Boolean,
     ): String {
-        val fa = getApplication<android.app.Application>()
+        val lang = getApplication<android.app.Application>()
             .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-            .getString("app_language", "en") == "fa"
+            .getString("app_language", "en") ?: "en"
+        val fa = lang == "fa"
+        val de = lang == "de"
         val d = Math.round(intervalDays).toInt().coerceAtLeast(1)
-        val days = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر" else if (d <= 1) "in 1 day" else "in $d days"
+        val days = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر" else if (de) (if (d <= 1) "in 1 Tag" else "in $d Tagen") else if (d <= 1) "in 1 day" else "in $d days"
         val core = when {
-            firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else "Logged — first check-in $days."
-            memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else "Forgot — it's back tomorrow to relearn."
-            memory == MemoryRating.Hard -> if (fa) "سخت بود، پس فاصله کوتاه ماند — مرور بعدی $days." else "It felt hard, so the gap stayed short — next $days."
-            memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else "Easy — pushed out, next $days."
-            else -> if (fa) "خوب به یاد آوردی — مرور بعدی $days." else "Recalled well — next $days."
+            firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
+            memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else if (de) "Vergessen — morgen kommt es zum Neulernen zurück." else "Forgot — it's back tomorrow to relearn."
+            memory == MemoryRating.Hard -> if (fa) "سخت بود، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es war schwer, also blieb der Abstand kurz — nächste $days." else "It felt hard, so the gap stayed short — next $days."
+            memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — weiter hinausgeschoben, nächste $days." else "Easy — pushed out, next $days."
+            else -> if (fa) "خوب به یاد آوردی — مرور بعدی $days." else if (de) "Gut erinnert — nächste $days." else "Recalled well — next $days."
         }
         val note = if (memory != MemoryRating.Forgot && !firstStudy) when (understanding) {
-            UnderstandingRating.Confused -> if (fa) " چون گیج‌کننده بود، کمی زودتر." else " A bit sooner because it was confusing."
-            UnderstandingRating.Partial -> if (fa) " چون فهم ناقص بود، کمی زودتر." else " Slightly sooner for partial understanding."
+            UnderstandingRating.Confused -> if (fa) " چون گیج‌کننده بود، کمی زودتر." else if (de) " Etwas früher, weil es verwirrend war." else " A bit sooner because it was confusing."
+            UnderstandingRating.Partial -> if (fa) " چون فهم ناقص بود، کمی زودتر." else if (de) " Etwas früher wegen teilweisem Verständnis." else " Slightly sooner for partial understanding."
             else -> ""
         } else ""
-        val yield = if (highYield && memory != MemoryRating.Forgot) (if (fa) " (فشرده‌تر چون مهم است.)" else " (Kept tighter — it's important.)") else ""
+        val yield = if (highYield && memory != MemoryRating.Forgot) (if (fa) " (فشرده‌تر چون مهم است.)" else if (de) " (Enger getaktet — es ist wichtig.)" else " (Kept tighter — it's important.)") else ""
         return core + note + yield
     }
 
@@ -485,7 +487,7 @@ fun ReviewSessionScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = if (strings.languageCode == "fa") "خلاصه جلسه مرور" else "Session summary",
+                            text = when (strings.languageCode) { "fa" -> "خلاصه جلسه مرور"; "de" -> "Zusammenfassung"; else -> "Session summary" },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
@@ -497,19 +499,19 @@ fun ReviewSessionScreen(
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(text = num(viewModel.sessionCount), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                                Text(text = if (strings.languageCode == "fa") "کل مرورها" else "Reviewed", style = MaterialTheme.typography.labelSmall)
+                                Text(text = when (strings.languageCode) { "fa" -> "کل مرورها"; "de" -> "Wiederholt"; else -> "Reviewed" }, style = MaterialTheme.typography.labelSmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(text = num(viewModel.sessionGood), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.secondary)
-                                Text(text = if (strings.languageCode == "fa") "آسان/خوب" else "Good/Easy", style = MaterialTheme.typography.labelSmall)
+                                Text(text = when (strings.languageCode) { "fa" -> "آسان/خوب"; "de" -> "Gut/Leicht"; else -> "Good/Easy" }, style = MaterialTheme.typography.labelSmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(text = num(viewModel.sessionHard), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Hard).solid)
-                                Text(text = if (strings.languageCode == "fa") "سخت" else "Hard", style = MaterialTheme.typography.labelSmall)
+                                Text(text = when (strings.languageCode) { "fa" -> "سخت"; "de" -> "Schwer"; else -> "Hard" }, style = MaterialTheme.typography.labelSmall)
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(text = num(viewModel.sessionForgot), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Forgot).solid)
-                                Text(text = if (strings.languageCode == "fa") "فراموش شده" else "Forgot", style = MaterialTheme.typography.labelSmall)
+                                Text(text = when (strings.languageCode) { "fa" -> "فراموش شده"; "de" -> "Vergessen"; else -> "Forgot" }, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -572,7 +574,7 @@ fun ReviewSessionScreen(
                         IconButton(onClick = { onNavigateToEdit(currentUnit.id) }) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
-                                contentDescription = if (strings.languageCode == "fa") "ویرایش مبحث" else "Edit topic", // not a flashcard app
+                                contentDescription = when (strings.languageCode) { "fa" -> "ویرایش مبحث"; "de" -> "Thema bearbeiten"; else -> "Edit topic" }, // not a flashcard app
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
@@ -608,23 +610,23 @@ fun ReviewSessionScreen(
                             if (hrs < 1) {
                                 val mins = (diffMs / 60000).toInt()
                                 if (mins < 1) {
-                                    if (strings.languageCode == "fa") "همین الان" else "just now"
+                                    when (strings.languageCode) { "fa" -> "همین الان"; "de" -> "gerade eben"; else -> "just now" }
                                 } else {
-                                    if (strings.languageCode == "fa") "${num(mins)} دقیقه پیش" else "${mins}m ago"
+                                    when (strings.languageCode) { "fa" -> "${num(mins)} دقیقه پیش"; "de" -> "vor ${mins} Min."; else -> "${mins}m ago" }
                                 }
                             } else if (hrs < 24) {
-                                if (strings.languageCode == "fa") "${num(hrs)} ساعت پیش" else "${hrs}h ago"
+                                when (strings.languageCode) { "fa" -> "${num(hrs)} ساعت پیش"; "de" -> "vor ${hrs} Std."; else -> "${hrs}h ago" }
                              } else {
                                 val days = hrs / 24
-                                if (strings.languageCode == "fa") "${num(days)} روز پیش" else "${days}d ago"
+                                when (strings.languageCode) { "fa" -> "${num(days)} روز پیش"; "de" -> "vor ${days} Tagen"; else -> "${days}d ago" }
                             }
-                        } ?: (if (strings.languageCode == "fa") "هرگز" else "Never")
+                        } ?: (when (strings.languageCode) { "fa" -> "هرگز"; "de" -> "Nie"; else -> "Never" })
 
                         val intervalStr = if (currentUnit.currentIntervalDays <= 0.0) {
-                            if (strings.languageCode == "fa") "۰ روز" else "0 days"
+                            when (strings.languageCode) { "fa" -> "۰ روز"; "de" -> "0 Tage"; else -> "0 days" }
                         } else {
                             val rounded = (currentUnit.currentIntervalDays * 10).toInt() / 10.0
-                            if (strings.languageCode == "fa") "${num(rounded)} روز" else "$rounded days"
+                            when (strings.languageCode) { "fa" -> "${num(rounded)} روز"; "de" -> "$rounded Tage"; else -> "$rounded days" }
                         }
 
                         Row(
@@ -655,7 +657,7 @@ fun ReviewSessionScreen(
                             }
                             
                             Text(
-                                text = "${if (strings.languageCode == "fa") "مرحله" else "Stage"}: $formattedStage",
+                                text = "${when (strings.languageCode) { "fa" -> "مرحله"; "de" -> "Stufe"; else -> "Stage" }}: $formattedStage",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.secondary
@@ -670,12 +672,12 @@ fun ReviewSessionScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${if (strings.languageCode == "fa") "فاصله" else "Interval"}: $intervalStr",
+                                text = "${when (strings.languageCode) { "fa" -> "فاصله"; "de" -> "Abstand"; else -> "Interval" }}: $intervalStr",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
                             Text(
-                                text = "${if (strings.languageCode == "fa") "آخرین" else "Last"}: $lastDateStr",
+                                text = "${when (strings.languageCode) { "fa" -> "آخرین"; "de" -> "Zuletzt"; else -> "Last" }}: $lastDateStr",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             )
@@ -784,13 +786,13 @@ fun ReviewSessionScreen(
                 
                 if (isFreshFirstStudy && selectedMemory == null) {
                     // FIRST STUDY: you just studied this today — rate how hard the topic was (not recall).
-                    Text(if (strings.languageCode == "fa") "این مبحث چقدر سخت بود؟" else "How difficult was this topic?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(when (strings.languageCode) { "fa" -> "این مبحث چقدر سخت بود؟"; "de" -> "Wie schwer war dieses Thema?"; else -> "How difficult was this topic?" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     // Retrieval nudge: a rating that follows a real recall attempt is far more diagnostic
                     // than a "felt fluent while reading" judgment. Costs nothing, reinforces active recall.
                     Text(
                         // Semantically honest: minutes after studying, "recall without looking" is a
                         // fluency check, not delayed retrieval. Frame it as the check-in it really is.
-                        if (strings.languageCode == "fa") "این ثبت اولیه، اولین مرور را تنظیم می‌کند — سنجش واقعی حافظه از مرور بعدی و پس از گذشت زمان شروع می‌شود." else "This check-in sets your first review — real memory testing starts next time, after time has passed.",
+                        if (strings.languageCode == "fa") "این ثبت اولیه، اولین مرور را تنظیم می‌کند — سنجش واقعی حافظه از مرور بعدی و پس از گذشت زمان شروع می‌شود." else if (strings.languageCode == "de") "Dieser Check-in legt die erste Wiederholung fest — das echte Gedächtnistesten beginnt beim nächsten Mal." else "This check-in sets your first review — real memory testing starts next time, after time has passed.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
@@ -815,9 +817,9 @@ fun ReviewSessionScreen(
                             ) {
                                 Text(
                                     when (rating) {
-                                        MemoryRating.Easy -> if (strings.languageCode == "fa") "آسان" else "Easy"
-                                        MemoryRating.Good -> if (strings.languageCode == "fa") "متوسط" else "Medium"
-                                        else -> if (strings.languageCode == "fa") "سخت" else "Hard"
+                                        MemoryRating.Easy -> when (strings.languageCode) { "fa" -> "آسان"; "de" -> "Leicht"; else -> "Easy" }
+                                        MemoryRating.Good -> when (strings.languageCode) { "fa" -> "متوسط"; "de" -> "Mittel"; else -> "Medium" }
+                                        else -> when (strings.languageCode) { "fa" -> "سخت"; "de" -> "Schwer"; else -> "Hard" }
                                     },
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )

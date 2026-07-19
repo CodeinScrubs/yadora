@@ -51,12 +51,16 @@ class DueWidgetProvider : AppWidgetProvider() {
             val due = kotlinx.coroutines.runBlocking { app.database.studyUnitDao().getDueCount(endOfToday) }
 
             val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            val isFa = (sp.getString("app_language", "en") ?: "en") == "fa"
+            val lang = sp.getString("app_language", "en") ?: "en"
+            val isFa = lang == "fa"
             val countText = if (isFa) com.example.ui.i18n.PersianDate.faDigits(due) else due.toString()
             val label = when {
                 due == 0 && isFa -> "مروری نمانده"
+                due == 0 && lang == "de" -> "alles erledigt"
                 due == 0 -> "all caught up"
                 isFa -> "مرور امروز"
+                lang == "de" && due == 1 -> "Thema fällig"
+                lang == "de" -> "Themen fällig"
                 due == 1 -> "review due"
                 else -> "reviews due"
             }

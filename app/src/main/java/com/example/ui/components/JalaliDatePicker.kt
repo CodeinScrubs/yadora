@@ -161,8 +161,8 @@ fun JalaliDatePickerDialog(
                     clear(); set(gy, gm - 1, gd, 9, 0, 0)
                 }.timeInMillis
                 onConfirm(millis)
-            }) { Text("تأیید") }
+            }) { Text(when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "تأیید"; "de" -> "OK"; else -> "OK" }) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("لغو") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "لغو"; "de" -> "Abbrechen"; else -> "Cancel" }) } },
     )
 }

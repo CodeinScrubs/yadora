@@ -80,7 +80,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             .use { it.write(json.toByteArray()) }
                     }.isSuccess
                 }
-                android.widget.Toast.makeText(context, if (ok) "Exported" else "Export failed", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, if (ok) (when (language) { "fa" -> "خروجی ذخیره شد"; "de" -> "Exportiert"; else -> "Exported" }) else (when (language) { "fa" -> "خروجی ناموفق بود"; "de" -> "Export fehlgeschlagen"; else -> "Export failed" }), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -115,7 +115,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             .use { it.write(json.toByteArray()) }
                     }.isSuccess
                 }
-                android.widget.Toast.makeText(context, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else if (language == "de") "Sicherung gespeichert" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else if (language == "de") "Sicherung fehlgeschlagen" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -143,7 +143,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     }.getOrNull()
                 }
                 if (json.isNullOrBlank()) {
-                    android.widget.Toast.makeText(context, if (language == "fa") "خواندن فایل ناموفق بود" else "Couldn't read that file", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(context, if (language == "fa") "خواندن فایل ناموفق بود" else if (language == "de") "Datei konnte nicht gelesen werden" else "Couldn't read that file", android.widget.Toast.LENGTH_SHORT).show()
                 } else {
                     pendingImportJson = json
                 }
@@ -153,8 +153,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     if (pendingImportJson != null) {
         AlertDialog(
             onDismissRequest = { pendingImportJson = null },
-            title = { Text(if (language == "fa") "بازیابی پشتیبان؟" else "Restore backup?") },
-            text = { Text(if (language == "fa") "همهٔ داده‌های فعلی با محتوای این فایل جایگزین می‌شود. این کار قابل بازگشت نیست." else "This replaces ALL your current data with the contents of this file. This can't be undone.") },
+            title = { Text(if (language == "fa") "بازیابی پشتیبان؟" else if (language == "de") "Sicherung wiederherstellen?" else "Restore backup?") },
+            text = { Text(if (language == "fa") "همهٔ داده‌های فعلی با محتوای این فایل جایگزین می‌شود. این کار قابل بازگشت نیست." else if (language == "de") "Das ersetzt ALLE aktuellen Daten durch den Inhalt dieser Datei. Das lässt sich nicht rückgängig machen." else "This replaces ALL your current data with the contents of this file. This can't be undone.") },
             confirmButton = {
                 TextButton(onClick = {
                     val json = pendingImportJson!!
@@ -166,12 +166,12 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         if (count != null) {
                             runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
                             com.example.widget.DueWidgetProvider.updateAll(context)
-                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: $count مبحث" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
+                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: $count مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
                         } else {
-                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else "Restore failed — invalid backup", android.widget.Toast.LENGTH_LONG).show()
+                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup", android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
-                }) { Text(if (language == "fa") "بازیابی" else "Restore") }
+                }) { Text(if (language == "fa") "بازیابی" else if (language == "de") "Wiederherstellen" else "Restore") }
             },
             dismissButton = { TextButton(onClick = { pendingImportJson = null }) { Text(strings.cancel) } }
         )
@@ -214,7 +214,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             return "$h:$m $amPm"
                         }
                         Text(strings.dailyReviewReminder, style = MaterialTheme.typography.bodyLarge)
-                        Text(if (language == "fa") "ساعت یادآوری: ${formatTime(reminderHour, reminderMinute)}" else "Time: ${formatTime(reminderHour, reminderMinute)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (language == "fa") "ساعت یادآوری: ${formatTime(reminderHour, reminderMinute)}" else if (language == "de") "Uhrzeit: ${formatTime(reminderHour, reminderMinute)}" else "Time: ${formatTime(reminderHour, reminderMinute)}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     var expandedTime by remember { mutableStateOf(false) }
                     var expandedMinute by remember { mutableStateOf(false) }
@@ -222,7 +222,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         if (dailyReminder) {
                             Box {
                                 TextButton(onClick = { expandedTime = true }) {
-                                    Text(if (language == "fa") "ساعت" else "Hour")
+                                    Text(if (language == "fa") "ساعت" else if (language == "de") "Stunde" else "Hour")
                                 }
                                 DropdownMenu(expanded = expandedTime, onDismissRequest = { expandedTime = false }) {
                                     (0..23).forEach { h ->
@@ -245,7 +245,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             }
                             Box {
                                 TextButton(onClick = { expandedMinute = true }) {
-                                    Text(if (language == "fa") "دقیقه" else "Min")
+                                    Text(if (language == "fa") "دقیقه" else if (language == "de") "Min." else "Min")
                                 }
                                 DropdownMenu(expanded = expandedMinute, onDismissRequest = { expandedMinute = false }) {
                                     (0..55 step 5).forEach { m ->
@@ -296,18 +296,18 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     onClick = { NotificationScheduler.scheduleTest(context) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (language == "fa") "ارسال یادآوری آزمایشی (حدود ۱ دقیقه)" else "Send a test reminder (~1 min)")
+                    Text(if (language == "fa") "ارسال یادآوری آزمایشی (حدود ۱ دقیقه)" else if (language == "de") "Test-Erinnerung senden (~1 Min.)" else "Send a test reminder (~1 min)")
                 }
             }
 
             item {
                 Text(
-                    if (language == "fa") "مجوزها و راه‌اندازی" else "Permissions & setup",
+                    if (language == "fa") "مجوزها و راه‌اندازی" else if (language == "de") "Berechtigungen & Einrichtung" else "Permissions & setup",
                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    if (language == "fa") "برای مطمئن‌ترین یادآوری‌ها، این موارد را فعال نگه دار." else "For the most reliable reminders, keep these enabled.",
+                    if (language == "fa") "برای مطمئن‌ترین یادآوری‌ها، این موارد را فعال نگه دار." else if (language == "de") "Für zuverlässige Erinnerungen lass diese aktiviert." else "For the most reliable reminders, keep these enabled.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -336,9 +336,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 }
 
                 PermissionStatusRow(
-                    label = if (language == "fa") "نوتیفیکیشن" else "Notifications",
+                    label = if (language == "fa") "نوتیفیکیشن" else if (language == "de") "Benachrichtigungen" else "Notifications",
                     granted = notifGranted,
-                    actionLabel = if (language == "fa") "فعال‌سازی" else "Enable"
+                    actionLabel = if (language == "fa") "فعال‌سازی" else if (language == "de") "Aktivieren" else "Enable"
                 ) {
                     runCatching {
                         context.startActivity(
@@ -348,9 +348,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     }
                 }
                 PermissionStatusRow(
-                    label = if (language == "fa") "نوتیفیکیشن برنامه فعال" else "App notifications on",
+                    label = if (language == "fa") "نوتیفیکیشن برنامه فعال" else if (language == "de") "App-Benachrichtigungen an" else "App notifications on",
                     granted = appNotifsEnabled,
-                    actionLabel = if (language == "fa") "تنظیم" else "Fix"
+                    actionLabel = if (language == "fa") "تنظیم" else if (language == "de") "Beheben" else "Fix"
                 ) {
                     runCatching {
                         context.startActivity(
@@ -360,9 +360,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     }
                 }
                 PermissionStatusRow(
-                    label = if (language == "fa") "کانال یادآوری فعال" else "Reminder channel on",
+                    label = if (language == "fa") "کانال یادآوری فعال" else if (language == "de") "Erinnerungskanal an" else "Reminder channel on",
                     granted = channelEnabled,
-                    actionLabel = if (language == "fa") "تنظیم" else "Fix"
+                    actionLabel = if (language == "fa") "تنظیم" else if (language == "de") "Beheben" else "Fix"
                 ) {
                     runCatching {
                         context.startActivity(
@@ -372,25 +372,25 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     }
                 }
                 PermissionStatusRow(
-                    label = if (language == "fa") "هشدار دقیق" else "Exact alarms",
+                    label = if (language == "fa") "هشدار دقیق" else if (language == "de") "Exakte Alarme" else "Exact alarms",
                     granted = exactGranted,
-                    actionLabel = if (language == "fa") "فعال‌سازی" else "Enable"
+                    actionLabel = if (language == "fa") "فعال‌سازی" else if (language == "de") "Aktivieren" else "Enable"
                 ) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                         runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)) }
                     }
                 }
                 PermissionStatusRow(
-                    label = if (language == "fa") "نادیده‌گرفتن بهینه‌سازی باتری" else "Ignore battery optimization",
+                    label = if (language == "fa") "نادیده‌گرفتن بهینه‌سازی باتری" else if (language == "de") "Akku-Optimierung ignorieren" else "Ignore battery optimization",
                     granted = batteryOk,
-                    actionLabel = if (language == "fa") "تنظیم" else "Fix"
+                    actionLabel = if (language == "fa") "تنظیم" else if (language == "de") "Beheben" else "Fix"
                 ) {
                     runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
                 }
                 PermissionStatusRow(
-                    label = if (language == "fa") "زنگ تمام‌صفحه" else "Full-screen alarm",
+                    label = if (language == "fa") "زنگ تمام‌صفحه" else if (language == "de") "Vollbild-Alarm" else "Full-screen alarm",
                     granted = fullScreenOk,
-                    actionLabel = if (language == "fa") "فعال‌سازی" else "Enable"
+                    actionLabel = if (language == "fa") "فعال‌سازی" else if (language == "de") "Aktivieren" else "Enable"
                 ) {
                     if (Build.VERSION.SDK_INT >= 34) {
                         runCatching {
@@ -432,7 +432,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                                 android.widget.Toast.makeText(
                                     context,
-                                    if (language == "fa") "ثبت شد — همراه خروجی تحلیلی ارسال می‌شود." else "Recorded — it ships with the analytics export.",
+                                    if (language == "fa") "ثبت شد — همراه خروجی تحلیلی ارسال می‌شود." else if (language == "de") "Erfasst — es wird mit dem Analyse-Export mitgeliefert." else "Recorded — it ships with the analytics export.",
                                     android.widget.Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -440,7 +440,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (language == "fa") "گزارش یادآوریِ ازدست‌رفته" else "Report a missed reminder")
+                    Text(if (language == "fa") "گزارش یادآوریِ ازدست‌رفته" else if (language == "de") "Verpasste Erinnerung melden" else "Report a missed reminder")
                 }
             }
 
@@ -455,7 +455,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = if (language == "fa") "برای یادآوری دقیق و سر وقت، اجازه «هشدارها و یادآوری‌ها» را بدهید." else "For reliable, on-time reminders, allow exact alarms.",
+                                text = if (language == "fa") "برای یادآوری دقیق و سر وقت، اجازه «هشدارها و یادآوری‌ها» را بدهید." else if (language == "de") "Für pünktliche Erinnerungen erlaube exakte Alarme." else "For reliable, on-time reminders, allow exact alarms.",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Spacer(modifier = Modifier.height(8.dp))
@@ -467,7 +467,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     )
                                 }
                             }) {
-                                Text(if (language == "fa") "فعال‌سازی هشدار دقیق" else "Enable exact alarms")
+                                Text(if (language == "fa") "فعال‌سازی هشدار دقیق" else if (language == "de") "Exakte Alarme aktivieren" else "Enable exact alarms")
                             }
                         }
                     }
@@ -482,13 +482,13 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = if (language == "fa") "قابلیت اطمینان یادآوری" else "Reminder reliability",
+                            text = if (language == "fa") "قابلیت اطمینان یادآوری" else if (language == "de") "Zuverlässigkeit der Erinnerungen" else "Reminder reliability",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = if (language == "fa") "برخی گوشی‌ها (شیائومی، هواوی، اوپو، ویوو، سامسونگ) برنامه‌های پس‌زمینه را به‌شدت متوقف می‌کنند و ممکن است یادآوری‌ها قطع شوند. برای اطمینان: بهینه‌سازی باتری را برای این برنامه خاموش کنید و در صورت وجود، Autostart را روشن کنید." else "Some phones (Xiaomi, Huawei, Oppo, Vivo, Samsung) aggressively stop background apps, which can silence reminders. To be safe: turn OFF battery optimization for Yadora, and enable Autostart if your phone has it.",
+                            text = if (language == "fa") "برخی گوشی‌ها (شیائومی، هواوی، اوپو، ویوو، سامسونگ) برنامه‌های پس‌زمینه را به‌شدت متوقف می‌کنند و ممکن است یادآوری‌ها قطع شوند. برای اطمینان: بهینه‌سازی باتری را برای این برنامه خاموش کنید و در صورت وجود، Autostart را روشن کنید." else if (language == "de") "Manche Handys (Xiaomi, Huawei, Oppo, Vivo, Samsung) stoppen Hintergrund-Apps aggressiv, was Erinnerungen stummschalten kann. Zur Sicherheit: Schalte die Akku-Optimierung für Yadora AUS und aktiviere Autostart, falls vorhanden." else "Some phones (Xiaomi, Huawei, Oppo, Vivo, Samsung) aggressively stop background apps, which can silence reminders. To be safe: turn OFF battery optimization for Yadora, and enable Autostart if your phone has it.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -498,7 +498,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 context.startActivity(android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                             }
                         }) {
-                            Text(if (language == "fa") "تنظیمات باتری" else "Battery settings")
+                            Text(if (language == "fa") "تنظیمات باتری" else if (language == "de") "Akku-Einstellungen" else "Battery settings")
                         }
                     }
                 }
@@ -548,9 +548,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(if (language == "fa") "تم و رنگ‌ها" else "Theme & colors", style = MaterialTheme.typography.bodyLarge)
+                    Text(if (language == "fa") "تم و رنگ‌ها" else if (language == "de") "Design & Farben" else "Theme & colors", style = MaterialTheme.typography.bodyLarge)
                     TextButton(onClick = { onOpenThemeSettings() }) {
-                        Text(if (language == "fa") "ویرایش" else "Customize")
+                        Text(if (language == "fa") "ویرایش" else if (language == "de") "Anpassen" else "Customize")
                     }
                 }
 
@@ -559,16 +559,16 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 var calendarFormat by remember { mutableStateOf(sharedPrefs.getString("calendar_format", "auto") ?: "auto") }
                 var calExpanded by remember { mutableStateOf(false) }
                 fun calLabel(v: String) = when (v) {
-                    "jalali" -> if (language == "fa") "شمسی (جلالی)" else "Jalali (Solar)"
-                    "gregorian" -> if (language == "fa") "میلادی" else "Gregorian"
-                    else -> if (language == "fa") "خودکار (بر اساس زبان)" else "Auto (follow language)"
+                    "jalali" -> if (language == "fa") "شمسی (جلالی)" else if (language == "de") "Dschalali (Sonnenkalender)" else "Jalali (Solar)"
+                    "gregorian" -> if (language == "fa") "میلادی" else if (language == "de") "Gregorianisch" else "Gregorian"
+                    else -> if (language == "fa") "خودکار (بر اساس زبان)" else if (language == "de") "Automatisch (nach Sprache)" else "Auto (follow language)"
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(if (language == "fa") "تقویم" else "Calendar", style = MaterialTheme.typography.bodyLarge)
+                    Text(if (language == "fa") "تقویم" else if (language == "de") "Kalender" else "Calendar", style = MaterialTheme.typography.bodyLarge)
                     Box {
                         TextButton(onClick = { calExpanded = true }) { Text(calLabel(calendarFormat)) }
                         DropdownMenu(expanded = calExpanded, onDismissRequest = { calExpanded = false }) {
@@ -634,9 +634,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(if (language == "fa") "زنگ مثل ساعت زنگ‌دار" else "Ring like an alarm clock", style = MaterialTheme.typography.bodyLarge)
+                        Text(if (language == "fa") "زنگ مثل ساعت زنگ‌دار" else if (language == "de") "Wie ein Wecker klingeln" else "Ring like an alarm clock", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            if (language == "fa") "هنگام مرور، تمام‌صفحه و با صدای آلارم زنگ می‌زند (نیازمند مجوز «زنگ تمام‌صفحه»)." else "Rings full-screen with an alarm tone at review time (needs the full-screen alarm permission above).",
+                            if (language == "fa") "هنگام مرور، تمام‌صفحه و با صدای آلارم زنگ می‌زند (نیازمند مجوز «زنگ تمام‌صفحه»)." else if (language == "de") "Klingelt im Vollbild mit Weckerton zur Wiederholungszeit (braucht die Vollbild-Berechtigung oben)." else "Rings full-screen with an alarm tone at review time (needs the full-screen alarm permission above).",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -840,10 +840,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
             item {
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(24.dp))
-                Text(if (language == "fa") "هدف به‌خاطرسپاری" else "Retention target", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(if (language == "fa") "هدف به‌خاطرسپاری" else if (language == "de") "Behaltensziel" else "Retention target", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(if (language == "fa") "احتمال به‌خاطرسپاری هدف" else "Target recall", style = MaterialTheme.typography.bodyLarge)
+                    Text(if (language == "fa") "احتمال به‌خاطرسپاری هدف" else if (language == "de") "Ziel-Erinnerungsquote" else "Target recall", style = MaterialTheme.typography.bodyLarge)
                     Text(if (language == "fa") "٪${com.example.ui.i18n.PersianDate.faDigits((retention * 100).toInt())}" else "${(retention * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 }
                 Slider(
@@ -860,7 +860,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    text = if (language == "fa") "بالاتر = مرور بیشتر و فراموشی کمتر. پایین‌تر = کار کمتر. روی مرورهای آینده اثر می‌گذارد؛ برنامهٔ فعلی مباحث تغییر نمی‌کند." else "Higher = more frequent reviews, less forgetting. Lower = less workload. Applies to future reviews — already-scheduled dates don't move.",
+                    text = if (language == "fa") "بالاتر = مرور بیشتر و فراموشی کمتر. پایین‌تر = کار کمتر. روی مرورهای آینده اثر می‌گذارد؛ برنامهٔ فعلی مباحث تغییر نمی‌کند." else if (language == "de") "Höher = häufigere Wiederholungen, weniger Vergessen. Niedriger = weniger Aufwand. Gilt für künftige Wiederholungen — bereits geplante Termine verschieben sich nicht." else "Higher = more frequent reviews, less forgetting. Lower = less workload. Applies to future reviews — already-scheduled dates don't move.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -869,12 +869,12 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
             item {
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(24.dp))
-                Text(if (language == "fa") "شمارش معکوس آزمون" else "Exam countdown", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(if (language == "fa") "شمارش معکوس آزمون" else if (language == "de") "Prüfungs-Countdown" else "Exam countdown", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(4.dp))
                 // Honest scope: countdown only. Exam-aware schedule compression is a future feature —
                 // the UI must not imply it exists.
                 Text(
-                    if (language == "fa") "روی صفحهٔ امروز نمایش داده می‌شود؛ فعلاً برنامهٔ مرورها را تغییر نمی‌دهد." else "Shown on the Today screen — it doesn't change your review schedule yet.",
+                    if (language == "fa") "روی صفحهٔ امروز نمایش داده می‌شود؛ فعلاً برنامهٔ مرورها را تغییر نمی‌دهد." else if (language == "de") "Wird auf dem Heute-Bildschirm angezeigt — es ändert deinen Wiederholungsplan noch nicht." else "Shown on the Today screen — it doesn't change your review schedule yet.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -882,7 +882,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 OutlinedTextField(
                     value = examName,
                     onValueChange = { examName = it; sharedPrefs.edit().putString("exam_name", it).apply() },
-                    label = { Text(if (language == "fa") "نام آزمون" else "Exam name") },
+                    label = { Text(if (language == "fa") "نام آزمون" else if (language == "de") "Name der Prüfung" else "Exam name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
@@ -890,17 +890,17 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (examDate <= 0L) (if (language == "fa") "بدون تاریخ" else "No date set")
+                        text = if (examDate <= 0L) (if (language == "fa") "بدون تاریخ" else if (language == "de") "Kein Datum gesetzt" else "No date set")
                                else com.example.ui.i18n.AppDate.date(useJalali, examDate),
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { showExamDatePicker = true }) { Text(if (language == "fa") "تنظیم تاریخ" else "Set date") }
+                        TextButton(onClick = { showExamDatePicker = true }) { Text(if (language == "fa") "تنظیم تاریخ" else if (language == "de") "Datum wählen" else "Set date") }
                         if (examDate > 0L) {
                             TextButton(onClick = {
                                 examName = ""; examDate = 0L
                                 sharedPrefs.edit().remove("exam_name").remove("exam_date").apply()
-                            }) { Text(if (language == "fa") "پاک کردن" else "Clear") }
+                            }) { Text(if (language == "fa") "پاک کردن" else if (language == "de") "Löschen" else "Clear") }
                         }
                     }
                 }
@@ -909,24 +909,24 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
             item {
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(24.dp))
-                Text(if (language == "fa") "داده‌ها" else "Data", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(if (language == "fa") "داده‌ها" else if (language == "de") "Daten" else "Data", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (language == "fa") "یک فایل پشتیبان کامل (همراه عنوان‌ها و یادداشت‌ها) بساز و جایی امن ذخیره کن. هر زمان می‌توانی آن را بازیابی کنی." else "Make a full backup (including titles & notes) and save it somewhere safe. You can restore it any time.",
+                    text = if (language == "fa") "یک فایل پشتیبان کامل (همراه عنوان‌ها و یادداشت‌ها) بساز و جایی امن ذخیره کن. هر زمان می‌توانی آن را بازیابی کنی." else if (language == "de") "Erstelle eine vollständige Sicherung (mit Titeln & Notizen) und bewahre sie sicher auf. Du kannst sie jederzeit wiederherstellen." else "Make a full backup (including titles & notes) and save it somewhere safe. You can restore it any time.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { backupExportLauncher.launch("yadora_backup.json") }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (language == "fa") "ساخت فایل پشتیبان" else "Export full backup")
+                    Text(if (language == "fa") "ساخت فایل پشتیبان" else if (language == "de") "Vollständige Sicherung exportieren" else "Export full backup")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(onClick = { backupImportLauncher.launch(arrayOf("application/json")) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (language == "fa") "بازیابی از فایل پشتیبان" else "Import backup")
+                    Text(if (language == "fa") "بازیابی از فایل پشتیبان" else if (language == "de") "Sicherung importieren" else "Import backup")
                 }
                 Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = if (language == "fa") "خروجی تحلیلی برای بهبود الگوریتم (نه پشتیبان‌گیری): بدون عنوان و یادداشت مباحث، اما شامل نام درس‌ها/مجموعه‌ها و مشخصات دستگاه." else "Analytics export for tuning the algorithm (not a backup): no topic titles or notes, but it does include your subject/collection names and device model.",
+                    text = if (language == "fa") "خروجی تحلیلی برای بهبود الگوریتم (نه پشتیبان‌گیری): بدون عنوان و یادداشت مباحث، اما شامل نام درس‌ها/مجموعه‌ها و مشخصات دستگاه." else if (language == "de") "Analyse-Export zur Verbesserung des Algorithmus (keine Sicherung): ohne Thementitel oder Notizen, aber mit deinen Fachnamen und dem Gerätemodell." else "Analytics export for tuning the algorithm (not a backup): no topic titles or notes, but it does include your subject/collection names and device model.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -948,7 +948,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(strings.appName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            if (language == "fa") "ساخته‌شده برای یادگیرندگان جدی" else "Built for serious learners",
+                            if (language == "fa") "ساخته‌شده برای یادگیرندگان جدی" else if (language == "de") "Für ernsthafte Lernende" else "Built for serious learners",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -961,14 +961,14 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
 
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            if (language == "fa") "ساخته‌شده توسط دکتر شایان صالحی‌راد" else "Built by Dr. Shayan Salehirad",
+                            if (language == "fa") "ساخته‌شده توسط دکتر شایان صالحی‌راد" else if (language == "de") "Entwickelt von Dr. Shayan Salehirad" else "Built by Dr. Shayan Salehirad",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         // Opens the Telegram app if installed (it claims telegram.me links), otherwise
                         // the browser — so it works for everyone.
                         Text(
-                            text = if (language == "fa") "ارتباط با ما در تلگرام: @shayan_salehirad" else "Contact us on Telegram: @shayan_salehirad",
+                            text = if (language == "fa") "ارتباط با ما در تلگرام: @shayan_salehirad" else if (language == "de") "Kontakt über Telegram: @shayan_salehirad" else "Contact us on Telegram: @shayan_salehirad",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
@@ -1005,6 +1005,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         Text(
                             text = if (language == "fa")
                                 "یک ساعت فکر کن تا ده دقیقه کار کنی؛ نه اینکه ده دقیقه فکر کنی تا یک ساعت کار کنی."
+                            else if (language == "de")
+                                "Denke eine Stunde nach, um zehn Minuten zu arbeiten — nicht zehn Minuten, um eine Stunde zu arbeiten."
                             else
                                 "Think for an hour to work for ten minutes. Don't think for ten minutes to work for an hour.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -1051,7 +1053,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         showExamDatePicker = false
                     }) { Text(if (language == "fa") "تأیید" else "OK") }
                 },
-                dismissButton = { TextButton(onClick = { showExamDatePicker = false }) { Text(if (language == "fa") "لغو" else "Cancel") } }
+                dismissButton = { TextButton(onClick = { showExamDatePicker = false }) { Text(if (language == "fa") "لغو" else if (language == "de") "Abbrechen" else "Cancel") } }
             ) { DatePicker(state = examPickerState) }
         }
     }

@@ -207,7 +207,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
     var selectedTab by remember { mutableStateOf(0) }
     val isFarsiLanguage = strings.languageCode == "fa"
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
-    val tabTitles = if (isFarsiLanguage) listOf("نمای کلی", "تقویم مرور") else listOf("Overview", "Calendar Plan")
+    val tabTitles = if (isFarsiLanguage) listOf("نمای کلی", "تقویم مرور") else if (strings.languageCode == "de") listOf("Überblick", "Kalenderplan") else listOf("Overview", "Calendar Plan")
 
     // Exam countdown text computed in composable scope (LocalContext can't be read inside LazyColumn items).
     val examCtx = LocalContext.current
@@ -340,9 +340,9 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 Spacer(modifier = Modifier.height(8.dp))
                                 StateRow(strings.learning, learning, MaterialTheme.colorScheme.secondary)
                                 Spacer(modifier = Modifier.height(8.dp))
-                                StateRow(if (isFarsiLanguage) "در حال ساخت" else "Building", building, MaterialTheme.colorScheme.tertiary)
+                                StateRow(if (isFarsiLanguage) "در حال ساخت" else if (strings.languageCode == "de") "Im Aufbau" else "Building", building, MaterialTheme.colorScheme.tertiary)
                                 Spacer(modifier = Modifier.height(8.dp))
-                                StateRow(if (isFarsiLanguage) "جدید" else "New", newTopics, Color.Gray)
+                                StateRow(if (isFarsiLanguage) "جدید" else if (strings.languageCode == "de") "Neu" else "New", newTopics, Color.Gray)
                                 Spacer(modifier = Modifier.height(8.dp))
                                 StateRow(strings.needsRelearn, relearn, relearnColor)
                             }
@@ -351,7 +351,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                 }
                 
                 item {
-                    Text(if (isFarsiLanguage) "نرخ به‌خاطرسپاری (۱۴ روز اخیر)" else "Retention Rate (Last 14 Days)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+                    Text(if (isFarsiLanguage) "نرخ به‌خاطرسپاری (۱۴ روز اخیر)" else if (strings.languageCode == "de") "Behaltensquote (letzte 14 Tage)" else "Retention Rate (Last 14 Days)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                 }
                 
                 item {
@@ -372,7 +372,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                             } else {
                                 // Honest empty state: never plot a fake-perfect 100% before real data.
                                 Text(
-                                    if (isFarsiLanguage) "هنوز داده‌ای نیست — بعد از چند مرور واقعی نمایش داده می‌شود." else "No data yet — appears after your first real reviews.",
+                                    if (isFarsiLanguage) "هنوز داده‌ای نیست — بعد از چند مرور واقعی نمایش داده می‌شود." else if (strings.languageCode == "de") "Noch keine Daten — erscheint nach deinen ersten echten Wiederholungen." else "No data yet — appears after your first real reviews.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -385,7 +385,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                 // there's enough post-v2 data (>=10 real recall events) to say something honest.
                 calibration?.let { cal ->
                     item {
-                        Text(if (isFarsiLanguage) "دقت زمان‌بندی" else "Scheduler Calibration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+                        Text(if (isFarsiLanguage) "دقت زمان‌بندی" else if (strings.languageCode == "de") "Genauigkeit der Planung" else "Scheduler Calibration", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                     }
                     item {
                         Card(
@@ -407,16 +407,16 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 val gap = cal.actualPct - cal.predictedPct
                                 Text(
                                     text = when {
-                                        Math.abs(gap) <= 5 -> if (isFarsiLanguage) "زمان‌بندی با حافظه‌ات هماهنگ است." else "The schedule matches your memory well."
-                                        gap > 5 -> if (isFarsiLanguage) "بهتر از پیش‌بینی به‌ خاطر می‌آوری — فاصله‌ها می‌توانند کمی بلندتر باشند (هدف به‌خاطرسپاری را در تنظیمات کمی پایین بیاور)." else "You remember better than predicted — intervals could stretch a little (try a slightly lower retention target in Settings)."
-                                        else -> if (isFarsiLanguage) "کمی بیشتر از پیش‌بینی فراموش می‌کنی — صادقانه امتیاز بده و در صورت نیاز هدف به‌خاطرسپاری را بالاتر ببر." else "You forget a bit more than predicted — rate honestly, and consider a higher retention target in Settings."
+                                        Math.abs(gap) <= 5 -> if (isFarsiLanguage) "زمان‌بندی با حافظه‌ات هماهنگ است." else if (strings.languageCode == "de") "Der Plan passt gut zu deinem Gedächtnis." else "The schedule matches your memory well."
+                                        gap > 5 -> if (isFarsiLanguage) "بهتر از پیش‌بینی به‌ خاطر می‌آوری — فاصله‌ها می‌توانند کمی بلندتر باشند (هدف به‌خاطرسپاری را در تنظیمات کمی پایین بیاور)." else if (strings.languageCode == "de") "Du erinnerst dich besser als vorhergesagt — die Abstände könnten etwas länger sein (probiere ein etwas niedrigeres Behaltensziel)." else "You remember better than predicted — intervals could stretch a little (try a slightly lower retention target in Settings)."
+                                        else -> if (isFarsiLanguage) "کمی بیشتر از پیش‌بینی فراموش می‌کنی — صادقانه امتیاز بده و در صورت نیاز هدف به‌خاطرسپاری را بالاتر ببر." else if (strings.languageCode == "de") "Du vergisst etwas mehr als vorhergesagt — bewerte ehrlich und erwäge ein höheres Behaltensziel." else "You forget a bit more than predicted — rate honestly, and consider a higher retention target in Settings."
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی" else "Based on ${cal.n} real recall reviews",
+                                    text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی" else if (strings.languageCode == "de") "Basierend auf ${cal.n} echten Wiederholungen" else "Based on ${cal.n} real recall reviews",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -426,7 +426,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                 }
 
                 item {
-                    Text(if (isFarsiLanguage) "ثبات مرور (۱۴ روز اخیر)" else "Review Consistency (Last 14 Days)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+                    Text(if (isFarsiLanguage) "ثبات مرور (۱۴ روز اخیر)" else if (strings.languageCode == "de") "Regelmäßigkeit (letzte 14 Tage)" else "Review Consistency (Last 14 Days)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                 }
                 
                 item {
@@ -447,7 +447,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                 }
                 
                 item {
-                    Text(if (isFarsiLanguage) "دشواری بر اساس موضوع" else "Difficulty by Subject", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+                    Text(if (isFarsiLanguage) "دشواری بر اساس موضوع" else if (strings.languageCode == "de") "Schwierigkeit nach Fach" else "Difficulty by Subject", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
                 }
                 
                 items(subjectDifficultyData.size) { i ->
@@ -475,8 +475,8 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                                 val nWeak = if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(data.weak) else data.weak.toString()
                                 val nStrong = if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(data.strong) else data.strong.toString()
-                                Text(if (isFarsiLanguage) "$nWeak ضعیف" else "$nWeak Weak", style = MaterialTheme.typography.bodySmall, color = com.example.ui.theme.Overdue)
-                                Text(if (isFarsiLanguage) "$nStrong قوی" else "$nStrong Strong", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                                Text(if (isFarsiLanguage) "$nWeak ضعیف" else if (strings.languageCode == "de") "$nWeak schwach" else "$nWeak Weak", style = MaterialTheme.typography.bodySmall, color = com.example.ui.theme.Overdue)
+                                Text(if (isFarsiLanguage) "$nStrong قوی" else if (strings.languageCode == "de") "$nStrong stark" else "$nStrong Strong", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                             }
                         }
                     }
@@ -508,7 +508,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
             ) {
                 item {
                     Text(
-                        text = if (isFarsiLanguage) "پیش‌بینی حجم دروس" else "Review Forecast (Next 10 Days)",
+                        text = if (isFarsiLanguage) "پیش‌بینی حجم دروس" else if (strings.languageCode == "de") "Vorschau (nächste 10 Tage)" else "Review Forecast (Next 10 Days)",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -532,8 +532,8 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                     }
                     // Calendar follows the user's preference; Today/Tomorrow labels follow language.
                     val dayHeader = when (i) {
-                        0 -> if (isFarsiLanguage) "امروز" else "Today"
-                        1 -> if (isFarsiLanguage) "فردا" else "Tomorrow"
+                        0 -> if (isFarsiLanguage) "امروز" else if (strings.languageCode == "de") "Heute" else "Today"
+                        1 -> if (isFarsiLanguage) "فردا" else if (strings.languageCode == "de") "Morgen" else "Tomorrow"
                         else -> com.example.ui.i18n.AppDate.weekdayDate(useJalali, dayNameCalendar.timeInMillis)
                     }
                     
@@ -581,7 +581,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isFarsiLanguage) "تعداد نکات مرور: ${com.example.ui.i18n.PersianDate.faDigits(reviewCount)} موضوع" else "$reviewCount topics to review",
+                                        text = if (isFarsiLanguage) "تعداد نکات مرور: ${com.example.ui.i18n.PersianDate.faDigits(reviewCount)} موضوع" else if (strings.languageCode == "de") "$reviewCount Themen zur Wiederholung" else "$reviewCount topics to review",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -600,10 +600,10 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 ) {
                                     Text(
                                         text = when {
-                                            reviewCount == 0 -> if (isFarsiLanguage) "آزاد" else "Relax"
-                                            reviewCount > limitValue -> if (isFarsiLanguage) "پُر" else "Full"
-                                            reviewCount > limitValue / 2 -> if (isFarsiLanguage) "متوسط" else "Moderate"
-                                            else -> if (isFarsiLanguage) "سبک" else "Light"
+                                            reviewCount == 0 -> if (isFarsiLanguage) "آزاد" else if (strings.languageCode == "de") "Frei" else "Relax"
+                                            reviewCount > limitValue -> if (isFarsiLanguage) "پُر" else if (strings.languageCode == "de") "Voll" else "Full"
+                                            reviewCount > limitValue / 2 -> if (isFarsiLanguage) "متوسط" else if (strings.languageCode == "de") "Mittel" else "Moderate"
+                                            else -> if (isFarsiLanguage) "سبک" else if (strings.languageCode == "de") "Leicht" else "Light"
                                         },
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                         style = MaterialTheme.typography.labelSmall,
@@ -723,13 +723,13 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                             ) {
                                 Column {
                                     Text(
-                                        text = if (isFarsiLanguage) "مرورهای دورتر" else "Later Reviews",
+                                        text = if (isFarsiLanguage) "مرورهای دورتر" else if (strings.languageCode == "de") "Spätere Wiederholungen" else "Later Reviews",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isFarsiLanguage) "برنامه‌ریزی برای بیش از ۱۰ روز آینده" else "Scheduled beyond 10 days",
+                                        text = if (isFarsiLanguage) "برنامه‌ریزی برای بیش از ۱۰ روز آینده" else if (strings.languageCode == "de") "Geplant in mehr als 10 Tagen" else "Scheduled beyond 10 days",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

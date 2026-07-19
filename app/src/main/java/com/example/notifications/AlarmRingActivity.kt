@@ -79,8 +79,10 @@ class AlarmRingActivity : ComponentActivity() {
         // Don't ring forever — auto-stop after a few minutes like a real alarm clock.
         autoStopHandler.postDelayed(autoStopRunnable, 5 * 60 * 1000L)
 
-        val isFa = (getSharedPreferences("medreview_settings", MODE_PRIVATE)
-            .getString("app_language", "en") ?: "en") == "fa"
+        val lang = getSharedPreferences("medreview_settings", MODE_PRIVATE)
+            .getString("app_language", "en") ?: "en"
+        val isFa = lang == "fa"
+        val isDe = lang == "de"
 
         setContent {
             MyApplicationTheme {
@@ -91,7 +93,7 @@ class AlarmRingActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = if (isFa) "زمان مرور" else "Time to review",
+                            text = if (isFa) "زمان مرور" else if (isDe) "Zeit zum Wiederholen" else "Time to review",
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -99,7 +101,7 @@ class AlarmRingActivity : ComponentActivity() {
                         )
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            text = if (isFa) "مباحثی برای مرور آماده‌اند." else "You have study topics ready to review.",
+                            text = if (isFa) "مباحثی برای مرور آماده‌اند." else if (isDe) "Themen sind bereit zur Wiederholung." else "Some topics are ready for review.",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -108,12 +110,12 @@ class AlarmRingActivity : ComponentActivity() {
                         Button(
                             onClick = { openReview() },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                        ) { Text(if (isFa) "شروع مرور" else "Review now", fontWeight = FontWeight.Bold) }
+                        ) { Text(if (isFa) "شروع مرور" else if (isDe) "Jetzt wiederholen" else "Review now", fontWeight = FontWeight.Bold) }
                         Spacer(Modifier.height(12.dp))
                         OutlinedButton(
                             onClick = { stopAndFinish() },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-                        ) { Text(if (isFa) "بستن" else "Dismiss") }
+                        ) { Text(if (isFa) "بستن" else if (isDe) "Stopp" else "Dismiss") }
                     }
                 }
             }
