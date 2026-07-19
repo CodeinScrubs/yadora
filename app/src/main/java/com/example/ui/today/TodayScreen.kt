@@ -723,7 +723,7 @@ fun StudyUnitCard(
                             shape = RoundedCornerShape(percent = 50)
                         ) {
                             Text(
-                                text = if (strings.languageCode == "fa") "از قبل" else "From earlier",
+                                text = when (strings.languageCode) { "fa" -> "از قبل"; "de" -> "Von früher"; else -> "From earlier" },
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 color = MaterialTheme.colorScheme.tertiary,
                                 style = MaterialTheme.typography.labelSmall,
@@ -737,7 +737,7 @@ fun StudyUnitCard(
                             shape = RoundedCornerShape(percent = 50)
                         ) {
                             Text(
-                                text = if (strings.languageCode == "fa") "جدید" else "New",
+                                text = when (strings.languageCode) { "fa" -> "جدید"; "de" -> "Neu"; else -> "New" },
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 color = MaterialTheme.colorScheme.primary,
                                 style = MaterialTheme.typography.labelSmall,
