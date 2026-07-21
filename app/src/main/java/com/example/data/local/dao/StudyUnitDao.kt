@@ -51,6 +51,17 @@ interface StudyUnitDao {
     @Query("SELECT * FROM study_units WHERE archived = 1 AND deletedAt IS NULL ORDER BY nextReviewAt ASC")
     fun getArchivedUnits(): Flow<List<StudyUnitEntity>>
 
+    // One-shot variants for backup/analytics: reading via Flows takes each table at a different
+    // moment; export wraps these in ONE transaction so the snapshot is internally consistent.
+    @Query("SELECT * FROM study_units WHERE archived = 0 ORDER BY nextReviewAt ASC")
+    suspend fun getAllActiveOnce(): List<StudyUnitEntity>
+
+    @Query("SELECT * FROM study_units WHERE archived = 1 AND deletedAt IS NULL ORDER BY nextReviewAt ASC")
+    suspend fun getArchivedOnce(): List<StudyUnitEntity>
+
+    @Query("SELECT * FROM study_units WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    suspend fun getRecentlyDeletedOnce(): List<StudyUnitEntity>
+
     // --- 30-day recoverable soft delete (DB v5). archived=1 keeps every active-list query clean. ---
 
     @Query("UPDATE study_units SET deletedAt = :now, archived = 1, updatedAt = :now WHERE id = :id")

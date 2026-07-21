@@ -306,7 +306,7 @@ fun TodayScreen(
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.padding(bottom = 16.dp)
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Study Unit")
+                Icon(Icons.Default.Add, contentDescription = strings.addNewTopic)
             }
         }
     ) { padding ->

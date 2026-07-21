@@ -26,6 +26,12 @@ interface CategoryDao {
     @Query("DELETE FROM subjects")
     suspend fun deleteAllSubjects()
 
+    @Query("SELECT * FROM subjects ORDER BY name ASC")
+    suspend fun getAllSubjectsOnce(): List<SubjectEntity>
+
+    @Query("SELECT * FROM systems ORDER BY name ASC")
+    suspend fun getAllSystemsOnce(): List<SystemEntity>
+
     @Query("DELETE FROM systems")
     suspend fun deleteAllSystems()
 }

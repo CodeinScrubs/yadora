@@ -29,6 +29,10 @@ interface ReviewLogDao {
     @Query("DELETE FROM review_logs WHERE id = :logId")
     suspend fun deleteLogById(logId: Long)
 
+    /** One-shot full read for backup/analytics (wrapped in a transaction by the caller). */
+    @Query("SELECT * FROM review_logs ORDER BY reviewedAt ASC, id ASC")
+    suspend fun getAllLogsOnce(): List<ReviewLogEntity>
+
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")
     suspend fun deleteLogsForUnits(unitIds: List<Long>)

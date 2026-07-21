@@ -566,7 +566,7 @@ fun ReviewSessionScreen(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Undo,
-                                    contentDescription = "Undo Last Rating",
+                                    contentDescription = when (strings.languageCode) { "fa" -> "واگرد آخرین ارزیابی"; "de" -> "Letzte Bewertung zurücknehmen"; else -> "Undo last rating" },
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }

@@ -76,7 +76,9 @@ class MedReviewApplication : Application() {
         runCatching {
             androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
                 "reminder_safety",
-                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                // UPDATE (not KEEP): if a future version changes the sweep interval/constraints, existing
+                // installs must actually receive the change instead of keeping the old request forever.
+                androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
                 androidx.work.PeriodicWorkRequestBuilder<com.example.notifications.ReminderSafetyWorker>(
                     6, java.util.concurrent.TimeUnit.HOURS
                 ).build(),

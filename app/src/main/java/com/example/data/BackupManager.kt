@@ -7,7 +7,6 @@ import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.data.local.entity.SubjectEntity
 import com.example.data.local.entity.SystemEntity
-import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -38,15 +37,24 @@ object BackupManager {
 
     suspend fun buildBackupJson(context: Context): String {
         val db = (context.applicationContext as MedReviewApplication).database
-        val subjects = db.categoryDao().getAllSubjects().first()
-        val systems = db.categoryDao().getAllSystems().first()
-        // Recently-deleted units MUST be exported too: their logs are still in the DB, and a backup
+        // ONE transaction = one moment in time: reading each table separately could interleave with
+        // a concurrent write (receiver, purge) and produce an internally inconsistent backup.
+        // Recently-deleted units are exported too: their logs are still in the DB, and a backup
         // whose logs reference a missing topic would (correctly) fail restore preflight.
-        val units = db.studyUnitDao().getAllActiveUnits().first() +
-            db.studyUnitDao().getArchivedUnits().first() +
-            db.studyUnitDao().getRecentlyDeleted().first()
-        val logs = db.reviewLogDao().getLogsSince(0L).first()
-        val events = db.eventLogDao().getAll()
+        lateinit var subjects: List<SubjectEntity>
+        lateinit var systems: List<SystemEntity>
+        lateinit var units: List<StudyUnitEntity>
+        lateinit var logs: List<ReviewLogEntity>
+        lateinit var events: List<com.example.data.local.entity.EventLogEntity>
+        db.withTransaction {
+            subjects = db.categoryDao().getAllSubjectsOnce()
+            systems = db.categoryDao().getAllSystemsOnce()
+            units = db.studyUnitDao().getAllActiveOnce() +
+                db.studyUnitDao().getArchivedOnce() +
+                db.studyUnitDao().getRecentlyDeletedOnce()
+            logs = db.reviewLogDao().getAllLogsOnce()
+            events = db.eventLogDao().getAll()
+        }
 
         val root = JSONObject()
         root.put("backupVersion", BACKUP_VERSION)
@@ -124,9 +132,17 @@ object BackupManager {
         // Safety net: restore is all-or-nothing, so before touching anything, snapshot the CURRENT
         // data to a private file. If the user imports the wrong backup, their real data is still
         // recoverable from files/last_before_restore_backup.json.
-        runCatching {
+        // ABORT restore if the safety copy can't be created (e.g. storage full): destroying the
+        // only copy of the user's data without a recovery net is never acceptable. Temp + rename so
+        // a crash mid-write can't leave a truncated safety file that LOOKS valid.
+        run {
             val emergency = buildBackupJson(context)
-            context.filesDir.resolve("last_before_restore_backup.json").writeText(emergency)
+            val tmp = context.filesDir.resolve("last_before_restore_backup.json.tmp")
+            tmp.writeText(emergency)
+            check(tmp.length() > 0L) { "Safety copy could not be written" }
+            val dest = context.filesDir.resolve("last_before_restore_backup.json")
+            if (dest.exists()) dest.delete()
+            check(tmp.renameTo(dest)) { "Safety copy could not be finalized" }
         }
 
         val subjectsArr = root.optJSONArray("subjects") ?: JSONArray()
@@ -274,13 +290,52 @@ object BackupManager {
             SETTINGS_INT_KEYS.forEach { k -> if (s.has(k)) e.putInt(k, s.optInt(k)) }
             SETTINGS_FLOAT_KEYS.forEach { k -> if (s.has(k)) e.putFloat(k, s.optDouble(k).toFloat()) }
             SETTINGS_LONG_KEYS.forEach { k -> if (s.has(k)) e.putLong(k, s.optLong(k)) }
-            e.apply()
+            // commit() (not apply()): restore success is reported after this returns, so the
+            // settings must actually be on disk by then.
+            @Suppress("ApplySharedPref")
+            e.commit()
             runCatching {
                 com.example.domain.srs.MedScheduler.userRetention =
                     sp.getFloat("desired_retention", 0.90f).toDouble()
             }
         }
         return units.size
+    }
+
+    /**
+     * Irreversibly erases ALL user data — every subject, system, topic (including soft-deleted ones),
+     * review log, and event — plus the on-disk crash log and the pre-restore safety copy. Study
+     * settings (reminder time, retention, exam) are cleared; the chosen LANGUAGE is deliberately kept
+     * so the app doesn't jump back to English after a wipe. Reminders/alarms are cancelled.
+     *
+     * This is what the privacy policy's "you can delete all your data at any time" promise refers to.
+     * All table deletes run in ONE transaction: either everything is gone or nothing is.
+     */
+    suspend fun deleteAllData(context: Context) {
+        val db = (context.applicationContext as MedReviewApplication).database
+        db.withTransaction {
+            db.eventLogDao().deleteAll()
+            db.reviewLogDao().deleteAllLogs()
+            db.studyUnitDao().deleteAllUnits()
+            db.categoryDao().deleteAllSubjects()
+            db.categoryDao().deleteAllSystems()
+        }
+        // Stop every scheduled reminder/alarm — there is nothing left to review.
+        runCatching { com.example.notifications.NotificationScheduler.cancelReminder(context) }
+        // Clear settings but PRESERVE the language choice (a wipe shouldn't reset the UI to English).
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        val keptLanguage = sp.getString("app_language", "en")
+        @Suppress("ApplySharedPref")
+        sp.edit().clear().putString("app_language", keptLanguage).commit()
+        runCatching {
+            com.example.domain.srs.MedScheduler.userRetention =
+                sp.getFloat("desired_retention", 0.90f).toDouble()
+        }
+        // Remove local diagnostic/safety files so nothing personal lingers on disk.
+        runCatching { context.filesDir.resolve("crash.log").delete() }
+        runCatching { context.filesDir.resolve("last_before_restore_backup.json").delete() }
+        runCatching { context.filesDir.resolve("last_before_restore_backup.json.tmp").delete() }
+        runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
     }
 
     private fun JSONObject.strOrNull(key: String): String? = if (isNull(key)) null else optString(key)

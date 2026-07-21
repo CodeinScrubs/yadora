@@ -198,7 +198,7 @@ fun LibraryScreen(
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Archive")
+                    Text(when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archivieren"; else -> "Archive" })
                 }
             },
             dismissButton = {
@@ -491,7 +491,7 @@ fun LibraryScreen(
                             ) {
                                 Icon(
                                     imageVector = if (showArchived) Icons.Default.Refresh else Icons.Default.Delete,
-                                    contentDescription = if (showArchived) "Restore" else "Archive",
+                                    contentDescription = if (showArchived) (when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" }) else (when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archivieren"; else -> "Archive" }),
                                     tint = MaterialTheme.colorScheme.onError
                                 )
                             }

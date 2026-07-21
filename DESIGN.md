@@ -228,3 +228,37 @@ Explicitly rejected for any version (re-litigated multiple times): first rating 
 "Forgot" in red; removing the retention slider; ABORT on log insert (REPLACE is the replay
 mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
 streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
+
+### Pre-publish audit round (2026-07, `publish-app-yadora.txt`)
+
+An external "think outside the box" review before keystore creation. Adjudication:
+
+**Accepted & fixed (all in this pass):**
+- **"Delete all data" was genuinely missing** despite the privacy policy promising it — added a
+  red, double-confirmed Settings action (`BackupManager.deleteAllData`) that wipes every table in
+  one transaction, cancels reminders, clears settings (keeps only the chosen language), and deletes
+  the crash log + pre-restore safety copy. EN/FA/DE.
+- **Backup/analytics snapshots weren't atomic** — each table was read from its own Flow at a
+  different instant, so a concurrent write (receiver/purge) could produce an internally inconsistent
+  export. Both now read through one-shot DAO queries inside a single `withTransaction`.
+- **Emergency pre-restore backup was best-effort** (`runCatching`) — restore could delete the only
+  copy of the data even if the safety copy failed to write. Now writes to a temp file, verifies
+  non-empty, atomically renames, and ABORTS the restore if any step fails.
+- **Settings restore used `apply()`** (async) though success was reported synchronously → `commit()`.
+- **Migration coverage was v4→v5 only** — added real seeded-DB tests for the full **2→5** and
+  **3→5** chains (identity hashes `cc66ba…`/`bd6124…`), proving every stacked ALTER lands with its
+  documented default and pre-existing values (e.g. a real `logType`) are preserved.
+- Minor: OFL font licenses now shipped in `NOTICES.md`; template `ExampleUnitTest` removed;
+  PUBLISHING "99%+ of devices" softened to point at Play's live distribution dashboard.
+
+**Rejected (with reasons the user can send back):**
+- **"Default reminders OFF."** Contradicts the explicit bulletproof-reminders requirement: a
+  due topic must notify even if the app is never opened. Reminders stay ON by default; the user can
+  turn them off. This is a product decision, not an oversight.
+- **"Remove alarm/full-screen-intent mode."** It's an opt-in feature (default off) with an
+  API-34+ `canUseFullScreenIntent()` fallback and an inexact-alarm degradation path already in
+  place. Kept.
+- **"16KB page size will break on Android 15+."** Verified false: the only native libs in the AAB
+  (`androidx.graphics.path`) have every LOAD segment 0x4000-aligned. Compatible as-is.
+- **Namespace / channel-id / `medreview_*` renames.** Settled — cosmetic churn with migration risk
+  (see CLAUDE.md Identity).

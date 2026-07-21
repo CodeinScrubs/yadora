@@ -1,8 +1,8 @@
 package com.example.data
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.example.MedReviewApplication
-import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -14,7 +14,8 @@ import org.json.JSONObject
  * Each unit's review history (the ordered sequence of `reviewedAt` + `memoryRating`) plus its current
  * FSRS state (stability/difficulty/reviewCount/lapseCount) is exactly what's needed to later analyze
  * how well the scheduler is performing and to optimize FSRS parameters / desired retention across
- * several users. Titles and notes are intentionally omitted so the file is safe to share.
+ * several users. Titles and notes are intentionally omitted; still treat it as a SENSITIVE
+ * diagnostic file (it names subjects/collections, device model, crash tail), not an anonymous one.
  */
 object AnalyticsExporter {
 
@@ -25,12 +26,19 @@ object AnalyticsExporter {
 
         // Recently-deleted topics included: their logs are still in the DB, and an export where logs
         // reference a missing topic row would be internally inconsistent for analysis.
-        val units = unitDao.getAllActiveUnits().first() + unitDao.getArchivedUnits().first() +
-            unitDao.getRecentlyDeleted().first()
-        val logs = logDao.getLogsSince(0L).first()
-        val events = app.database.eventLogDao().getAll()
-        val subjects = app.database.categoryDao().getAllSubjects().first()
-        val systems = app.database.categoryDao().getAllSystems().first()
+        // ONE transaction so every table reflects the same instant.
+        lateinit var units: List<com.example.data.local.entity.StudyUnitEntity>
+        lateinit var logs: List<com.example.data.local.entity.ReviewLogEntity>
+        lateinit var events: List<com.example.data.local.entity.EventLogEntity>
+        lateinit var subjects: List<com.example.data.local.entity.SubjectEntity>
+        lateinit var systems: List<com.example.data.local.entity.SystemEntity>
+        app.database.withTransaction {
+            units = unitDao.getAllActiveOnce() + unitDao.getArchivedOnce() + unitDao.getRecentlyDeletedOnce()
+            logs = logDao.getAllLogsOnce()
+            events = app.database.eventLogDao().getAll()
+            subjects = app.database.categoryDao().getAllSubjectsOnce()
+            systems = app.database.categoryDao().getAllSystemsOnce()
+        }
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
 
         val root = JSONObject()

@@ -9,10 +9,10 @@ This is written for someone who has never published an Android app. Follow it to
 - **Minimum: Android 8.0 (API 26).** Anyone on Android 8.0 or newer can install Yadora.
 - **Target: Android 16 (API 36).** You build against the newest Android so the app follows current
   behavior and passes Play's target-API requirement.
-- **In plain terms:** ~Android 8 through the latest Android — that's roughly **99%+ of active
-  devices worldwide**, including nearly every phone in Iran, Germany, and everywhere else. You are
-  NOT excluding anyone who matters. Keeping the minimum at 8.0 (rather than raising it) is the
-  pro-student choice: older/cheaper phones are common among students.
+- **In plain terms:** ~Android 8 through the latest Android — the large majority of phones in active
+  use (Google's own Play distribution dashboard is where you can check the current exact figure). This
+  covers nearly every phone in Iran, Germany, and elsewhere. Keeping the minimum at 8.0 (rather than
+  raising it) is the pro-student choice: older/cheaper phones are common among students.
 
 ---
 

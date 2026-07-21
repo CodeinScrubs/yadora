@@ -22,6 +22,7 @@ import android.os.Build
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Warning
 
 /** One requirement row: green check when satisfied, red cross + a fix button when not. */
 @Composable
@@ -102,6 +103,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
 
     // --- Full backup / restore: a complete JSON snapshot the user can save to a folder and re-import ---
     var pendingImportJson by remember { mutableStateOf<String?>(null) }
+    var showDeleteAll by remember { mutableStateOf(false) }
     val backupExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -129,7 +131,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         context.contentResolver.openInputStream(uri)?.use { stream ->
                             // Bounded WHILE reading: abort as soon as the cap is crossed, so a huge
                             // file picked by mistake never gets fully loaded into memory first.
-                            val cap = 20_000_000
+                            // 64MB: far above any realistic library (years of heavy use), while
+                            // still bounded. Must comfortably exceed anything the app can EXPORT —
+                            // a backup Yadora created must always be importable again.
+                            val cap = 64_000_000
                             val out = java.io.ByteArrayOutputStream()
                             val buf = ByteArray(64 * 1024)
                             while (true) {
@@ -174,6 +179,40 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 }) { Text(if (language == "fa") "بازیابی" else if (language == "de") "Wiederherstellen" else "Restore") }
             },
             dismissButton = { TextButton(onClick = { pendingImportJson = null }) { Text(strings.cancel) } }
+        )
+    }
+
+    if (showDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAll = false },
+            icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text(when (language) { "fa" -> "حذف کامل داده‌ها؟"; "de" -> "Alle Daten löschen?"; else -> "Delete all data?" }) },
+            text = {
+                Text(when (language) {
+                    "fa" -> "همهٔ درس‌ها، مباحث، تاریخچهٔ مرور و تنظیمات برای همیشه پاک می‌شوند. این کار قابل بازگشت نیست. اگر پشتیبان نگرفته‌ای، اکنون لغو کن و اول پشتیبان بگیر."
+                    "de" -> "Alle Fächer, Themen, der Verlauf und die Einstellungen werden dauerhaft gelöscht. Das lässt sich nicht rückgängig machen. Ohne Sicherung: jetzt abbrechen und zuerst sichern."
+                    else -> "Every subject, topic, review history, and setting will be permanently erased. This can't be undone. If you haven't made a backup, cancel now and back up first."
+                })
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteAll = false
+                        exportScope.launch {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching { com.example.data.BackupManager.deleteAllData(context) }
+                            }
+                            android.widget.Toast.makeText(
+                                context,
+                                when (language) { "fa" -> "همهٔ داده‌ها حذف شد"; "de" -> "Alle Daten gelöscht"; else -> "All data deleted" },
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                            onBack()
+                        }
+                    }
+                ) { Text(when (language) { "fa" -> "حذف همه"; "de" -> "Alles löschen"; else -> "Delete everything" }, color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { showDeleteAll = false }) { Text(strings.cancel) } }
         )
     }
 
@@ -726,7 +765,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.Info, 
-                                    contentDescription = "Spaced Repetiton Guide",
+                                    contentDescription = when (language) { "fa" -> "راهنمای تکرار با فاصله"; "de" -> "Anleitung zur verteilten Wiederholung"; else -> "Spaced Repetition Guide" },
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -912,7 +951,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Text(if (language == "fa") "داده‌ها" else if (language == "de") "Daten" else "Data", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (language == "fa") "یک فایل پشتیبان کامل (همراه عنوان‌ها و یادداشت‌ها) بساز و جایی امن ذخیره کن. هر زمان می‌توانی آن را بازیابی کنی." else if (language == "de") "Erstelle eine vollständige Sicherung (mit Titeln & Notizen) und bewahre sie sicher auf. Du kannst sie jederzeit wiederherstellen." else "Make a full backup (including titles & notes) and save it somewhere safe. You can restore it any time.",
+                    text = if (language == "fa") "یک فایل پشتیبان کامل (همراه عنوان‌ها و یادداشت‌ها) بساز و جایی امن ذخیره کن. فایل رمزگذاری نشده است. هر زمان می‌توانی آن را بازیابی کنی." else if (language == "de") "Erstelle eine vollständige Sicherung (mit Titeln & Notizen). Die Datei ist unverschlüsselt — bewahre sie sicher auf. Wiederherstellen jederzeit möglich." else "Make a full backup (including titles & notes). The file is unencrypted — save it somewhere safe. You can restore it any time.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -933,6 +972,26 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(onClick = { exportLauncher.launch("yadora_analytics.json") }, modifier = Modifier.fillMaxWidth()) {
                     Text(when (language) { "fa" -> "استخراج تحلیل‌ها / لاگ‌ها"; "de" -> "Analysen / Logs extrahieren"; else -> "Extract analytics / logs" })
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+                Text(
+                    text = when (language) {
+                        "fa" -> "حذف کامل داده‌ها: همهٔ درس‌ها، مباحث، تاریخچه و تنظیمات را برای همیشه پاک می‌کند. اگر می‌خواهی چیزی بماند، اول پشتیبان بگیر."
+                        "de" -> "Alle Daten löschen: entfernt dauerhaft alle Fächer, Themen, den Verlauf und die Einstellungen. Erstelle zuerst eine Sicherung, wenn du etwas behalten möchtest."
+                        else -> "Delete all data: permanently removes every subject, topic, your history, and settings. Make a backup first if you want to keep anything."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showDeleteAll = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                ) {
+                    Text(when (language) { "fa" -> "حذف کامل داده‌ها"; "de" -> "Alle Daten löschen"; else -> "Delete all data" })
                 }
             }
 
