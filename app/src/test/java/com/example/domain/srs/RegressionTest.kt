@@ -19,42 +19,74 @@ class RegressionTest {
     private fun at(year: Int, month: Int, day: Int, hour: Int): Long =
         Calendar.getInstance().apply { clear(); set(year, month - 1, day, hour, 0, 0) }.timeInMillis
 
-    // --- 1. effectiveReviewNumber day-boundary classification --------------------------------------
+    // --- 1. The first graded rating is always review #0 (no overdue cliff) -------------------------
 
     @Test
-    fun `same local day first rating is a fresh first study`() {
-        val studied = at(2026, 7, 4, 9)
-        val rated = at(2026, 7, 4, 22) // same calendar day, hours later
-        assertEquals(0, MedScheduler.effectiveReviewNumber(studied, rated, 0))
-    }
-
-    @Test
-    fun `back-dated first rating is a recall after a gap`() {
-        val studied = at(2026, 6, 20, 9)
-        val rated = at(2026, 7, 4, 9) // 14 days later
-        assertEquals(1, MedScheduler.effectiveReviewNumber(studied, rated, 0))
-    }
-
-    @Test
-    fun `just before vs just after midnight flips the classification exactly at the day boundary`() {
-        val studied = at(2026, 7, 3, 23) // 23:00 on the 3rd
-        assertEquals(0, MedScheduler.effectiveReviewNumber(studied, at(2026, 7, 3, 23) + 59 * 60 * 1000L, 0))
-        assertEquals(1, MedScheduler.effectiveReviewNumber(studied, at(2026, 7, 4, 0) + 60 * 1000L, 0))
-    }
-
-    @Test
-    fun `planned-future study rated on its study day is a fresh first study`() {
-        // studiedAt in the future relative to nothing — rated ON that day => fresh (not "earlier day").
-        val studied = at(2026, 8, 1, 9)
-        val rated = at(2026, 8, 1, 20)
-        assertEquals(0, MedScheduler.effectiveReviewNumber(studied, rated, 0))
+    fun `the first graded rating is review zero however late it happens`() {
+        assertEquals(0, MedScheduler.effectiveReviewNumber(0))
     }
 
     @Test
     fun `prior review count passes through untouched`() {
-        val studied = at(2026, 6, 1, 9)
-        val rated = at(2026, 7, 4, 9)
-        assertEquals(7, MedScheduler.effectiveReviewNumber(studied, rated, 7))
+        assertEquals(7, MedScheduler.effectiveReviewNumber(7))
+    }
+
+    /**
+     * THE overdue regression. Before POLICY YADORA-2, a first rating that happened on a later day than
+     * the study date was treated as a recall against the neutral placeholder state AddUnit seeds
+     * (S≈1.18/D≈6.49 — never chosen by the user, never measured). That both skipped the first-study cap
+     * and, because the placeholder stability is tiny, exploded the interval the longer the topic sat:
+     * "Easy" gave ~5 days when rated on the study day but ~43 days at 5 days late and ~108 days at a
+     * month late. The user experienced that discontinuity as "the algorithm goes wrong when a topic
+     * goes overdue". The first rating must now be identical regardless of when it happens.
+     */
+    @Test
+    fun `a first rating gives the same interval whether it is on time or badly overdue`() {
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false).state
+        fun firstRatingInterval(daysLate: Double): Double = MedScheduler.review(
+            stability = seed.stability,
+            difficulty = seed.difficulty,
+            elapsedDays = daysLate,
+            memoryRating = MemoryRating.Easy,
+            understanding = UnderstandingRating.Clear,
+            highYield = false,
+            reviewNumber = MedScheduler.effectiveReviewNumber(0),
+        ).intervalDays
+
+        val onTime = firstRatingInterval(0.0)
+        for (late in listOf(1.0, 5.0, 14.0, 30.0, 365.0)) {
+            assertEquals(
+                "first rating $late days late must schedule like an on-time one",
+                onTime, firstRatingInterval(late), 1e-9,
+            )
+        }
+        // …and it must still respect the calm first-study window rather than shooting months out.
+        assertTrue("first rating stayed within the first-study cap", onTime <= MedScheduler.FIRST_STUDY_MAX_DAYS + 1e-9)
+    }
+
+    @Test
+    fun `an overdue later review stays continuous as lateness grows`() {
+        // For REAL reviews (reviewNumber >= 1) lateness legitimately increases the interval, but it must
+        // move smoothly — no jump discontinuity of the kind the first-rating bug produced.
+        fun interval(daysLate: Double): Double = MedScheduler.review(
+            stability = 15.69105,
+            difficulty = 3.2245,
+            elapsedDays = daysLate,
+            memoryRating = MemoryRating.Good,
+            understanding = UnderstandingRating.Clear,
+            highYield = false,
+            reviewNumber = 1,
+        ).intervalDays
+
+        var previous = interval(1.0)
+        var step = 2.0
+        while (step <= 60.0) {
+            val current = interval(step)
+            assertTrue("interval must not shrink as a review gets later ($step d)", current >= previous - 1e-9)
+            assertTrue("interval must not more than double for one extra day late ($step d)", current <= previous * 2.0)
+            previous = current
+            step += 1.0
+        }
     }
 
     // --- 2. FSRS-5 same-day (short-term) branch ----------------------------------------------------

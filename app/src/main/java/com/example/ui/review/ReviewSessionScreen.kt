@@ -269,9 +269,9 @@ class ReviewViewModel(
             // (the FSRS math clamps internally, but the log/export data must stay clean too).
             val elapsedDays = ((now - (unit.lastReviewedAt ?: unit.studiedAt)) / 86400000.0).coerceAtLeast(0.0)
 
-            // Fresh first study (studied today) vs back-dated recall (honors elapsed time). Same rule is
-            // reused by the rating-correction replay so live and replayed schedules always agree.
-            val reviewNumber = MedScheduler.effectiveReviewNumber(unit.studiedAt, now, unit.reviewCount)
+            // The first graded rating is always review #0 (seeded from the rating, capped by the
+            // first-study window) no matter how late it happens. Same rule as the replay path.
+            val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
 
             // Single source of truth: the same MedScheduler.review() that powers the button preview.
             val outcome = MedScheduler.review(
@@ -531,7 +531,7 @@ fun ReviewSessionScreen(
                 val formattedState = strings.stateLabel(currentUnit.state)
                 val subject = subjects.find { it.id == currentUnit.subjectId }
                 // First study (studied today, never reviewed) vs a recall review (back-dated or later).
-                val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.studiedAt, System.currentTimeMillis(), currentUnit.reviewCount)
+                val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.reviewCount)
                 val isFreshFirstStudy = previewReviewNumber == 0
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

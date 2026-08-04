@@ -149,7 +149,7 @@ object MedScheduler {
      * whenever ANY of those numbers changes; each review log stores the version + the understanding
      * factor actually applied, so history replays under its original policy instead of the new one.
      */
-    const val POLICY_VERSION = "YADORA-1"
+    const val POLICY_VERSION = "YADORA-2"
 
     /**
      * The difficulty label a first-study memory-rating stands for (the UI buttons say
@@ -265,8 +265,7 @@ object MedScheduler {
      * Design constraints this deliberately satisfies:
      *  - DETERMINISTIC per (unitId, reviewCount): preview == commit == replay, always. The seed is
      *    the unit's PRIOR review count (0, 1, 2, …) — strictly increasing per review, unlike the
-     *    effectiveReviewNumber (which returns 1 for both of a back-dated topic's first two reviews
-     *    and would make them share a factor).
+     *    the reviewNumber, which is 0 for every first rating and so would not vary per review).
      *  - MULTIPLICATIVE: the same factor applies to Clear/Partial/Confused previews of the same
      *    review, so the transparent understanding ratios (×0.9 / ×0.8) are preserved exactly.
      *  - Never fuzzes short BASE intervals (< 3 days): relearn-tomorrow, first-study, and other tight
@@ -331,22 +330,25 @@ object MedScheduler {
     }
 
     /**
-     * The [review] reviewNumber to use for a rating event, so the LIVE review flow and the history
-     * replay (rating correction) stay consistent. A topic studied and first-rated on the SAME local day
-     * is a fresh first study (0 -> initialState seeds from the rating). A back-dated topic's first rating
-     * is already a recall after a gap (>=1 -> nextState honors the elapsed time).
+     * The [review] reviewNumber for a rating event, shared by the LIVE review flow and the history
+     * replay so the two can never disagree.
+     *
+     * The FIRST graded rating is ALWAYS review #0, whether the user rates on the day they studied or
+     * three weeks later. It seeds the memory model from the rating itself ([Fsrs.initialState]) and is
+     * capped by [FIRST_STUDY_MAX_DAYS].
+     *
+     * POLICY-2 CHANGE (was: a back-dated first rating counted as a recall after a gap). The old rule
+     * ran the FSRS recall update against the neutral placeholder state AddUnit seeds — an S≈1.18/D≈6.49
+     * that the user never chose and no review ever measured. Because that placeholder stability is tiny,
+     * any real gap produced a low retrievability, and a confident rating against it exploded the
+     * interval while ALSO bypassing the first-study cap (which only applied at reviewNumber 0):
+     * the same topic rated "Easy" scored 5 days when rated on its study day, but ~43 days when rated
+     * five days later, and ~108 days when back-dated a month. That cliff is what made overdue topics
+     * feel like the scheduler had broken.
+     *
+     * A first rating is a subjective difficulty judgement, not a measured recall, so it must not be fed
+     * into the recall-update path at all. The elapsed gap is deliberately NOT used here: after this one
+     * capped check-in the model has real measured data and intervals expand quickly and honestly.
      */
-    fun effectiveReviewNumber(studiedAt: Long, reviewedAt: Long, priorReviewCount: Int): Int {
-        val freshFirstStudy = priorReviewCount == 0 && !isEarlierLocalDay(studiedAt, reviewedAt)
-        return if (freshFirstStudy) 0 else maxOf(priorReviewCount, 1)
-    }
-
-    private fun isEarlierLocalDay(earlier: Long, later: Long): Boolean {
-        val c = java.util.Calendar.getInstance()
-        c.timeInMillis = earlier
-        val ey = c.get(java.util.Calendar.YEAR); val ed = c.get(java.util.Calendar.DAY_OF_YEAR)
-        c.timeInMillis = later
-        val ly = c.get(java.util.Calendar.YEAR); val ld = c.get(java.util.Calendar.DAY_OF_YEAR)
-        return ey < ly || (ey == ly && ed < ld)
-    }
+    fun effectiveReviewNumber(priorReviewCount: Int): Int = priorReviewCount
 }

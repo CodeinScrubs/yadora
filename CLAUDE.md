@@ -62,6 +62,19 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Per-topic delete is SOFT** (`deletedAt`, 30-day grace, purge on app start,
   restore from the archive screen). The only hard deletes are the purge and
   "Delete all data".
+- **The exam date is DECORATIVE on purpose.** It powers the countdown on Today /
+  Library / Progress and nothing else. It must NEVER compress intervals, cap the
+  schedule, or otherwise feed the scheduler. Confirmed by the user 2026-08;
+  do not propose exam-horizon capping again.
+- **The FIRST graded rating is always review #0** (POLICY `YADORA-2`), however
+  late it happens. It seeds the model from the rating (`Fsrs.initialState`) and
+  is capped by `FIRST_STUDY_MAX_DAYS`. The old rule treated a back-dated first
+  rating as a recall against the neutral placeholder state AddUnit seeds, which
+  both skipped the cap and exploded intervals the longer a topic sat (5d on time
+  → ~43d at five days late → ~108d back-dated a month). `RegressionTest` pins the
+  no-cliff property. A rated topic's schedule no longer depends on `studiedAt` at
+  all; an UNRATED topic is still due on its study date, and editing that date
+  moves the due date.
 - **Policy versioning**: bump `MedScheduler.POLICY_VERSION` whenever any
   product-layer number changes (understanding factors, relearn step, caps,
   fuzz, high-yield retention). Logs store the version + applied factor;

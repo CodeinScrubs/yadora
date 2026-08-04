@@ -84,8 +84,17 @@ class MedReviewRepository(
     suspend fun updateUnitReplayingHistory(unit: StudyUnitEntity) {
         database.withTransaction {
             studyUnitDao.updateUnit(unit)
-            // logId = -1 matches no log → pure replay, no rating substituted (args unused).
-            editReviewRating(unit.id, -1L, MemoryRating.Good, UnderstandingRating.Clear)
+            if (reviewLogDao.getLogsForUnit(unit.id).first().isNotEmpty()) {
+                // logId = -1 matches no log → pure replay, no rating substituted (args unused).
+                editReviewRating(unit.id, -1L, MemoryRating.Good, UnderstandingRating.Clear)
+            } else if (unit.deferredUntil == null) {
+                // NEVER RATED: there is no history to replay, but the product rule is "a topic is due on
+                // its study date", so moving that date must move the due date with it. Without this, a
+                // topic back-dated after creation kept its original due date and could sit due BEFORE
+                // the day the user says they studied it. A user deferral is left alone — they picked
+                // that date deliberately.
+                studyUnitDao.updateUnit(unit.copy(nextReviewAt = unit.studiedAt, modelDueAt = unit.studiedAt))
+            }
         }
     }
 
@@ -306,7 +315,7 @@ class MedReviewRepository(
             val reviewNumber = when (log.logType) {
                 "FIRST_STUDY" -> 0
                 "RECALL" -> maxOf(reviewCount, 1)
-                else -> MedScheduler.effectiveReviewNumber(unit.studiedAt, log.reviewedAt, reviewCount)
+                else -> MedScheduler.effectiveReviewNumber(reviewCount)
             }
             // Replay each review under its HISTORICAL conditions (retention target + importance at the
             // time, stored per-log since v4) — editing one old rating must not silently rewrite the

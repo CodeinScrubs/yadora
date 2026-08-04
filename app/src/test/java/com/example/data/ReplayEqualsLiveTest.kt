@@ -51,7 +51,7 @@ class ReplayEqualsLiveTest {
     private fun liveReview(unitId: Long, now: Long, memory: MemoryRating, understanding: UnderstandingRating): Long = runBlocking {
         val unit = repo.getUnitById(unitId)!!
         val elapsedDays = (now - (unit.lastReviewedAt ?: unit.studiedAt)) / 86400000.0
-        val reviewNumber = MedScheduler.effectiveReviewNumber(unit.studiedAt, now, unit.reviewCount)
+        val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
         val outcome = MedScheduler.review(
             stability = unit.stability, difficulty = unit.difficulty, elapsedDays = elapsedDays,
             memoryRating = memory, understanding = understanding, highYield = unit.highYield,
@@ -167,31 +167,60 @@ class ReplayEqualsLiveTest {
         assertEquals("first log previousIntervalDays unchanged by replay", 0.0, firstLogAfter.previousIntervalDays, 1e-9)
     }
 
+    private fun newUnit(title: String, studiedAt: Long): StudyUnitEntity {
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
+        return StudyUnitEntity(
+            title = title, studyType = "Pathology",
+            stability = seed.state.stability, difficulty = seed.state.difficulty,
+            retrievability = 1.0, state = "New",
+            studiedAt = studiedAt, nextReviewAt = studiedAt, modelDueAt = studiedAt,
+            currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0,
+        )
+    }
+
+    /**
+     * An UNRATED topic is due on its study date, so editing that date must move the due date with it.
+     * Regression: a topic back-dated after creation used to keep its original due date, leaving it due
+     * BEFORE the day the user says they studied it (observed in a real analytics export).
+     */
     @Test
-    fun `moving the study date earlier reschedules the topic later`() = runBlocking {
+    fun `moving the study date of an unrated topic moves its due date`() = runBlocking {
         val day = 86400000L
         val now = System.currentTimeMillis()
         val studiedAt = now - 10 * day
-        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
-        val unitId = repo.insertUnit(
-            StudyUnitEntity(
-                title = "COPD", studyType = "Pathology",
-                stability = seed.state.stability, difficulty = seed.state.difficulty,
-                retrievability = 1.0, state = "New",
-                studiedAt = studiedAt, nextReviewAt = studiedAt,
-                currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0,
-            )
-        )
+        val unitId = repo.insertUnit(newUnit("COPD", studiedAt))
+
+        val moved = studiedAt - 10 * day
+        repo.updateUnitReplayingHistory(repo.getUnitById(unitId)!!.copy(studiedAt = moved, updatedAt = now))
+        val after = repo.getUnitById(unitId)!!
+
+        assertEquals("unrated topic is due on its (new) study date", moved, after.nextReviewAt)
+        assertEquals("model due date follows too", moved, after.modelDueAt)
+    }
+
+    /**
+     * The mirror invariant, and the point of POLICY YADORA-2: once a topic has been RATED, its schedule
+     * comes from the ratings, not from when the user says they studied it. Moving the study date must
+     * therefore leave a rated topic's schedule and memory state completely alone. Before YADORA-2 this
+     * date silently re-classified the first rating as a long-gap recall against a placeholder memory
+     * state, which is what made overdue/back-dated topics schedule months out.
+     */
+    @Test
+    fun `moving the study date of a rated topic leaves its schedule untouched`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val studiedAt = now - 10 * day
+        val unitId = repo.insertUnit(newUnit("COPD", studiedAt))
         liveReview(unitId, now - 4 * day, MemoryRating.Good, UnderstandingRating.Clear)
         val before = repo.getUnitById(unitId)!!
 
-        // Move the study origin 10 days earlier: the first review is now a longer-gap recall, so the
-        // replayed schedule must differ from the original — proving the caption's promise is real.
         repo.updateUnitReplayingHistory(before.copy(studiedAt = studiedAt - 10 * day, updatedAt = now))
         val after = repo.getUnitById(unitId)!!
 
-        org.junit.Assert.assertNotEquals(
-            "moving studiedAt must change the schedule", before.nextReviewAt, after.nextReviewAt)
+        assertEquals("nextReviewAt", before.nextReviewAt, after.nextReviewAt)
+        assertEquals("modelDueAt", before.modelDueAt, after.modelDueAt)
+        assertEquals("stability", before.stability, after.stability, 1e-9)
+        assertEquals("difficulty", before.difficulty, after.difficulty, 1e-9)
     }
 
     @Test
