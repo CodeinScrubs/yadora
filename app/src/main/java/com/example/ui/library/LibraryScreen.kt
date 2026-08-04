@@ -1,5 +1,6 @@
 package com.example.ui.library
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,10 +10,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
+import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -147,6 +151,13 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         viewModelScope.launch { repository.softDeleteUnit(unitId) }
     }
 
+    fun mergeUnits(keepId: Long, mergeIds: Collection<Long>, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.mergeUnits(keepId, mergeIds)
+            onComplete()
+        }
+    }
+
     fun softDeleteUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             repository.softDeleteUnits(unitIds)
@@ -182,8 +193,89 @@ fun LibraryScreen(
     // Deleting FROM the archive: the archive toolbar previously offered only Restore, so an archived
     // topic could not be deleted from selection mode at all.
     var showBatchPurgeConfirm by remember { mutableStateOf(false) }
+    // Merging duplicates (same material added twice, often in two languages).
+    var showMergeDialog by remember { mutableStateOf(false) }
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     val isFarsi = strings.languageCode == "fa"
+
+    if (showMergeDialog) {
+        val candidates = units.filter { it.id in selectedIds }
+        var keepId by remember(selectedIds) {
+            // Default to the copy with the most reviews — the one the user has invested most in.
+            mutableStateOf(candidates.maxByOrNull { it.reviewCount }?.id ?: candidates.firstOrNull()?.id)
+        }
+        AlertDialog(
+            onDismissRequest = { showMergeDialog = false },
+            title = {
+                Text(when (strings.languageCode) {
+                    "fa" -> "ادغام مباحث"
+                    "de" -> "Themen zusammenführen"
+                    else -> "Merge topics"
+                })
+            },
+            text = {
+                Column {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "کدام عنوان بماند؟ تاریخچهٔ مرورِ همهٔ نسخه‌ها روی همین مبحث جمع می‌شود؛ هیچ مروری از بین نمی‌رود. بقیه به «حذف‌شده‌های اخیر» می‌روند و تا ۳۰ روز قابل بازگردانی‌اند."
+                            "de" -> "Welcher Titel soll bleiben? Der Wiederholungsverlauf aller Kopien wird auf diesem Thema zusammengeführt — keine Wiederholung geht verloren. Die übrigen wandern in \"Kürzlich gelöscht\" und bleiben 30 Tage wiederherstellbar."
+                            else -> "Which title should stay? The review history of every copy is combined into it — no review is lost. The others move to Recently deleted and stay restorable for 30 days."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    candidates.forEach { u ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { keepId = u.id }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = keepId == u.id, onClick = { keepId = u.id })
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    u.title,
+                                    style = MaterialTheme.typography.bodyLarge.autoDirection(),
+                                    maxLines = 2
+                                )
+                                Text(
+                                    when (strings.languageCode) {
+                                        "fa" -> "${com.example.ui.i18n.PersianDate.faDigits(u.reviewCount)} مرور"
+                                        "de" -> "${u.reviewCount} Wiederholungen"
+                                        else -> "${u.reviewCount} reviews"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = keepId != null,
+                    onClick = {
+                        val keep = keepId ?: return@TextButton
+                        val others = selectedIds - keep
+                        viewModel.mergeUnits(keep, others) {
+                            com.example.widget.DueWidgetProvider.updateAll(libContext)
+                            selectedIds = emptySet()
+                            showMergeDialog = false
+                        }
+                    }
+                ) {
+                    Text(when (strings.languageCode) { "fa" -> "ادغام"; "de" -> "Zusammenführen"; else -> "Merge" })
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMergeDialog = false }) { Text(strings.cancel) }
+            }
+        )
+    }
 
     if (showBatchPurgeConfirm) {
         val n = selectedIds.size
@@ -318,6 +410,19 @@ fun LibraryScreen(
                                 )
                             }
                         } else {
+                            if (selectedIds.size in 2..4) {
+                                IconButton(onClick = { showMergeDialog = true }) {
+                                    Icon(
+                                        imageVector = Icons.Default.MergeType,
+                                        contentDescription = when (strings.languageCode) {
+                                            "fa" -> "ادغام موارد انتخاب‌شده"
+                                            "de" -> "Ausgewählte zusammenführen"
+                                            else -> "Merge Selected"
+                                        },
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                             IconButton(onClick = { showBatchDeleteConfirm = true }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,

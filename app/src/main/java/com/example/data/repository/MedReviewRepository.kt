@@ -117,6 +117,71 @@ class MedReviewRepository(
         database.withTransaction { ids.forEach { studyUnitDao.unarchiveUnit(it, stamp) } }
     }
 
+    /**
+     * Merge duplicate topics (the same material added twice — often in two languages, e.g.
+     * "Appendicitis" and "آپاندیسیت") into one, keeping [keepId] as the surviving topic.
+     *
+     * The whole point is that work already done on EITHER copy still counts, so:
+     *  - every review log is RE-POINTED at the survivor, never deleted;
+     *  - reviewCount / lapseCount are summed, because they really were that many reviews;
+     *  - stability and difficulty are a weighted average, weighted by how many reviews each copy
+     *    actually had, so the result sits nearer the copy you worked on most (a 12-review topic
+     *    dominates a 1-review one). An unrated copy still carries weight 1 rather than 0, so merging
+     *    into a brand-new topic can't silently erase its own starting state;
+     *  - the next due date is the EARLIEST of the copies. Merging must never push material further
+     *    away than the schedule you already had for it;
+     *  - the merged-away copies are SOFT-deleted, so a mistaken merge is recoverable for 30 days.
+     *
+     * All of it is one transaction: a crash mid-merge must not strand history on a deleted topic.
+     * No schema change — this is a re-pointing of existing rows.
+     */
+    suspend fun mergeUnits(keepId: Long, mergeIds: Collection<Long>): StudyUnitEntity? {
+        val absorbIds = mergeIds.filter { it != keepId }.distinct()
+        if (absorbIds.isEmpty()) return null
+        return database.withTransaction {
+            val survivor = studyUnitDao.getUnitById(keepId) ?: return@withTransaction null
+            val absorbed = absorbIds.mapNotNull { studyUnitDao.getUnitById(it) }
+            if (absorbed.isEmpty()) return@withTransaction null
+
+            val all = listOf(survivor) + absorbed
+            // Weight by evidence: an unrated copy counts once, a well-drilled copy counts per review.
+            val weights = all.map { maxOf(it.reviewCount, 1).toDouble() }
+            val totalWeight = weights.sum()
+            fun weighted(pick: (StudyUnitEntity) -> Double): Double =
+                all.indices.sumOf { pick(all[it]) * weights[it] } / totalWeight
+
+            val mergedStability = weighted { it.stability }
+            val mergedDifficulty = weighted { it.difficulty }
+            val earliestDue = all.minOf { it.nextReviewAt }
+
+            val merged = survivor.copy(
+                stability = mergedStability,
+                difficulty = mergedDifficulty,
+                currentIntervalDays = weighted { it.currentIntervalDays },
+                reviewCount = all.sumOf { it.reviewCount },
+                lapseCount = all.sumOf { it.lapseCount },
+                highYield = all.any { it.highYield }, // importance is a union: if either mattered, it matters
+                state = MedScheduler.masteryState(mergedStability, justForgot = false).name,
+                lastReviewedAt = all.mapNotNull { it.lastReviewedAt }.maxOrNull(),
+                nextReviewAt = earliestDue,
+                modelDueAt = earliestDue,
+                deferredUntil = null, // the merged topic is a fresh, un-deferred schedule
+                updatedAt = System.currentTimeMillis(),
+            )
+
+            reviewLogDao.reassignLogs(absorbIds, keepId)
+            studyUnitDao.updateUnit(merged)
+            val stamp = System.currentTimeMillis()
+            absorbIds.forEach { studyUnitDao.softDeleteUnit(it, stamp) }
+            database.eventLogDao().insert(
+                com.example.data.local.entity.EventLogEntity(
+                    type = "MERGE", unitId = keepId, detail = absorbIds.joinToString(","),
+                )
+            )
+            merged
+        }
+    }
+
     // --- 30-day recoverable soft delete (DB v5) ---
 
     val recentlyDeleted: Flow<List<StudyUnitEntity>> = studyUnitDao.getRecentlyDeleted()

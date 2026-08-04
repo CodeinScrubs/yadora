@@ -59,6 +59,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
   only by user deferrals (Not today / redistribute / manual edit) and cleared by
   a real review. Deferrals must NEVER write `modelDueAt`.
+- **Merging topics never discards work.** The same material often gets added
+  twice (frequently in two languages). `MedReviewRepository.mergeUnits` keeps one
+  survivor and, in ONE transaction: re-points every review log at it (logs are
+  never deleted), sums `reviewCount`/`lapseCount`, sets stability and difficulty
+  to a **review-count-weighted average** so the result sits nearer the copy with
+  more iterations (an unrated copy still weighs 1, never 0), takes the
+  **earliest** `nextReviewAt` (a merge must never push material further away than
+  the schedule already had), unions `highYield`, clears `deferredUntil`, and
+  SOFT-deletes the absorbed copies so a mistaken merge is recoverable. No schema
+  change — it is a re-pointing of existing rows. `MergeUnitsTest` pins all of it.
 - **Per-topic delete is SOFT** (`deletedAt`, 30-day grace, purge on app start,
   restore from the archive screen). The only hard deletes are the purge and
   "Delete all data".

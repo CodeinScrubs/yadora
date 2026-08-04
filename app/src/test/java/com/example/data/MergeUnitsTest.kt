@@ -1,0 +1,162 @@
+package com.example.data
+
+import androidx.room.Room
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.local.database.AppDatabase
+import com.example.data.local.entity.StudyUnitEntity
+import com.example.data.repository.MedReviewRepository
+import com.example.domain.model.MemoryRating
+import com.example.domain.model.UnderstandingRating
+import com.example.domain.srs.MedScheduler
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Merging duplicate topics (the same material added twice, often in two languages) must never throw
+ * away work already done on either copy. These tests pin that promise.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36])
+class MergeUnitsTest {
+
+    private lateinit var db: AppDatabase
+    private lateinit var repo: MedReviewRepository
+
+    @Before fun setup() {
+        db = Room.inMemoryDatabaseBuilder(
+            ApplicationProvider.getApplicationContext(), AppDatabase::class.java
+        ).openHelperFactory(FrameworkSQLiteOpenHelperFactory()).allowMainThreadQueries().build()
+        repo = MedReviewRepository(db.studyUnitDao(), db.categoryDao(), db.reviewLogDao(), db)
+    }
+
+    @After fun teardown() = db.close()
+
+    private val day = 86400000L
+
+    private suspend fun addUnit(
+        title: String,
+        stability: Double,
+        difficulty: Double,
+        reviewCount: Int,
+        dueAt: Long,
+        lapses: Int = 0,
+        highYield: Boolean = false,
+    ): Long = repo.insertUnit(
+        StudyUnitEntity(
+            title = title, studyType = "Topic",
+            stability = stability, difficulty = difficulty, retrievability = 1.0,
+            state = MedScheduler.masteryState(stability, false).name,
+            studiedAt = 1000L, nextReviewAt = dueAt, modelDueAt = dueAt,
+            currentIntervalDays = 5.0, reviewCount = reviewCount, lapseCount = lapses,
+            highYield = highYield,
+        )
+    )
+
+    @Test
+    fun `merging keeps every review log and sums the counts`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 3, dueAt = now + 10 * day)
+        val other = addUnit("آپاندیسیت", stability = 5.0, difficulty = 8.0, reviewCount = 1, dueAt = now + 2 * day)
+
+        // Give each copy real history, so "no work is lost" is actually testable.
+        repeat(3) { repo.insertReviewLog(logFor(keep, now - (it + 1) * day)) }
+        repo.insertReviewLog(logFor(other, now - 5 * day))
+
+        val merged = repo.mergeUnits(keep, listOf(other))
+        assertNotNull("merge returned the survivor", merged)
+
+        val logs = db.reviewLogDao().getLogsForUnit(keep).first()
+        assertEquals("every log from both copies now belongs to the survivor", 4, logs.size)
+        assertEquals("no logs left on the absorbed copy", 0, db.reviewLogDao().getLogsForUnit(other).first().size)
+        assertEquals("review counts add up", 4, merged!!.reviewCount)
+    }
+
+    @Test
+    fun `merged memory state leans toward the copy with more reviews`() = runBlocking {
+        val now = System.currentTimeMillis()
+        // 9 reviews of a well-known copy vs 1 review of a shaky one: the result must sit near the former.
+        val keep = addUnit("Appendicitis", stability = 30.0, difficulty = 3.0, reviewCount = 9, dueAt = now + 20 * day)
+        val other = addUnit("آپاندیسیت", stability = 10.0, difficulty = 7.0, reviewCount = 1, dueAt = now + 3 * day)
+
+        val merged = repo.mergeUnits(keep, listOf(other))!!
+
+        // Weighted by review count: (30*9 + 10*1) / 10 = 28.0, and (3*9 + 7*1) / 10 = 3.4
+        assertEquals("stability is review-count weighted", 28.0, merged.stability, 1e-9)
+        assertEquals("difficulty is review-count weighted", 3.4, merged.difficulty, 1e-9)
+        assertTrue("result sits nearer the well-drilled copy", merged.stability > (30.0 + 10.0) / 2)
+    }
+
+    @Test
+    fun `merging never pushes the material further away than the schedule already had`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 30.0, difficulty = 3.0, reviewCount = 9, dueAt = now + 40 * day)
+        val soon = addUnit("آپاندیسیت", stability = 4.0, difficulty = 8.0, reviewCount = 1, dueAt = now + 2 * day)
+
+        val merged = repo.mergeUnits(keep, listOf(soon))!!
+
+        assertEquals("the earliest due date wins", now + 2 * day, merged.nextReviewAt)
+        assertEquals("model due date agrees", now + 2 * day, merged.modelDueAt)
+        assertNull("a merge is not a user deferral", merged.deferredUntil)
+    }
+
+    @Test
+    fun `absorbed copies are recoverable and importance is a union`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 2, dueAt = now + 10 * day)
+        val other = addUnit("آپاندیسیت", stability = 6.0, difficulty = 6.0, reviewCount = 1, dueAt = now + 4 * day, highYield = true)
+
+        val merged = repo.mergeUnits(keep, listOf(other))!!
+
+        assertTrue("importance carries over from either copy", merged.highYield)
+        val deleted = repo.recentlyDeleted.first().map { it.id }
+        assertTrue("a mistaken merge stays recoverable for 30 days", other in deleted)
+        assertTrue("the survivor is not deleted", keep !in deleted)
+    }
+
+    @Test
+    fun `merging three copies at once combines all of them`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 9 * day)
+        val b = addUnit("آپاندیسیت", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 6 * day)
+        val c = addUnit("Blinddarmentzündung", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 3 * day)
+        repo.insertReviewLog(logFor(b, now - 2 * day))
+        repo.insertReviewLog(logFor(c, now - 3 * day))
+
+        val merged = repo.mergeUnits(keep, listOf(b, c))!!
+
+        assertEquals("all three review counts add up", 6, merged.reviewCount)
+        assertEquals("identical states average to themselves", 12.0, merged.stability, 1e-9)
+        assertEquals("earliest of all three", now + 3 * day, merged.nextReviewAt)
+        assertEquals("both absorbed histories moved over", 2, db.reviewLogDao().getLogsForUnit(keep).first().size)
+    }
+
+    @Test
+    fun `merging a topic into itself is a no-op`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 3, dueAt = now + 10 * day)
+        assertNull("nothing to merge", repo.mergeUnits(keep, listOf(keep)))
+        assertEquals("the topic is untouched", 3, repo.getUnitById(keep)!!.reviewCount)
+    }
+
+    private fun logFor(unitId: Long, at: Long) = com.example.data.local.entity.ReviewLogEntity(
+        studyUnitId = unitId, reviewedAt = at,
+        memoryRating = MemoryRating.Good.name, understandingRating = UnderstandingRating.Clear.name,
+        previousIntervalDays = 3.0, nextIntervalDays = 6.0,
+        previousState = "Learning", nextState = "Building",
+        retrievabilityAtReview = 0.9, elapsedDays = 3.0, logType = "RECALL",
+        reviewDurationMs = 1000, wasImportantAtReview = 0,
+        desiredRetentionAtReview = 0.9, schedulerVersion = MedScheduler.SCHEDULER_VERSION,
+        schedulerPolicyVersion = MedScheduler.POLICY_VERSION, understandingFactorAtReview = 1.0,
+    )
+}

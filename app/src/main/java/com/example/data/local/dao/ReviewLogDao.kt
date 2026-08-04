@@ -37,6 +37,10 @@ interface ReviewLogDao {
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")
     suspend fun deleteLogsForUnits(unitIds: List<Long>)
 
+    /** Merge support: move history onto the surviving topic so no review is ever thrown away. */
+    @Query("UPDATE review_logs SET studyUnitId = :toUnitId WHERE studyUnitId IN (:fromUnitIds)")
+    suspend fun reassignLogs(fromUnitIds: List<Long>, toUnitId: Long)
+
     @Query("DELETE FROM review_logs")
     suspend fun deleteAllLogs()
 }
