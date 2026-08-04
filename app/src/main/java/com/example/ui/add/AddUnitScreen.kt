@@ -815,6 +815,16 @@ fun AddUnitScreen(
                     viewModel.editReviewRating(log.id, mem, und) { success ->
                         editingLogSaving = false
                         if (success) {
+                            // The replay just recomputed this topic's schedule, but the FORM still holds
+                            // the pre-correction dates (the populate effect is one-shot, guarded by
+                            // loadedFromUnit). Without this re-sync, pressing Save afterwards wrote the
+                            // stale date back — reverting the replayed due date AND recording it as a
+                            // manual deferral the user never made (deferredUntil), which is exactly what
+                            // the v5 honest-scheduling model forbids.
+                            viewModel.existingUnit?.let { replayed ->
+                                studiedAt = replayed.studiedAt
+                                nextReviewAt = replayed.nextReviewAt
+                            }
                             // Replay can move the due date → keep the reminder + widget in sync only
                             // after the database transaction has completed.
                             com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)

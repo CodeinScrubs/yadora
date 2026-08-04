@@ -79,6 +79,21 @@ class ReviewViewModel(
     private val ratedStack = mutableListOf<ReviewHistoryItem>()
     
     private val dueUnits = mutableListOf<StudyUnitEntity>()
+
+    /**
+     * A finished session looks exactly like a not-yet-loaded one (empty queue, null current unit), so
+     * re-running the load effect after a configuration change re-fetched the topic the user had just
+     * reviewed and let them rate it a second time. The ViewModel is scoped to the nav back-stack entry
+     * and therefore survives rotation, dark-mode switches and split-screen resizes — so the "already
+     * started" flag belongs here, not in composition.
+     */
+    private var sessionStarted = false
+
+    fun startSessionOnce(cutoffTime: Long, unitId: Long = -1L) {
+        if (sessionStarted) return
+        sessionStarted = true
+        loadNext(cutoffTime, unitId)
+    }
     
     private val _currentUnit = MutableStateFlow<StudyUnitEntity?>(null)
     val currentUnit: StateFlow<StudyUnitEntity?> = _currentUnit
@@ -423,7 +438,7 @@ fun ReviewSessionScreen(
             set(java.util.Calendar.MINUTE, 59)
             set(java.util.Calendar.SECOND, 59)
         }.timeInMillis
-        viewModel.loadNext(endOfDay, unitId = unitId)
+        viewModel.startSessionOnce(endOfDay, unitId = unitId)
     }
     
     val currentUnitState by viewModel.currentUnit.collectAsStateWithLifecycle()
@@ -453,9 +468,13 @@ fun ReviewSessionScreen(
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     LaunchedEffect(viewModel.lastReason) {
         viewModel.lastReason?.let { reason ->
-            viewModel.consumeReason()
             snackbarHostState.currentSnackbarData?.dismiss()
+            // consumeReason() MUST come after showSnackbar, not before: lastReason is this effect's
+            // key, so clearing it first changed the key, disposed the effect, and cancelled the
+            // suspended showSnackbar one frame in — the message never appeared. That silently hid
+            // the "this review couldn't be saved" warning, which travels on the same channel.
             snackbarHostState.showSnackbar(reason, duration = androidx.compose.material3.SnackbarDuration.Short)
+            viewModel.consumeReason()
         }
     }
 

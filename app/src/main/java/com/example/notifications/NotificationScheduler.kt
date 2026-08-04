@@ -59,6 +59,7 @@ object NotificationScheduler {
     private const val WAKING_START_HOUR = 8
     private const val WAKING_END_HOUR = 22
     private const val PREF_SNOOZED_UNTIL = "reminder_snoozed_until"
+    private const val PREF_NEXT_NUDGE_AT = "reminder_next_nudge_at"
     private const val COLLISION_WINDOW_MS = 5L * 60 * 1000
 
     /**
@@ -236,8 +237,10 @@ object NotificationScheduler {
         am.cancel(firePendingIntent(context, REQ_DAILY_2, ACTION_FIRE))
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_FIRE))
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE))
+        // Drop the armed-nudge bookmark too: nothing is scheduled any more, so a stale future value
+        // must not be honoured the next time reminders are turned back on.
         context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            .edit().remove(PREF_SNOOZED_UNTIL).apply()
+            .edit().remove(PREF_SNOOZED_UNTIL).remove(PREF_NEXT_NUDGE_AT).apply()
     }
 
     /**
@@ -341,10 +344,26 @@ object NotificationScheduler {
         }
         if (now.before(setToday)) return setToday.timeInMillis
 
+        // IDEMPOTENT RE-ARM. scheduleDailyReminder() is called from ~11 places, including
+        // MedReviewApplication.onCreate on every cold process start — which a placed home-screen
+        // widget triggers twice an hour. Recomputing "now + 3h" on each of those calls perpetually
+        // postponed the pending nudge, so the intra-day nag chain never fired at all (confirmed in a
+        // real 11-day export: 22 notifications, all from the two fixed daily slots, zero nudges).
+        // Keep the instant we already armed until it actually comes due.
+        val armed = sp.getLong(PREF_NEXT_NUDGE_AT, 0L)
+        if (armed > now.timeInMillis) {
+            val armedHour = Calendar.getInstance().apply { timeInMillis = armed }.get(Calendar.HOUR_OF_DAY)
+            if (armedHour in WAKING_START_HOUR until WAKING_END_HOUR) return armed
+        }
+
         val candidate = now.timeInMillis + REPEAT_INTERVAL_MS
         val candHour = Calendar.getInstance().apply { timeInMillis = candidate }.get(Calendar.HOUR_OF_DAY)
-        if (candHour in WAKING_START_HOUR until WAKING_END_HOUR) return candidate
+        if (candHour in WAKING_START_HOUR until WAKING_END_HOUR) {
+            sp.edit().putLong(PREF_NEXT_NUDGE_AT, candidate).apply()
+            return candidate
+        }
 
+        sp.edit().remove(PREF_NEXT_NUDGE_AT).apply()
         return Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
