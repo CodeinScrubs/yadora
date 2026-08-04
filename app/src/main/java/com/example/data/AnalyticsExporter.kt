@@ -44,7 +44,9 @@ object AnalyticsExporter {
         val root = JSONObject()
         // v3: v5 honest-scheduling fields (modelDueAt/deferredUntil/deletedAt), per-log policy
         // snapshot, log ids (join key for STUDY_ACTION events), reminder/exam context.
-        root.put("exportVersion", 3)
+        // v4: per-log adherence (scheduledForAt/daysLate) + the scheduler's own policy constants, so an
+        // interval in the data can be checked against the policy that produced it without the source.
+        root.put("exportVersion", 4)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("scheduler", "FSRS-5")
@@ -87,7 +89,23 @@ object AnalyticsExporter {
             put("dailyReminderEnabled", sp.getBoolean("daily_reminder", true))
             put("alarmModeEnabled", sp.getBoolean("alarm_enabled", false))
             put("alarmSilenced", sp.getBoolean("alarm_silenced", false))
+            // Decorative BY DESIGN: the countdown never feeds the scheduler. Exported so analysis can
+            // see the deadline the user was studying against, not because it changed any interval.
             put("examDate", sp.getLong("exam_date", 0L))
+        })
+
+        // The product-layer constants in force. An interval alone can't be judged without them: a
+        // 5-day first review means one thing under a 5-day cap and another without it, and reading a
+        // year-old export should not require digging out the matching source revision.
+        root.put("policy", JSONObject().apply {
+            put("version", com.example.domain.srs.MedScheduler.POLICY_VERSION)
+            put("firstStudyMaxDays", com.example.domain.srs.MedScheduler.FIRST_STUDY_MAX_DAYS)
+            put("relearnStepDays", com.example.domain.srs.MedScheduler.RELEARN_STEP_DAYS)
+            put("minIntervalDays", com.example.domain.srs.MedScheduler.MIN_INTERVAL_DAYS)
+            put("understandingPartialFactor", com.example.domain.srs.MedScheduler.UNDERSTANDING_PARTIAL_FACTOR)
+            put("understandingConfusedFactor", com.example.domain.srs.MedScheduler.UNDERSTANDING_CONFUSED_FACTOR)
+            put("highYieldRetention", com.example.domain.srs.MedScheduler.HIGH_YIELD_RETENTION)
+            put("examDateAffectsScheduling", false)
         })
 
         val unitsArr = JSONArray()
@@ -118,10 +136,34 @@ object AnalyticsExporter {
         }
         root.put("studyUnits", unitsArr)
 
+        // ADHERENCE: when was this review actually DUE, and how late was it answered?
+        // Nothing stores that directly, but it is exactly reconstructable: a review answers the date
+        // set by the previous review (its reviewedAt + the interval it granted), and the first rating
+        // answers the topic's study date. Without this the export cannot distinguish "the scheduler
+        // chose a bad interval" from "the user answered eleven days late", which is THE question when
+        // judging scheduling quality. Derived here rather than stored, so it also covers old history.
+        val unitStudiedAt = units.associate { it.id to it.studiedAt }
+        val scheduledForByLog = HashMap<Long, Long>(logs.size)
+        for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
+            var dueAt = unitStudiedAt[unitId]
+            for (l in unitLogs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))) {
+                if (dueAt != null) scheduledForByLog[l.id] = dueAt
+                dueAt = l.reviewedAt + (l.nextIntervalDays * 86400000.0).toLong()
+            }
+        }
+
         val logsArr = JSONArray()
         for (l in logs) {
             logsArr.put(JSONObject().apply {
                 put("id", l.id) // join key: STUDY_ACTION events carry the log id in `detail`
+                val scheduledFor = scheduledForByLog[l.id]
+                put("scheduledForAt", scheduledFor ?: JSONObject.NULL)
+                // Negative = answered EARLY (cramming ahead), positive = answered late.
+                put(
+                    "daysLate",
+                    if (scheduledFor == null) JSONObject.NULL
+                    else (l.reviewedAt - scheduledFor) / 86400000.0
+                )
                 put("studyUnitId", l.studyUnitId)
                 put("reviewedAt", l.reviewedAt)
                 put("memoryRating", l.memoryRating)

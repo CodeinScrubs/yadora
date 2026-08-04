@@ -85,7 +85,20 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 3, json.getInt("exportVersion"))
+        assertEquals("export version", 4, json.getInt("exportVersion"))
+
+        // v4 policy block: an interval in the data is meaningless without the constants that produced
+        // it, and a year-old export must be readable without the matching source revision.
+        val policy = json.getJSONObject("policy")
+        assertEquals("policy version", com.example.domain.srs.MedScheduler.POLICY_VERSION, policy.getString("version"))
+        assertEquals(
+            "first-study cap is exported",
+            com.example.domain.srs.MedScheduler.FIRST_STUDY_MAX_DAYS, policy.getDouble("firstStudyMaxDays"), 1e-9,
+        )
+        assertEquals(
+            "the exam date must be recorded as NOT affecting scheduling",
+            false, policy.getBoolean("examDateAffectsScheduling"),
+        )
 
         // Every review log must reference an exported topic (including the soft-deleted one).
         val unitIds = HashSet<Long>()
@@ -99,6 +112,13 @@ class AnalyticsExportConsistencyTest {
             assertTrue("log ${log.getLong("id")} references exported topic", log.getLong("studyUnitId") in unitIds)
             assertTrue("log carries policy version", log.has("schedulerPolicyVersion"))
             assertTrue("log carries applied factor", log.has("understandingFactorAtReview"))
+            // v4 adherence: without these, analysis cannot tell a bad interval apart from a late user.
+            assertTrue("log carries the date it was answering", log.has("scheduledForAt"))
+            assertTrue("log carries lateness", log.has("daysLate"))
+            if (!log.isNull("scheduledForAt")) {
+                val expected = (log.getLong("reviewedAt") - log.getLong("scheduledForAt")) / 86400000.0
+                assertEquals("daysLate agrees with its own timestamps", expected, log.getDouble("daysLate"), 1e-9)
+            }
         }
         assertTrue("committed review's log is exported", logId in logIds)
 
