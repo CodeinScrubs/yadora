@@ -689,6 +689,49 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         }
                     )
                 }
+
+                // Kill switch for the ringing itself. Deliberately separate from the toggle above so
+                // silencing alarms for a while (a lecture, a night shift, a sick day) doesn't make the
+                // user rebuild their alarm setup afterwards — and never silences the notifications,
+                // which are what actually protect the review streak.
+                if (alarmEnabled) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    var alarmSilenced by remember { mutableStateOf(sharedPrefs.getBoolean("alarm_silenced", false)) }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Text(
+                                when (language) {
+                                    "fa" -> "بی‌صدا کردن زنگ‌ها"
+                                    "de" -> "Alarme stummschalten"
+                                    else -> "Silence alarms"
+                                },
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                when (language) {
+                                    "fa" -> "هیچ زنگ تمام‌صفحه‌ای پخش نمی‌شود. اعلان‌های یادآوری مثل همیشه می‌آیند و تنظیمات زنگ حفظ می‌شود."
+                                    "de" -> "Kein Vollbild-Alarm klingelt mehr. Die Erinnerungs-Benachrichtigungen kommen weiterhin, und deine Alarm-Einstellungen bleiben erhalten."
+                                    else -> "No full-screen alarm will ring. Reminder notifications still arrive as usual, and your alarm setup is kept."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = alarmSilenced,
+                            onCheckedChange = {
+                                alarmSilenced = it
+                                sharedPrefs.edit().putBoolean("alarm_silenced", it).apply()
+                                // Stop anything ringing right now, so the switch takes effect instantly.
+                                if (it) runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
+                            }
+                        )
+                    }
+                }
             }
             
             item {

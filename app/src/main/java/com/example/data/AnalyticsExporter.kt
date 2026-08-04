@@ -86,6 +86,7 @@ object AnalyticsExporter {
             // changes study behavior — the analysis must be able to see it).
             put("dailyReminderEnabled", sp.getBoolean("daily_reminder", true))
             put("alarmModeEnabled", sp.getBoolean("alarm_enabled", false))
+            put("alarmSilenced", sp.getBoolean("alarm_silenced", false))
             put("examDate", sp.getLong("exam_date", 0L))
         })
 

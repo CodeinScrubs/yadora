@@ -442,7 +442,11 @@ object NotificationScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val alarmModeRequested = sp.getBoolean("alarm_enabled", false)
+        // "Silence alarms" is a kill switch, NOT a second alarm setting: it suppresses the
+        // full-screen ring while leaving alarm mode configured, so turning it back off restores the
+        // user's setup. Ordinary reminder notifications are unaffected and still arrive.
+        val alarmModeRequested = sp.getBoolean("alarm_enabled", false) &&
+            !sp.getBoolean("alarm_silenced", false)
         val canUseFullScreen = Build.VERSION.SDK_INT < 34 ||
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
         // On Android 14+, Play/system policy can revoke full-screen access. Fall back to an ordinary

@@ -147,6 +147,13 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         viewModelScope.launch { repository.softDeleteUnit(unitId) }
     }
 
+    fun softDeleteUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.softDeleteUnits(unitIds)
+            onComplete()
+        }
+    }
+
     fun restoreDeleted(unitId: Long) {
         viewModelScope.launch { repository.restoreDeletedUnit(unitId) }
     }
@@ -172,8 +179,50 @@ fun LibraryScreen(
     val libContext = androidx.compose.ui.platform.LocalContext.current
     
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    // Deleting FROM the archive: the archive toolbar previously offered only Restore, so an archived
+    // topic could not be deleted from selection mode at all.
+    var showBatchPurgeConfirm by remember { mutableStateOf(false) }
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     val isFarsi = strings.languageCode == "fa"
+
+    if (showBatchPurgeConfirm) {
+        val n = selectedIds.size
+        AlertDialog(
+            onDismissRequest = { showBatchPurgeConfirm = false },
+            title = {
+                Text(when (strings.languageCode) {
+                    "fa" -> "حذف مباحث انتخاب‌شده؟"
+                    "de" -> "Ausgewählte Themen löschen?"
+                    else -> "Delete selected topics?"
+                })
+            },
+            text = {
+                Text(when (strings.languageCode) {
+                    "fa" -> "${com.example.ui.i18n.PersianDate.faDigits(n)} مبحث به «حذف‌شده‌های اخیر» می‌رود و تا ۳۰ روز قابل بازگردانی است، سپس برای همیشه پاک می‌شود."
+                    "de" -> "$n Themen wandern in \"Kürzlich gelöscht\" und lassen sich 30 Tage lang wiederherstellen, danach werden sie endgültig entfernt."
+                    else -> "$n topics move to Recently deleted. You can restore them for 30 days, after which they are removed for good."
+                })
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val ids = selectedIds
+                        viewModel.softDeleteUnits(ids) {
+                            com.example.widget.DueWidgetProvider.updateAll(libContext)
+                            selectedIds = emptySet()
+                            showBatchPurgeConfirm = false
+                        }
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(when (strings.languageCode) { "fa" -> "حذف"; "de" -> "Löschen"; else -> "Delete" })
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchPurgeConfirm = false }) { Text(strings.cancel) }
+            }
+        )
+    }
 
     if (showBatchDeleteConfirm) {
         val batchDeleteTitle = if (isFarsi) "بایگانی مباحث انتخاب شده؟" else "Archive Selected Topics?"
@@ -249,15 +298,34 @@ fun LibraryScreen(
                             }) {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Restore Selected",
+                                    contentDescription = when (strings.languageCode) {
+                                        "fa" -> "بازگردانی موارد انتخاب‌شده"
+                                        "de" -> "Ausgewählte wiederherstellen"
+                                        else -> "Restore Selected"
+                                    },
                                     tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            IconButton(onClick = { showBatchPurgeConfirm = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = when (strings.languageCode) {
+                                        "fa" -> "حذف موارد انتخاب‌شده"
+                                        "de" -> "Ausgewählte löschen"
+                                        else -> "Delete Selected"
+                                    },
+                                    tint = MaterialTheme.colorScheme.error
                                 )
                             }
                         } else {
                             IconButton(onClick = { showBatchDeleteConfirm = true }) {
                                 Icon(
                                     imageVector = Icons.Default.Delete,
-                                    contentDescription = "Archive Selected",
+                                    contentDescription = when (strings.languageCode) {
+                                        "fa" -> "بایگانی موارد انتخاب‌شده"
+                                        "de" -> "Ausgewählte archivieren"
+                                        else -> "Archive Selected"
+                                    },
                                     tint = MaterialTheme.colorScheme.error
                                 )
                             }

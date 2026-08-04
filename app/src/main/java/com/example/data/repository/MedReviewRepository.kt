@@ -125,6 +125,11 @@ class MedReviewRepository(
         studyUnitDao.softDeleteUnit(id, System.currentTimeMillis())
     }
 
+    suspend fun softDeleteUnits(ids: Collection<Long>) {
+        val stamp = System.currentTimeMillis()
+        database.withTransaction { ids.forEach { studyUnitDao.softDeleteUnit(it, stamp) } }
+    }
+
     suspend fun restoreDeletedUnit(id: Long) {
         studyUnitDao.restoreDeletedUnit(id, System.currentTimeMillis())
     }

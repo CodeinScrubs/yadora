@@ -30,7 +30,7 @@ object BackupManager {
     // The user-preference keys worth carrying across devices (deliberately excludes transient state
     // like last_notif_shown_at).
     private val SETTINGS_STRING_KEYS = listOf("app_language", "theme_mode", "accent_color", "calendar_format", "exam_name")
-    private val SETTINGS_BOOL_KEYS = listOf("language_selected", "daily_reminder", "sound_enabled", "vibration_enabled", "alarm_enabled")
+    private val SETTINGS_BOOL_KEYS = listOf("language_selected", "daily_reminder", "sound_enabled", "vibration_enabled", "alarm_enabled", "alarm_silenced")
     private val SETTINGS_INT_KEYS = listOf("reminder_hour", "reminder_minute")
     private val SETTINGS_FLOAT_KEYS = listOf("daily_review_limit", "desired_retention")
     private val SETTINGS_LONG_KEYS = listOf("exam_date")
