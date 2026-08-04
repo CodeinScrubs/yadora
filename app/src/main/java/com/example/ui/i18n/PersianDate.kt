@@ -119,18 +119,36 @@ object PersianDate {
         return c.get(Calendar.DAY_OF_WEEK) % 7 // SATURDAY(7)→0, SUNDAY(1)→1, …, FRIDAY(6)→6
     }
 
-    /** A local-time millis timestamp → e.g. "۱۴ تیر ۱۴۰۳". */
+    /**
+     * A Jalali date is a RIGHT-TO-LEFT phrase that happens to START with a number ("13 شهریور 1405"
+     * reads day → month → year from the RIGHT). Latin digits are weak under the Unicode Bidi
+     * Algorithm, so inside an English screen — or simply concatenated after a label like "Next: " —
+     * the leading "13" gets absorbed into the surrounding left-to-right run and the parts render out
+     * of order ("شهریور 1405 13").
+     *
+     * Wrapping the whole date in RLI…PDI (RIGHT-TO-LEFT ISOLATE / POP DIRECTIONAL ISOLATE) makes it
+     * a self-contained right-to-left island: it lays out correctly in an English screen, a Persian
+     * screen, and in the middle of any other sentence, without affecting the text around it.
+     */
+    private const val RLI = '\u2067'
+    private const val PDI = '\u2069'
+
+    /** Wrap [text] so it always lays out right-to-left, whatever surrounds it. */
+    fun rtlIsolate(text: String): String = if (text.isEmpty()) text else "$RLI$text$PDI"
+
+    /** A local-time millis timestamp → e.g. "13 شهریور 1405" (right-to-left, Latin numerals). */
     fun formatDate(millis: Long): String {
         val c = Calendar.getInstance().apply { timeInMillis = millis }
         val (jy, jm, jd) = gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
-        return "${faDigits(jd)} ${MONTHS[jm - 1]} ${faDigits(jy)}"
+        return rtlIsolate("$jd ${MONTHS[jm - 1]} $jy")
     }
 
-    /** A local-time millis timestamp → e.g. "۱۴ تیر ۱۴۰۳ ساعت ۰۹:۳۰". */
+    /** A local-time millis timestamp → e.g. "13 شهریور 1405 ساعت 09:30". */
     fun formatDateTime(millis: Long): String {
         val c = Calendar.getInstance().apply { timeInMillis = millis }
+        val (jy, jm, jd) = gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
         val hh = c.get(Calendar.HOUR_OF_DAY).toString().padStart(2, '0')
         val mm = c.get(Calendar.MINUTE).toString().padStart(2, '0')
-        return "${formatDate(millis)} ساعت ${faDigits("$hh:$mm")}"
+        return rtlIsolate("$jd ${MONTHS[jm - 1]} $jy ساعت $hh:$mm")
     }
 }

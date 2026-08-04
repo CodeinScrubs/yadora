@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.*
+import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -424,6 +425,8 @@ fun AddUnitScreen(
                 onValueChange = { title = it },
                 label = { Text(strings.topicTitleLabel) },
                 modifier = Modifier.fillMaxWidth(),
+                // A topic title can be in any language; lay it out by its own first strong character.
+                textStyle = LocalTextStyle.current.autoDirection(),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
             )
@@ -490,6 +493,7 @@ fun AddUnitScreen(
                                 value = newSubjectName,
                                 onValueChange = { newSubjectName = it },
                                 label = { Text(strings.subjectName) },
+                                textStyle = LocalTextStyle.current.autoDirection(),
                                 singleLine = true
                             )
                             Spacer(modifier = Modifier.height(8.dp))
@@ -549,6 +553,7 @@ fun AddUnitScreen(
                 onValueChange = { notes = it },
                 label = { Text(strings.notesExplanation) },
                 modifier = Modifier.fillMaxWidth(),
+                textStyle = LocalTextStyle.current.autoDirection(),
                 minLines = 3,
                 maxLines = 8,
                 // Unit-size coaching: scheduling precision depends on topic granularity more than on
@@ -585,6 +590,7 @@ fun AddUnitScreen(
                 onValueChange = { sourceLink = it },
                 label = { Text(when (strings.languageCode) { "fa" -> "منبع"; "de" -> "Quelle"; else -> "Source" }) },
                 modifier = Modifier.fillMaxWidth(),
+                textStyle = LocalTextStyle.current.autoDirection(),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
             )

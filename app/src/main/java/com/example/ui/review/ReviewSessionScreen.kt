@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -688,7 +689,7 @@ fun ReviewSessionScreen(
 
                         Text(
                             text = currentUnit.title,
-                            style = MaterialTheme.typography.headlineMedium,
+                            style = MaterialTheme.typography.headlineMedium.autoDirection(),
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
                         )
@@ -697,7 +698,7 @@ fun ReviewSessionScreen(
                             Spacer(modifier = Modifier.height(24.dp))
                             Text(
                                 text = currentUnit.recallPrompt!!,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleMedium.autoDirection(),
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -753,7 +754,7 @@ fun ReviewSessionScreen(
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
                                     text = currentUnit.notes!!,
-                                    style = MaterialTheme.typography.bodyLarge,
+                                    style = MaterialTheme.typography.bodyLarge.autoDirection(),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -769,7 +770,7 @@ fun ReviewSessionScreen(
                                 }
                                 Text(
                                     text = src,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodyMedium.autoDirection(),
                                     color = if (openUrl != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = if (openUrl != null) {
                                         Modifier.fillMaxWidth().clickable { runCatching { uriHandler.openUri(openUrl) } }

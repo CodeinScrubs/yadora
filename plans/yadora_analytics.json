@@ -1,0 +1,382 @@
+{
+  "exportVersion": 3,
+  "exportedAt": 1785850110149,
+  "appVersionName": "1.0",
+  "scheduler": "FSRS-5",
+  "unitCount": 5,
+  "reviewLogCount": 4,
+  "device": {
+    "manufacturer": "samsung",
+    "model": "SM-A528B",
+    "sdkInt": 34
+  },
+  "lastCrashLog": null,
+  "subjects": {
+    "1": "Surgery"
+  },
+  "systems": {},
+  "settings": {
+    "language": "en",
+    "dailyReviewLimit": 100,
+    "reminderHour": 20,
+    "reminderMinute": 0,
+    "userDesiredRetention": 0.8500000238418579,
+    "defaultBaseRetention": 0.9,
+    "importantRetentionBonus": 0.03,
+    "policyVersion": "YADORA-1",
+    "dailyReminderEnabled": true,
+    "alarmModeEnabled": true,
+    "examDate": 1788499800000
+  },
+  "studyUnits": [
+    {
+      "id": 2,
+      "studyType": "Topic",
+      "subjectId": 1,
+      "systemId": null,
+      "highYield": false,
+      "state": "Building",
+      "stability": 15.69105,
+      "difficulty": 3.2245015893713678,
+      "currentIntervalDays": 4.777939767798886,
+      "reviewCount": 1,
+      "lapseCount": 0,
+      "createdAt": 1784901232191,
+      "studiedAt": 1784901232191,
+      "lastReviewedAt": 1784902260180,
+      "nextReviewAt": 1785315074175,
+      "archived": false,
+      "modelDueAt": 1785315074175,
+      "deferredUntil": null,
+      "deletedAt": null
+    },
+    {
+      "id": 5,
+      "studyType": "Topic",
+      "subjectId": 1,
+      "systemId": null,
+      "highYield": false,
+      "state": "New",
+      "stability": 1.18385,
+      "difficulty": 6.488305268471453,
+      "currentIntervalDays": 0,
+      "reviewCount": 0,
+      "lapseCount": 0,
+      "createdAt": 1785666718099,
+      "studiedAt": 1785666718099,
+      "lastReviewedAt": null,
+      "nextReviewAt": 1785666718099,
+      "archived": false,
+      "modelDueAt": 1785666718099,
+      "deferredUntil": null,
+      "deletedAt": null
+    },
+    {
+      "id": 4,
+      "studyType": "Topic",
+      "subjectId": 1,
+      "systemId": null,
+      "highYield": false,
+      "state": "Building",
+      "stability": 15.69105,
+      "difficulty": 3.2245015893713678,
+      "currentIntervalDays": 4.957261575566868,
+      "reviewCount": 1,
+      "lapseCount": 0,
+      "createdAt": 1785242832582,
+      "studiedAt": 1785216600000,
+      "lastReviewedAt": 1785242839652,
+      "nextReviewAt": 1785671147052,
+      "archived": false,
+      "modelDueAt": 1785671147052,
+      "deferredUntil": null,
+      "deletedAt": null
+    },
+    {
+      "id": 1,
+      "studyType": "Topic",
+      "subjectId": 1,
+      "systemId": null,
+      "highYield": false,
+      "state": "Strong",
+      "stability": 68.92742463627614,
+      "difficulty": 2.1301214599670124,
+      "currentIntervalDays": 110.3299929054193,
+      "reviewCount": 2,
+      "lapseCount": 0,
+      "createdAt": 1784867554034,
+      "studiedAt": 1784867554034,
+      "lastReviewedAt": 1785407297286,
+      "nextReviewAt": 1794939808673,
+      "archived": false,
+      "modelDueAt": 1794939808673,
+      "deferredUntil": null,
+      "deletedAt": null
+    },
+    {
+      "id": 3,
+      "studyType": "Topic",
+      "subjectId": 1,
+      "systemId": null,
+      "highYield": false,
+      "state": "New",
+      "stability": 1.18385,
+      "difficulty": 6.488305268471453,
+      "currentIntervalDays": 0,
+      "reviewCount": 0,
+      "lapseCount": 0,
+      "createdAt": 1784904345738,
+      "studiedAt": 1785216600000,
+      "lastReviewedAt": null,
+      "nextReviewAt": 1784904345738,
+      "archived": true,
+      "modelDueAt": 1784904345738,
+      "deferredUntil": null,
+      "deletedAt": 1785242888495
+    }
+  ],
+  "reviewLogs": [
+    {
+      "id": 1,
+      "studyUnitId": 1,
+      "reviewedAt": 1784896170074,
+      "memoryRating": "Easy",
+      "understandingRating": "Partial",
+      "previousIntervalDays": 0,
+      "nextIntervalDays": 4.466547561545813,
+      "previousState": "New",
+      "nextState": "Building",
+      "retrievabilityAtReview": 0.9687190707344723,
+      "elapsedDays": 0.3312041666666667,
+      "logType": "FIRST_STUDY",
+      "initialDifficulty": "Easy",
+      "reviewDurationMs": 6117,
+      "wasImportantAtReview": 0,
+      "desiredRetentionAtReview": 0.8500000238418579,
+      "schedulerVersion": "FSRS-5",
+      "schedulerPolicyVersion": "YADORA-1",
+      "understandingFactorAtReview": 0.9
+    },
+    {
+      "id": 2,
+      "studyUnitId": 2,
+      "reviewedAt": 1784902260180,
+      "memoryRating": "Easy",
+      "understandingRating": "Clear",
+      "previousIntervalDays": 0,
+      "nextIntervalDays": 4.777939767798886,
+      "previousState": "New",
+      "nextState": "Building",
+      "retrievabilityAtReview": 0.9988233438110192,
+      "elapsedDays": 0.011898020833333333,
+      "logType": "FIRST_STUDY",
+      "initialDifficulty": "Easy",
+      "reviewDurationMs": 2344,
+      "wasImportantAtReview": 0,
+      "desiredRetentionAtReview": 0.8500000238418579,
+      "schedulerVersion": "FSRS-5",
+      "schedulerPolicyVersion": "YADORA-1",
+      "understandingFactorAtReview": 1
+    },
+    {
+      "id": 3,
+      "studyUnitId": 4,
+      "reviewedAt": 1785242839652,
+      "memoryRating": "Easy",
+      "understandingRating": "Clear",
+      "previousIntervalDays": 0,
+      "nextIntervalDays": 4.957261575566868,
+      "previousState": "New",
+      "nextState": "Building",
+      "retrievabilityAtReview": 0.9712056869353338,
+      "elapsedDays": 0.30369967592592595,
+      "logType": "FIRST_STUDY",
+      "initialDifficulty": "Easy",
+      "reviewDurationMs": 3447,
+      "wasImportantAtReview": 0,
+      "desiredRetentionAtReview": 0.8500000238418579,
+      "schedulerVersion": "FSRS-5",
+      "schedulerPolicyVersion": "YADORA-1",
+      "understandingFactorAtReview": 1
+    },
+    {
+      "id": 4,
+      "studyUnitId": 1,
+      "reviewedAt": 1785407297286,
+      "memoryRating": "Easy",
+      "understandingRating": "Clear",
+      "previousIntervalDays": 4.466547561545813,
+      "nextIntervalDays": 110.3299929054193,
+      "previousState": "Building",
+      "nextState": "Strong",
+      "retrievabilityAtReview": 0.9585139539068945,
+      "elapsedDays": 5.915824212962963,
+      "logType": "RECALL",
+      "initialDifficulty": null,
+      "reviewDurationMs": 23054,
+      "wasImportantAtReview": 0,
+      "desiredRetentionAtReview": 0.8500000238418579,
+      "schedulerVersion": "FSRS-5",
+      "schedulerPolicyVersion": "YADORA-1",
+      "understandingFactorAtReview": 1
+    }
+  ],
+  "eventLogs": [
+    {
+      "at": 1784874600397,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1784896170078,
+      "type": "STUDY_ACTION",
+      "unitId": 1,
+      "detail": "1"
+    },
+    {
+      "at": 1784902260185,
+      "type": "STUDY_ACTION",
+      "unitId": 2,
+      "detail": "2"
+    },
+    {
+      "at": 1784910601416,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1784961000448,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1784997000369,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785047401473,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785083400499,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785133800494,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785169800538,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785220200430,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785242839658,
+      "type": "STUDY_ACTION",
+      "unitId": 4,
+      "detail": "3"
+    },
+    {
+      "at": 1785306600709,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=2 alarm"
+    },
+    {
+      "at": 1785342600474,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=2 alarm"
+    },
+    {
+      "at": 1785393000711,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=2 alarm"
+    },
+    {
+      "at": 1785407297300,
+      "type": "STUDY_ACTION",
+      "unitId": 1,
+      "detail": "4"
+    },
+    {
+      "at": 1785429000730,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785479400840,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785515401110,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785565800811,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785601800711,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=1 alarm"
+    },
+    {
+      "at": 1785652200563,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=2 alarm"
+    },
+    {
+      "at": 1785688200427,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=3 alarm"
+    },
+    {
+      "at": 1785738601329,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=3 alarm"
+    },
+    {
+      "at": 1785774600520,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=3 alarm"
+    },
+    {
+      "at": 1785825000990,
+      "type": "NOTIF_SHOWN",
+      "unitId": null,
+      "detail": "source=alarm due=3 alarm"
+    }
+  ]
+}

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -197,7 +198,7 @@ private fun UpcomingScheduleDialog(
                                     Box(modifier = Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.tertiary))
                                     Spacer(Modifier.width(6.dp))
                                 }
-                                Text(t.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                Text(t.title, style = MaterialTheme.typography.bodyMedium.autoDirection(), maxLines = 1)
                             }
                         }
                     }
@@ -701,14 +702,15 @@ fun StudyUnitCard(
                     Column(modifier = Modifier.weight(1f, fill = false)) {
                         Text(
                             text = unit.title,
-                            style = MaterialTheme.typography.titleMedium,
+                            // User content: direction follows the TITLE's own script, not the screen's.
+                            style = MaterialTheme.typography.titleMedium.autoDirection(),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         if (!disambiguator.isNullOrBlank()) {
                             Text(
                                 text = disambiguator,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodySmall.autoDirection(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
