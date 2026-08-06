@@ -63,6 +63,122 @@ class MergeUnitsTest {
         )
     )
 
+    /**
+     * THE post-merge regression. A merged topic ends up carrying one FIRST_STUDY log per absorbed
+     * copy, because merging re-points their histories onto the survivor. The replay used to treat
+     * EVERY FIRST_STUDY row as a fresh reviewNumber-0 seed (Fsrs.initialState), so correcting any
+     * old rating — or merely editing the studied date — re-seeded mid-replay and threw away all the
+     * stability the merged topic had accumulated. Only the chronologically first log may seed.
+     */
+    @Test
+    fun `correcting a rating after a merge preserves the merged memory state`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 30.0, difficulty = 3.0, reviewCount = 2, dueAt = now + 20 * day)
+        val other = addUnit("آپاندیسیت", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 6 * day)
+
+        // Each copy has its own first study followed by a recall — exactly what a real duplicate pair
+        // looks like, and the shape that produces two FIRST_STUDY rows on the survivor after merging.
+        repo.insertReviewLog(logFor(keep, now - 40 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(keep, now - 30 * day))
+        repo.insertReviewLog(logFor(other, now - 20 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(other, now - 10 * day))
+
+        repo.mergeUnits(keep, listOf(other))!!
+        val logs = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
+        assertEquals("all four reviews are on the survivor", 4, logs.size)
+        assertEquals("two first-study rows exist post-merge", 2, logs.count { it.logType == "FIRST_STUDY" })
+
+        // Correct the LAST rating. Nothing about that edit should reset the topic to a brand-new memory.
+        repo.editReviewRating(keep, logs.last().id, MemoryRating.Good, UnderstandingRating.Clear)
+        val after = repo.getUnitById(keep)!!
+
+        val freshSeed = MedScheduler.firstStudy(UnderstandingRating.Partial, false).state.stability
+        assertTrue(
+            "replay must not re-seed from initialState (stability collapsed to ${after.stability})",
+            after.stability > freshSeed * 2,
+        )
+        assertEquals("history is preserved, not truncated", 4, after.reviewCount)
+        // The replay normalizes the stray first-study row, so the history self-heals for next time.
+        val healed = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
+        assertEquals("only the earliest log stays a seed", 1, healed.count { it.logType == "FIRST_STUDY" })
+        assertEquals("and it is the earliest one", healed.first().id, healed.first { it.logType == "FIRST_STUDY" }.id)
+    }
+
+    @Test
+    fun `a merged topic keeps its state when its studied date is edited`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 30.0, difficulty = 3.0, reviewCount = 2, dueAt = now + 20 * day)
+        val other = addUnit("آپاندیسیت", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 6 * day)
+        repo.insertReviewLog(logFor(keep, now - 40 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(keep, now - 30 * day))
+        repo.insertReviewLog(logFor(other, now - 20 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(other, now - 10 * day))
+        repo.mergeUnits(keep, listOf(other))!!
+
+        val before = repo.getUnitById(keep)!!
+        repo.updateUnitReplayingHistory(before.copy(studiedAt = before.studiedAt - 5 * day))
+        val after = repo.getUnitById(keep)!!
+
+        val freshSeed = MedScheduler.firstStudy(UnderstandingRating.Partial, false).state.stability
+        assertTrue("editing the studied date must not collapse the merged state", after.stability > freshSeed * 2)
+    }
+
+    @Test
+    fun `an absorbed copy comes back clean, not as a zombie claiming reviews it does not own`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 3, dueAt = now + 10 * day)
+        val other = addUnit("آپاندیسیت", stability = 9.0, difficulty = 6.0, reviewCount = 4, dueAt = now + 2 * day, lapses = 2)
+        repeat(4) { repo.insertReviewLog(logFor(other, now - (it + 1) * day)) }
+
+        repo.mergeUnits(keep, listOf(other))!!
+        repo.restoreDeletedUnit(other)
+        val revived = repo.getUnitById(other)!!
+
+        assertEquals("its history went to the survivor, so its own count must be zero", 0, revived.reviewCount)
+        assertEquals("lapses too", 0, revived.lapseCount)
+        assertEquals("no reviews left on it", 0, db.reviewLogDao().getLogsForUnit(other).first().size)
+        assertEquals("back to an unrated state", "New", revived.state)
+        assertNull("never reviewed any more", revived.lastReviewedAt)
+        assertEquals("title is kept — the user can re-study it", "آپاندیسیت", revived.title)
+    }
+
+    @Test
+    fun `an already-absorbed copy cannot be merged a second time`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 3, dueAt = now + 10 * day)
+        val other = addUnit("آپاندیسیت", stability = 8.0, difficulty = 6.0, reviewCount = 2, dueAt = now + 4 * day)
+
+        val first = repo.mergeUnits(keep, listOf(other))!!
+        assertEquals("counts combined once", 5, first.reviewCount)
+
+        // Simulates a double-tap slipping past the UI guard, or a stale selection being re-submitted.
+        assertNull("second merge of a soft-deleted copy is refused", repo.mergeUnits(keep, listOf(other)))
+        assertEquals("counts were not folded in twice", 5, repo.getUnitById(keep)!!.reviewCount)
+    }
+
+    @Test
+    fun `merging preserves an in-progress relearn and never launders a deferral into modelDueAt`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 3, dueAt = now + 30 * day)
+        val lapsed = addUnit("آپاندیسیت", stability = 2.0, difficulty = 8.0, reviewCount = 2, dueAt = now + 1 * day)
+        // The lapsed copy is mid-relearn, and the user has ALSO deferred it to a later date.
+        val lapsedUnit = repo.getUnitById(lapsed)!!
+        repo.updateUnit(
+            lapsedUnit.copy(
+                state = "NeedsRelearn",
+                modelDueAt = now + 1 * day,
+                nextReviewAt = now + 3 * day,
+                deferredUntil = now + 3 * day,
+            )
+        )
+
+        val merged = repo.mergeUnits(keep, listOf(lapsed))!!
+
+        assertEquals("a relearn in progress survives the merge", "NeedsRelearn", merged.state)
+        assertEquals("the earliest MODEL date wins, not the deferred one", now + 1 * day, merged.modelDueAt)
+        assertNull("a merge is not a user deferral", merged.deferredUntil)
+    }
+
     @Test
     fun `merging keeps every review log and sums the counts`() = runBlocking {
         val now = System.currentTimeMillis()
@@ -149,12 +265,12 @@ class MergeUnitsTest {
         assertEquals("the topic is untouched", 3, repo.getUnitById(keep)!!.reviewCount)
     }
 
-    private fun logFor(unitId: Long, at: Long) = com.example.data.local.entity.ReviewLogEntity(
+    private fun logFor(unitId: Long, at: Long, type: String = "RECALL") = com.example.data.local.entity.ReviewLogEntity(
         studyUnitId = unitId, reviewedAt = at,
         memoryRating = MemoryRating.Good.name, understandingRating = UnderstandingRating.Clear.name,
         previousIntervalDays = 3.0, nextIntervalDays = 6.0,
         previousState = "Learning", nextState = "Building",
-        retrievabilityAtReview = 0.9, elapsedDays = 3.0, logType = "RECALL",
+        retrievabilityAtReview = 0.9, elapsedDays = 3.0, logType = type,
         reviewDurationMs = 1000, wasImportantAtReview = 0,
         desiredRetentionAtReview = 0.9, schedulerVersion = MedScheduler.SCHEDULER_VERSION,
         schedulerPolicyVersion = MedScheduler.POLICY_VERSION, understandingFactorAtReview = 1.0,

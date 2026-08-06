@@ -45,6 +45,9 @@ object MedScheduler {
     /** The schedule never asks for a review sooner than the next day. */
     const val MIN_INTERVAL_DAYS = 1.0
 
+    /** Ceiling on how many lapses [priorityScore] will count, so old history can't outrank importance. */
+    const val MAX_SCORED_LAPSES = 5
+
     /**
      * After a lapse (Forgot) the item enters a short relearning step the next day, regardless of the
      * computed stability — the "relearn tomorrow" behaviour the product promises.
@@ -268,10 +271,16 @@ object MedScheduler {
      *    the reviewNumber, which is 0 for every first rating and so would not vary per review).
      *  - MULTIPLICATIVE: the same factor applies to Clear/Partial/Confused previews of the same
      *    review, so the transparent understanding ratios (×0.9 / ×0.8) are preserved exactly.
-     *  - Never fuzzes short BASE intervals (< 3 days): relearn-tomorrow, first-study, and other tight
-     *    early reviews stay precisely where the science put them. Eligibility is decided from
+     *  - Never fuzzes short BASE intervals (< 3 days): relearn-tomorrow and other tight early
+     *    reviews stay precisely where the science put them. Eligibility is decided from
      *    [baseIntervalDays] (pre-understanding), NOT the final interval — otherwise near the 3-day
      *    boundary Clear would fuzz while Partial wouldn't, breaking the exact-ratio invariant.
+     *
+     * NOTE: first-study intervals are NOT categorically exempt, and that is deliberate. A Good or
+     * Easy first rating lands on a base interval of ~3–5 days (the [FIRST_STUDY_MAX_DAYS] cap), which
+     * clears the 3-day threshold and therefore does get jittered. That is exactly the behaviour we
+     * want: someone who adds five topics in one study session would otherwise have all five come due
+     * on precisely the same day, forever. Only Hard/Forgot first ratings (base < 3d) stay unfuzzed.
      */
     fun fuzzedInterval(intervalDays: Double, baseIntervalDays: Double, unitId: Long, reviewCount: Int): Double {
         if (baseIntervalDays < 3.0) return intervalDays
@@ -312,7 +321,14 @@ object MedScheduler {
             "Building" -> 20.0
             else -> 0.0
         }
-        score += lapseCount * 10.0
+        // Lapses matter, but they are HISTORY and never decay — a topic that was hard a year ago
+        // still carries every lapse it ever had. Uncapped, `lapseCount * 10` eventually exceeds the
+        // high-yield weight (100) on its own, so a now-Strong topic with an ugly past would outrank
+        // a genuinely important one forever, contradicting this function's own "importance
+        // dominates" contract. Capped at 5 lapses (50 points) it stays a meaningful tie-breaker
+        // below importance, while the still-uncapped overdue term below keeps anything neglected
+        // rising until it is actually seen.
+        score += minOf(lapseCount, MAX_SCORED_LAPSES) * 10.0
         val overdueDays = (now - nextReviewAt) / 86400000.0
         if (overdueDays > 0) score += overdueDays * 5.0
         return score

@@ -9,6 +9,7 @@ import com.example.data.local.entity.StudyUnitEntity
 import com.example.data.local.entity.SubjectEntity
 import com.example.data.local.entity.SystemEntity
 import com.example.domain.model.MemoryRating
+import com.example.domain.model.StudyState
 import com.example.domain.model.UnderstandingRating
 import com.example.domain.srs.MedScheduler
 import kotlinx.coroutines.flow.Flow
@@ -136,12 +137,20 @@ class MedReviewRepository(
      * No schema change — this is a re-pointing of existing rows.
      */
     suspend fun mergeUnits(keepId: Long, mergeIds: Collection<Long>): StudyUnitEntity? {
-        val absorbIds = mergeIds.filter { it != keepId }.distinct()
-        if (absorbIds.isEmpty()) return null
+        val requestedIds = mergeIds.filter { it != keepId }.distinct()
+        if (requestedIds.isEmpty()) return null
         return database.withTransaction {
-            val survivor = studyUnitDao.getUnitById(keepId) ?: return@withTransaction null
-            val absorbed = absorbIds.mapNotNull { studyUnitDao.getUnitById(it) }
+            // Never merge a topic that is already in the recycle bin. getUnitById deliberately does
+            // NOT filter soft-deleted rows (restore/purge need them), so without this guard an
+            // ALREADY-ABSORBED copy could be merged a second time and its stale counts folded in
+            // again — permanently inflating the survivor's reviewCount and skewing its memory state.
+            val survivor = studyUnitDao.getUnitById(keepId)?.takeIf { it.deletedAt == null }
+                ?: return@withTransaction null
+            val absorbed = requestedIds
+                .mapNotNull { studyUnitDao.getUnitById(it) }
+                .filter { it.deletedAt == null }
             if (absorbed.isEmpty()) return@withTransaction null
+            val absorbIds = absorbed.map { it.id }
 
             val all = listOf(survivor) + absorbed
             // Weight by evidence: an unrated copy counts once, a well-drilled copy counts per review.
@@ -161,18 +170,49 @@ class MedReviewRepository(
                 reviewCount = all.sumOf { it.reviewCount },
                 lapseCount = all.sumOf { it.lapseCount },
                 highYield = all.any { it.highYield }, // importance is a union: if either mattered, it matters
-                state = MedScheduler.masteryState(mergedStability, justForgot = false).name,
+                // A relearn in progress is a union too: if ANY copy was just forgotten, the merged
+                // topic is still relearning. masteryState() can only ever return NeedsRelearn when
+                // told a lapse just happened, so deriving state purely from stability would quietly
+                // strip the queue priority that a just-lapsed topic depends on.
+                state = if (all.any { it.state == StudyState.NeedsRelearn.name }) StudyState.NeedsRelearn.name
+                    else MedScheduler.masteryState(mergedStability, justForgot = false).name,
                 lastReviewedAt = all.mapNotNull { it.lastReviewedAt }.maxOrNull(),
                 nextReviewAt = earliestDue,
-                modelDueAt = earliestDue,
+                // modelDueAt takes the earliest MODEL date, never `earliestDue`: nextReviewAt may be a
+                // date the user deferred to, and the v5 honest-scheduling rule is that a deferral must
+                // never be laundered into the memory model's own opinion.
+                modelDueAt = all.minOf { it.modelDueAt },
                 deferredUntil = null, // the merged topic is a fresh, un-deferred schedule
                 updatedAt = System.currentTimeMillis(),
             )
 
             reviewLogDao.reassignLogs(absorbIds, keepId)
             studyUnitDao.updateUnit(merged)
+
             val stamp = System.currentTimeMillis()
-            absorbIds.forEach { studyUnitDao.softDeleteUnit(it, stamp) }
+            absorbed.forEach { copy ->
+                // The absorbed copy's HISTORY now belongs to the survivor, so its own counters and
+                // memory state are no longer backed by anything. Reset them to an unrated baseline
+                // before soft-deleting: otherwise restoring it from "Recently deleted" would hand the
+                // user a topic claiming reviews it doesn't own, with zero logs to justify them.
+                val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, copy.highYield).state
+                studyUnitDao.updateUnit(
+                    copy.copy(
+                        stability = seed.stability,
+                        difficulty = seed.difficulty,
+                        currentIntervalDays = 0.0,
+                        reviewCount = 0,
+                        lapseCount = 0,
+                        state = StudyState.New.name,
+                        lastReviewedAt = null,
+                        nextReviewAt = copy.studiedAt,
+                        modelDueAt = copy.studiedAt,
+                        deferredUntil = null,
+                        updatedAt = stamp,
+                    )
+                )
+                studyUnitDao.softDeleteUnit(copy.id, stamp)
+            }
             database.eventLogDao().insert(
                 com.example.data.local.entity.EventLogEntity(
                     type = "MERGE", unitId = keepId, detail = absorbIds.joinToString(","),
@@ -382,9 +422,20 @@ class MedReviewRepository(
             // it from timestamps here would use the DEVICE'S CURRENT timezone — a user who travels
             // could silently flip an old first-study into a recall (or vice versa) just by editing a
             // rating. Only legacy UNKNOWN rows fall back to timestamp reconstruction.
-            val reviewNumber = when (log.logType) {
-                "FIRST_STUDY" -> 0
-                "RECALL" -> maxOf(reviewCount, 1)
+            //
+            // ONE seed per history, always. reviewNumber 0 makes MedScheduler.review() re-seed from
+            // Fsrs.initialState, THROWING AWAY every bit of stability accumulated so far. A normal
+            // topic has exactly one FIRST_STUDY log so that is correct — but a MERGED topic carries
+            // one per absorbed copy (merging re-points their logs onto the survivor). Without this
+            // guard, correcting any old rating — or merely editing the merged topic's studied date,
+            // which replays through here too — silently discarded the merge's weighted-average
+            // memory state. Only the chronologically FIRST log can be a seed; a later FIRST_STUDY
+            // row continues the running state as a recall, and gets normalized to RECALL below so
+            // the history self-heals on the first replay after a merge.
+            val isFirstLogOfHistory = log.id == logs.first().id
+            val reviewNumber = when {
+                log.logType == "FIRST_STUDY" -> if (isFirstLogOfHistory) 0 else maxOf(reviewCount, 1)
+                log.logType == "RECALL" -> maxOf(reviewCount, 1)
                 else -> MedScheduler.effectiveReviewNumber(reviewCount)
             }
             // Replay each review under its HISTORICAL conditions (retention target + importance at the

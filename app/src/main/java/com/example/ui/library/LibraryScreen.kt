@@ -151,10 +151,23 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         viewModelScope.launch { repository.softDeleteUnit(unitId) }
     }
 
-    fun mergeUnits(keepId: Long, mergeIds: Collection<Long>, onComplete: () -> Unit = {}) {
+    /**
+     * A merge permanently rewrites the survivor's memory state, so it must run EXACTLY once per
+     * confirmation. `isMerging` guards against a double-tap firing it twice (which used to fold the
+     * absorbed copies' counts in a second time), mirroring the isProcessing pattern the review
+     * screen already uses for ratings. [onResult] reports whether work actually happened, so a
+     * no-op merge can no longer be presented to the user as a success.
+     */
+    var isMerging by mutableStateOf(false)
+        private set
+
+    fun mergeUnits(keepId: Long, mergeIds: Collection<Long>, onResult: (Boolean) -> Unit = {}) {
+        if (isMerging) return
+        isMerging = true
         viewModelScope.launch {
-            repository.mergeUnits(keepId, mergeIds)
-            onComplete()
+            val merged = runCatching { repository.mergeUnits(keepId, mergeIds) }.getOrNull()
+            isMerging = false
+            onResult(merged != null)
         }
     }
 
@@ -257,14 +270,29 @@ fun LibraryScreen(
             },
             confirmButton = {
                 TextButton(
-                    enabled = keepId != null,
+                    enabled = keepId != null && !viewModel.isMerging,
                     onClick = {
                         val keep = keepId ?: return@TextButton
                         val others = selectedIds - keep
-                        viewModel.mergeUnits(keep, others) {
-                            com.example.widget.DueWidgetProvider.updateAll(libContext)
-                            selectedIds = emptySet()
-                            showMergeDialog = false
+                        viewModel.mergeUnits(keep, others) { merged ->
+                            if (merged) {
+                                com.example.widget.DueWidgetProvider.updateAll(libContext)
+                                selectedIds = emptySet()
+                                showMergeDialog = false
+                            } else {
+                                // Nothing was combined (e.g. a copy was deleted from another screen
+                                // meanwhile). Say so instead of closing as if it had worked.
+                                android.widget.Toast.makeText(
+                                    libContext,
+                                    when (strings.languageCode) {
+                                        "fa" -> "ادغام انجام نشد — چیزی تغییر نکرد."
+                                        "de" -> "Zusammenführen fehlgeschlagen — nichts wurde geändert."
+                                        else -> "Merge didn't go through — nothing was changed."
+                                    },
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                                showMergeDialog = false
+                            }
                         }
                     }
                 ) {
