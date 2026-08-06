@@ -236,9 +236,9 @@ fun LibraryScreen(
                 Column {
                     Text(
                         when (strings.languageCode) {
-                            "fa" -> "کدام عنوان بماند؟ تاریخچهٔ مرورِ همهٔ نسخه‌ها روی همین مبحث جمع می‌شود؛ هیچ مروری از بین نمی‌رود. بقیه به «حذف‌شده‌های اخیر» می‌روند و تا ۳۰ روز قابل بازگردانی‌اند."
-                            "de" -> "Welcher Titel soll bleiben? Der Wiederholungsverlauf aller Kopien wird auf diesem Thema zusammengeführt — keine Wiederholung geht verloren. Die übrigen wandern in \"Kürzlich gelöscht\" und bleiben 30 Tage wiederherstellbar."
-                            else -> "Which title should stay? The review history of every copy is combined into it — no review is lost. The others move to Recently deleted and stay restorable for 30 days."
+                            "fa" -> "کدام عنوان بماند؟ تاریخچهٔ مرورِ همهٔ نسخه‌ها روی همین مبحث جمع می‌شود؛ هیچ مروری از بین نمی‌رود. عنوان‌های دیگر تا ۳۰ روز در «حذف‌شده‌های اخیر» می‌مانند و می‌توانی آن‌ها را به‌صورت مبحثی تازه برگردانی (تاریخچه روی مبحث باقی‌مانده می‌ماند)."
+                            "de" -> "Welcher Titel soll bleiben? Der Wiederholungsverlauf aller Kopien wird auf diesem Thema zusammengeführt — keine Wiederholung geht verloren. Die übrigen Titel bleiben 30 Tage in \"Kürzlich gelöscht\" und lassen sich als neues, leeres Thema zurückholen; der Verlauf bleibt beim zusammengeführten Thema."
+                            else -> "Which title should stay? The review history of every copy is combined into it — no review is lost. The other titles stay in Recently deleted for 30 days and can be brought back as a fresh topic; the history itself stays with the merged topic."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

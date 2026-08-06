@@ -468,7 +468,10 @@ class MedReviewRepository(
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.
-            val interval = MedScheduler.fuzzedInterval(outcome.intervalDays, outcome.baseIntervalDays, unit.id, reviewCount)
+            val interval = MedScheduler.fuzzedInterval(
+                outcome.intervalDays, outcome.baseIntervalDays, unit.id, reviewCount,
+                isFirstStudy = reviewNumber == 0,
+            )
             val nextStateName = MedScheduler.masteryState(outcome.state.stability, mem == MemoryRating.Forgot).name
 
             // Stage the corrected log; everything is written atomically in one transaction below.

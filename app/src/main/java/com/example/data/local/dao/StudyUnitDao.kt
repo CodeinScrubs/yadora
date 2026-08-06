@@ -83,7 +83,14 @@ interface StudyUnitDao {
     @Query("UPDATE study_units SET archived = 1, updatedAt = :stamp WHERE id = :id")
     suspend fun archiveUnit(id: Long, stamp: Long)
 
-    @Query("UPDATE study_units SET archived = 0, updatedAt = :stamp WHERE id = :id")
+    /**
+     * Un-archive, but ONLY a row that is not in the recycle bin. Active queries filter on
+     * `archived = 0` and rely on the invariant "soft-deleted implies archived"; un-archiving a
+     * deleted row would break that invariant and produce a zombie — visible and reviewable, yet still
+     * carrying a deletedAt that the 30-day purge would eventually act on. Restoring from the recycle
+     * bin is restoreDeletedUnit's job, which clears deletedAt as well.
+     */
+    @Query("UPDATE study_units SET archived = 0, updatedAt = :stamp WHERE id = :id AND deletedAt IS NULL")
     suspend fun unarchiveUnit(id: Long, stamp: Long)
     
     @Query("SELECT COUNT(*) FROM study_units WHERE archived = 0")

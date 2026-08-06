@@ -301,7 +301,10 @@ class ReviewViewModel(
 
             // Deterministic ±5% fuzz (seeded by unit + prior review count) de-clumps cohorts; same
             // value the preview buttons showed, and the same value the history replay will recompute.
-            val nextInterval = MedScheduler.fuzzedInterval(outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount)
+            val nextInterval = MedScheduler.fuzzedInterval(
+                outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount,
+                isFirstStudy = reviewNumber == 0,
+            )
             val newReviewCount = unit.reviewCount + 1
             val nextState = MedScheduler.masteryState(
                 stability = outcome.state.stability,
@@ -939,6 +942,7 @@ fun ReviewSessionScreen(
                                 previewOutcome.baseIntervalDays,
                                 currentUnit.id,
                                 currentUnit.reviewCount,
+                                isFirstStudy = previewReviewNumber == 0,
                             )
                             val intervalStr = if (finalInterval < 1.0) {
                                 val hrs = (finalInterval * 24).toInt()

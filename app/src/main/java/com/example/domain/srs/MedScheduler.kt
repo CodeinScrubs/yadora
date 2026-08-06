@@ -342,14 +342,27 @@ object MedScheduler {
      * want: someone who adds five topics in one study session would otherwise have all five come due
      * on precisely the same day, forever. Only Hard/Forgot first ratings (base < 3d) stay unfuzzed.
      */
-    fun fuzzedInterval(intervalDays: Double, baseIntervalDays: Double, unitId: Long, reviewCount: Int): Double {
+    fun fuzzedInterval(
+        intervalDays: Double,
+        baseIntervalDays: Double,
+        unitId: Long,
+        reviewCount: Int,
+        // Must be the SAME condition review() used to apply the cap, not "reviewCount == 0": after a
+        // merge the earliest log in a combined history can be a RECALL, so the counter is 0 while the
+        // event is not a first study — clamping that to five days would corrupt a mature schedule.
+        isFirstStudy: Boolean = false,
+    ): Double {
         if (baseIntervalDays < 3.0) return intervalDays
         val rng = kotlin.random.Random(unitId * 31L + reviewCount)
         val factor = 1.0 + rng.nextDouble(-0.05, 0.05)
         // Bounds come from the model's own parameters, not a second hardcoded copy of them: fuzz is
         // the LAST step before a due date is written, so it must not be able to nudge an interval
         // past the ceiling review() just enforced.
-        return (intervalDays * factor).coerceIn(MIN_INTERVAL_DAYS, FsrsParameters().maximumIntervalDays)
+        val fuzzed = (intervalDays * factor).coerceIn(MIN_INTERVAL_DAYS, FsrsParameters().maximumIntervalDays)
+        // FIRST_STUDY_MAX_DAYS is a PROMISE ("your first check-in lands within five days"), not a
+        // suggestion. review() capped the interval before the understanding multiplier, but fuzz runs
+        // afterwards and could add up to +5% on top — turning an advertised 5.0-day ceiling into 5.25.
+        return if (isFirstStudy) fuzzed.coerceAtMost(FIRST_STUDY_MAX_DAYS) else fuzzed
     }
 
     /** Convenience for the rating-button preview; identical math to [review]. */

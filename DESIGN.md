@@ -229,6 +229,54 @@ Explicitly rejected for any version (re-litigated multiple times): first rating 
 mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
 streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
 
+### External code audit + patch (2026-08, `Yadora_suggestions.patch`, against `yadora1.zip`)
+
+A 43-file patch (2,259 insertions / 1,015 deletions). **The patch was NOT applied**: it was built
+against a snapshot predating this session's commits, so applying it would have reverted verified
+fixes; it introduces a schema migration 5→6 (`rowVersion`, `mergedIntoId`, four log columns) and a
+`FOREGROUND_SERVICE_SPECIAL_USE` declaration needing Play Console justification on a live app; it
+rebuilds merge as alias-based, which was decided against; and its own author states Gradle, KSP,
+Room, Compose, Lint and all tests could not be run against it. Findings were cherry-picked and
+verified individually instead.
+
+**Accepted (each independently reproduced first):**
+- *First check-in could exceed its own ceiling.* `review()` capped the interval, but fuzz ran
+  afterwards and added up to +5%, turning an advertised 5.0-day promise into 5.25. Now clamped
+  after fuzz. NOTE: the cap is keyed on an explicit `isFirstStudy` flag, **not** `reviewCount == 0`
+  — after a merge the earliest log in a combined history can be a RECALL, so the counter is 0 while
+  the event is not a first study, and clamping that would corrupt a mature schedule.
+- *Exam countdown was wrong across DST.* `(examMidnight - todayMidnight) / 86_400_000` truncates a
+  167-hour spring-forward week to 6 days. A German user one week out was told six. Now
+  `ChronoUnit.DAYS` between `LocalDate`s. (Iran dropped DST in 2022, so only European users were
+  ever misled.) `ExamCountdownDstTest` pins both transitions — and must set the JVM default zone,
+  since `ExamCountdown` reads `ZoneId.systemDefault()`.
+- *`unarchiveUnit` could resurrect a soft-deleted row* into the active list while it still carried a
+  `deletedAt` the 30-day purge would later act on. Now `AND deletedAt IS NULL`. Not reachable from
+  today's UI, but a latent trap.
+- *Merge dialog copy overstated recoverability.* Restoring an absorbed copy returns the title as a
+  fresh topic; the history stays with the survivor. Copy now says exactly that.
+- *Fuzz determinism rests on `kotlin.random.Random`*, which is not a documented cross-version
+  contract. Rather than change the RNG (which would alter every future schedule and need a policy
+  branch), golden-vector tests now pin its output so a Kotlin upgrade fails loudly here instead of
+  silently rescheduling users.
+
+**Rejected:**
+- *Multiple `FIRST_STUDY` rows corrupt replay* — real, but already fixed this session (see the
+  one-seed-per-history rule in CLAUDE.md). The audit's snapshot predates it.
+- *Lifetime lapse count dominates priority* — already fixed (`MAX_SCORED_LAPSES`).
+- *Optimistic concurrency / `rowVersion`* — the failure needs two live review screens for one topic.
+  Android runs single-task, and `launchSingleTop` now prevents stacking the destination. A schema
+  migration on a shipped DB is not justified by that reachability.
+- *Foreign keys, composite index, enum columns, namespace rename* — all require migrations or churn
+  on a published database; the invariants they would enforce are already held in code and re-checked
+  by restore validation. Namespace is a settled decision.
+- *Alarm as a foreground service so Home cannot silence it* — architecturally correct in the
+  abstract, but it reverses behaviour added in direct response to the user's own report ("it keeps
+  alarming and there is no option to shut it down"), and `FOREGROUND_SERVICE_SPECIAL_USE` invites
+  Play review on a live app. Left as the user's call rather than changed unilaterally.
+- *Merge invariant `nextReviewAt >= lastReviewedAt`* — a merged topic can be due before its latest
+  review, which simply means "overdue". Harmless.
+
 ### External research review (2026-08, "Scientific and Algorithmic Design of Optimal Topic Review")
 
 A long, unusually careful external document. Spot-checks passed: its FSRS-6 curve algebra is
