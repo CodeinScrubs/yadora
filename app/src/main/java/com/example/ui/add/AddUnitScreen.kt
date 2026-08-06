@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.*
 import com.example.ui.i18n.autoDirection
+import com.example.ui.i18n.stateLabel
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -743,8 +744,30 @@ fun AddUnitScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
+                            // Built from localized parts: this line used to be hardcoded English AND
+                            // to print the raw DB enum ("NeedsRelearn") straight through, bypassing
+                            // stateLabel(), so a Persian or German user read internal identifiers.
                             Text(
-                                text = "Interval: ${log.previousIntervalDays}d → ${log.nextIntervalDays}d  |  State: ${log.previousState} → ${log.nextState}",
+                                text = run {
+                                    val fa = strings.languageCode == "fa"
+                                    fun num(v: Double): String {
+                                        val s = String.format(java.util.Locale.US, "%.1f", v)
+                                        return if (fa) com.example.ui.i18n.PersianDate.faDigits(s) else s
+                                    }
+                                    val dayUnit = when (strings.languageCode) {
+                                        "fa" -> "روز"; "de" -> "T"; else -> "d"
+                                    }
+                                    val intervalLabel = when (strings.languageCode) {
+                                        "fa" -> "بازه"; "de" -> "Intervall"; else -> "Interval"
+                                    }
+                                    val stateLabelText = when (strings.languageCode) {
+                                        "fa" -> "وضعیت"; "de" -> "Status"; else -> "State"
+                                    }
+                                    "$intervalLabel: ${num(log.previousIntervalDays)}$dayUnit → " +
+                                        "${num(log.nextIntervalDays)}$dayUnit  |  " +
+                                        "$stateLabelText: ${strings.stateLabel(log.previousState)} → " +
+                                        strings.stateLabel(log.nextState)
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )

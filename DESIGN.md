@@ -229,6 +229,42 @@ Explicitly rejected for any version (re-litigated multiple times): first rating 
 mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
 streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
 
+### Post-publish audit round (2026-08, 14-dimension multi-agent audit)
+
+A full adversarially-verified audit run after launch, prompted by the question "when a
+topic goes overdue, does the scheduler behave correctly whether the user then performs
+well or poorly?"
+
+**Answer: the scheduling math is sound.** Traced with real numbers at 30/90/365 days
+late. A large stability jump on a late-but-successful recall is canonical FSRS-5 (a
+successful recall after a long gap IS evidence of durability), and it is capped at 365
+days in every path — live, preview and replay all funnel through the same functions.
+Forgot-while-overdue correctly relearns tomorrow regardless of lateness. Backlog
+redistribution spreads a 40-item pile sensibly, and the overdue UI tone is already calm
+("You were away", warm terracotta, never error-red). No change needed.
+
+**What the audit actually caught** was elsewhere, and is fixed: the merge feature could
+silently corrupt FSRS state (see the merge rules in CLAUDE.md), a restored backup could
+permanently brick reviewing via an unvalidated `desired_retention`, the reliability
+layers could override a user's snooze, transient reminder state leaked across devices
+via cloud backup, and five background paths crashed the whole app on any exception.
+
+**Rejected as wrong or not worth it:**
+- *Composite `(archived, nextReviewAt)` index* — needs a migration on a published DB for
+  a table of at most a few thousand rows, where the existing `nextReviewAt` index already
+  carries the query. Cost exceeds benefit.
+- *`ExactAlarmPermissionReceiver` `exported="false"` "never fires"* — false. That is the
+  documented pattern for `SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED`; the system
+  targets the package directly. `BootReceiver` needs `exported="true"` only because
+  `BOOT_COMPLETED` is a true broadcast.
+- *"First-study intervals should never be fuzzed"* — the behaviour is right and the
+  comment was wrong; see CLAUDE.md.
+
+**Coverage gap (not a finding):** the run hit account usage limits, so the `datetime`
+dimension and five cross-cutting/product-completeness sweeps never executed. Worth a
+follow-up, particularly: does Progress/analytics let a user see whether the scheduler's
+overdue handling is working well *for them*?
+
 ### Pre-publish audit round (2026-07, `publish-app-yadora.txt`)
 
 An external "think outside the box" review before keystore creation. Adjudication:

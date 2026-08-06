@@ -351,11 +351,11 @@ fun LibraryScreen(
     }
 
     if (showBatchDeleteConfirm) {
-        val batchDeleteTitle = if (isFarsi) "بایگانی مباحث انتخاب شده؟" else "Archive Selected Topics?"
-        val batchDeleteConfirmText = if (isFarsi) {
-            "آیا مطمئن هستید که می‌خواهید ${com.example.ui.i18n.PersianDate.faDigits(selectedIds.size)} مبحث انتخاب شده را بایگانی کنید؟"
-        } else {
-            "Are you sure you want to archive the ${selectedIds.size} selected topics?"
+        val batchDeleteTitle = when (strings.languageCode) { "fa" -> "بایگانی مباحث انتخاب شده؟"; "de" -> "Ausgewählte Themen archivieren?"; else -> "Archive Selected Topics?" }
+        val batchDeleteConfirmText = when (strings.languageCode) {
+            "fa" -> "آیا مطمئن هستید که می‌خواهید ${com.example.ui.i18n.PersianDate.faDigits(selectedIds.size)} مبحث انتخاب شده را بایگانی کنید؟"
+            "de" -> "Möchtest du die ${selectedIds.size} ausgewählten Themen wirklich archivieren?"
+            else -> "Are you sure you want to archive the ${selectedIds.size} selected topics?"
         }
         AlertDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
@@ -390,7 +390,11 @@ fun LibraryScreen(
                 TopAppBar(
                     title = {
                         Text(
-                            text = if (isFarsi) "${com.example.ui.i18n.PersianDate.faDigits(selectedIds.size)} انتخاب شده" else "${selectedIds.size} Selected",
+                            text = when (strings.languageCode) {
+                                "fa" -> "${com.example.ui.i18n.PersianDate.faDigits(selectedIds.size)} انتخاب شده"
+                                "de" -> "${selectedIds.size} ausgewählt"
+                                else -> "${selectedIds.size} Selected"
+                            },
                             fontWeight = FontWeight.Bold
                         )
                     },
@@ -557,17 +561,17 @@ fun LibraryScreen(
                 FilterChip(
                     selected = showArchived,
                     onClick = { viewModel.showArchived.value = !showArchived },
-                    label = { Text(if (isFarsi) "بایگانی" else "Archived") }
+                    label = { Text(when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archiviert"; else -> "Archived" }) }
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 var sortExpanded by remember { mutableStateOf(false) }
                 Box {
-                    TextButton(onClick = { sortExpanded = true }) { Text(if (isFarsi) "مرتب‌سازی" else "Sort") }
+                    TextButton(onClick = { sortExpanded = true }) { Text(when (strings.languageCode) { "fa" -> "مرتب‌سازی"; "de" -> "Sortieren"; else -> "Sort" }) }
                     DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
                         listOf(
-                            LibrarySort.DUE to (if (isFarsi) "موعد" else "Due date"),
-                            LibrarySort.TITLE to (if (isFarsi) "عنوان" else "Title"),
-                            LibrarySort.WEAKNESS to (if (isFarsi) "ضعف" else "Weakness")
+                            LibrarySort.DUE to (when (strings.languageCode) { "fa" -> "موعد"; "de" -> "Fälligkeit"; else -> "Due date" }),
+                            LibrarySort.TITLE to (when (strings.languageCode) { "fa" -> "عنوان"; "de" -> "Titel"; else -> "Title" }),
+                            LibrarySort.WEAKNESS to (when (strings.languageCode) { "fa" -> "ضعف"; "de" -> "Schwäche"; else -> "Weakness" })
                         ).forEach { (s, label) ->
                             DropdownMenuItem(text = { Text(label) }, onClick = { viewModel.setSort(s); sortExpanded = false })
                         }
@@ -583,10 +587,10 @@ fun LibraryScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 listOf(
-                    LibraryFilter.ALL to (if (isFarsi) "همه" else "All"),
-                    LibraryFilter.DUE to (if (isFarsi) "موعد رسیده" else "Due"),
-                    LibraryFilter.WEAK to (if (isFarsi) "ضعیف" else "Weak"),
-                    LibraryFilter.HIGH_YIELD to (if (isFarsi) "پربازده" else "High-yield")
+                    LibraryFilter.ALL to (when (strings.languageCode) { "fa" -> "همه"; "de" -> "Alle"; else -> "All" }),
+                    LibraryFilter.DUE to (when (strings.languageCode) { "fa" -> "موعد رسیده"; "de" -> "Fällig"; else -> "Due" }),
+                    LibraryFilter.WEAK to (when (strings.languageCode) { "fa" -> "ضعیف"; "de" -> "Schwach"; else -> "Weak" }),
+                    LibraryFilter.HIGH_YIELD to (when (strings.languageCode) { "fa" -> "پربازده"; "de" -> "Wichtig"; else -> "High-yield" })
                 ).forEach { (f, label) ->
                     FilterChip(
                         selected = filter == f,
@@ -628,7 +632,7 @@ fun LibraryScreen(
                                 }
                                 showDeleteConfirm = false
                             },
-                            title = { Text(if (showArchived) (if (isFarsi) "بازگردانی مبحث" else "Restore Topic") else (if (isFarsi) "بایگانی مبحث" else "Archive Topic")) },
+                            title = { Text(if (showArchived) when (strings.languageCode) { "fa" -> "بازگردانی مبحث"; "de" -> "Thema wiederherstellen"; else -> "Restore Topic" } else when (strings.languageCode) { "fa" -> "بایگانی مبحث"; "de" -> "Thema archivieren"; else -> "Archive Topic" }) },
                             text = { Text((if (showArchived) strings.restoreTopicConfirm else strings.archiveTopicConfirm).format(unit.title)) },
                             confirmButton = {
                                 TextButton(
@@ -646,7 +650,7 @@ fun LibraryScreen(
                                     colors = ButtonDefaults.textButtonColors(contentColor = if (showArchived) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                                 ) {
                                     // Archive is recoverable — the button must never say "Delete".
-                                    Text(if (showArchived) (if (isFarsi) "بازگردانی" else "Restore") else (if (isFarsi) "بایگانی" else "Archive"))
+                                    Text(if (showArchived) when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" } else when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archivieren"; else -> "Archive" })
                                 }
                             },
                             dismissButton = {
@@ -764,7 +768,7 @@ fun LibraryScreen(
                         ) {
                             Text(
                                 del.title,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodyMedium.autoDirection(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f),
                                 maxLines = 1

@@ -559,7 +559,7 @@ fun ReviewSessionScreen(
                 ) {
                     val isFarsi = strings.languageCode == "fa"
                     TextButton(onClick = onFinish) {
-                        Text(if (isFarsi) "پایان" else "Done")
+                        Text(strings.done)
                     }
                     
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -665,8 +665,11 @@ fun ReviewSessionScreen(
                                 Text(
                                     text = when {
                                         isFreshFirstStudy && strings.languageCode == "fa" -> "مطالعه‌ی اول"
+                                        isFreshFirstStudy && strings.languageCode == "de" -> "Erstes Lernen"
                                         isFreshFirstStudy -> "First study"
                                         strings.languageCode == "fa" -> "مطالعه‌ی ${num(repNum)}‌اُم"
+                                        // German ordinals are just "N." — no irregular suffixes to get wrong.
+                                        strings.languageCode == "de" -> "$repNum. Lerneinheit"
                                         else -> "${ordinalEn(repNum)} study"
                                     },
                                     style = MaterialTheme.typography.labelSmall,

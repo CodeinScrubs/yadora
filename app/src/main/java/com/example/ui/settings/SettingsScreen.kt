@@ -813,24 +813,24 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (isFarsi) "راهنمای متد تکرار با فاصله" else "Spaced Repetition Guide",
+                                    text = when (language) { "fa" -> "راهنمای متد تکرار با فاصله"; "de" -> "Leitfaden: Verteiltes Lernen"; else -> "Spaced Repetition Guide" },
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
                             TextButton(onClick = { expandedGuide = !expandedGuide }) {
-                                Text(if (expandedGuide) (if (isFarsi) "بستن" else "Hide") else (if (isFarsi) "مشاهده" else "Show"))
+                                Text(if (expandedGuide) when (language) { "fa" -> "بستن"; "de" -> "Ausblenden"; else -> "Hide" } else when (language) { "fa" -> "مشاهده"; "de" -> "Anzeigen"; else -> "Show" })
                             }
                         }
                         
                         if (expandedGuide) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = if (isFarsi) {
-                                    "تکرار با فاصله زمان هر مرور را طوری تخمین می‌زند که یادآوری‌ات نزدیک هدف انتخابی‌ات بماند — با مطالعهٔ کمتر، ماندگاری بیشتر. چند نکته:"
-                                } else {
-                                    "Spaced repetition estimates review times to keep your recall near your chosen target - more retention for less total study. A few tips:"
+                                text = when (language) {
+                                    "fa" -> "تکرار با فاصله زمان هر مرور را طوری تخمین می‌زند که یادآوری‌ات نزدیک هدف انتخابی‌ات بماند — با مطالعهٔ کمتر، ماندگاری بیشتر. چند نکته:"
+                                    "de" -> "Verteiltes Lernen schätzt den Zeitpunkt jeder Wiederholung so, dass dein Abruf nahe an deinem gewählten Ziel bleibt — mehr Behalten bei weniger Lernzeit. Ein paar Tipps:"
+                                    else -> "Spaced repetition estimates review times to keep your recall near your chosen target - more retention for less total study. A few tips:"
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -845,17 +845,17 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = if (isFarsi) "۱. ابتدا یادآوری فعال کنید" else "1. Active Recall First",
+                                        text = when (language) { "fa" -> "۱. ابتدا یادآوری فعال کنید"; "de" -> "1. Erst aktiv abrufen"; else -> "1. Active Recall First" },
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isFarsi) {
-                                            "قبل از کلیک روی 'نمایش یادداشت‌ها'، سعی کنید پاسخ را از ذهن خود بیرون بکشید. تقلا برای بازیابی اطلاعات، ارتباطات سیناپسی مغز را تقویت می‌کند."
-                                        } else {
-                                            "Force yourself to retrieve the answer from memory before tapping 'Show Notes'. The active struggle of retrieval is what forms robust memories."
+                                        text = when (language) {
+                                            "fa" -> "قبل از کلیک روی 'نمایش یادداشت‌ها'، سعی کنید پاسخ را از ذهن خود بیرون بکشید. تقلا برای بازیابی اطلاعات، ارتباطات سیناپسی مغز را تقویت می‌کند."
+                                            "de" -> "Ruf die Antwort erst aus dem Gedächtnis ab, bevor du auf „Notizen anzeigen“ tippst. Genau diese Anstrengung beim Abrufen bildet belastbare Erinnerungen."
+                                            else -> "Force yourself to retrieve the answer from memory before tapping 'Show Notes'. The active struggle of retrieval is what forms robust memories."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -871,17 +871,17 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = if (isFarsi) "۲. درجه‌بندی صادقانه" else "2. Match Ratings Honestly",
+                                        text = when (language) { "fa" -> "۲. درجه‌بندی صادقانه"; "de" -> "2. Ehrlich bewerten"; else -> "2. Match Ratings Honestly" },
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isFarsi) {
-                                            "• فراموشی: مبحث فوراً فردا یا زودتر تکرار خواهد شد.\n• سخت: مکرراً و با فواصل کوتاه‌تر مرور می‌شود.\n• خوب: حالت ایده‌آل؛ فواصل افزایش می‌یابند.\n• آسان: فواصل بسیار طولانی خواهند شد."
-                                        } else {
-                                            "• Forgot (Fail): Reschedules unit immediately for tomorrow to relearn.\n• Hard: Limits interval growth because retrieval required high effort.\n• Good: The perfect baseline; increases intervals optimally.\n• Easy: Extends interval significantly into the future."
+                                        text = when (language) {
+                                            "fa" -> "• فراموشی: مبحث فوراً فردا یا زودتر تکرار خواهد شد.\n• سخت: مکرراً و با فواصل کوتاه‌تر مرور می‌شود.\n• خوب: حالت ایده‌آل؛ فواصل افزایش می‌یابند.\n• آسان: فواصل بسیار طولانی خواهند شد."
+                                            "de" -> "• Vergessen: Das Thema kommt gleich morgen zum Neulernen zurück.\n• Schwer: Der Abstand wächst langsamer, weil der Abruf viel Mühe gekostet hat.\n• Gut: Der ideale Normalfall; die Abstände wachsen optimal.\n• Leicht: Der Abstand wird deutlich länger."
+                                            else -> "• Forgot: Brings the topic back tomorrow to relearn.\n• Hard: Limits interval growth because retrieval required high effort.\n• Good: The perfect baseline; increases intervals optimally.\n• Easy: Extends interval significantly into the future."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -897,17 +897,17 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = if (isFarsi) "۳. مقابله با خستگی مباحث عقب‌افتاده" else "3. Relieve Burnout & Backlogs",
+                                        text = when (language) { "fa" -> "۳. مقابله با خستگی مباحث عقب‌افتاده"; "de" -> "3. Rückstand abbauen, ohne auszubrennen"; else -> "3. Relieve Burnout & Backlogs" },
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isFarsi) {
-                                            "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر انبوهی از مرورهای عقب‌افتاده دارید، از دکمه 'توزیع مجدد مباحث' در صفحه امروز استفاده کنید تا مرورها را در ۳ روز آینده پخش کند."
-                                        } else {
-                                            "Serious learning is a marathon, not a sprint. If you fall behind, use the 'Spread Out Overdue Topics' feature on the Today screen to redistribute your backlog evenly over 3 days."
+                                        text = when (language) {
+                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر انبوهی از مرورهای عقب‌افتاده دارید، از دکمه 'توزیع مجدد مباحث' در صفحه امروز استفاده کنید تا مرورها را در ۳ روز آینده پخش کند."
+                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Wenn du in Rückstand gerätst, verteile ihn mit „Überfällige Themen verteilen“ auf der Heute-Seite gleichmäßig über 3 Tage."
+                                            else -> "Serious learning is a marathon, not a sprint. If you fall behind, use the 'Spread Out Overdue Topics' feature on the Today screen to redistribute your backlog evenly over 3 days."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant

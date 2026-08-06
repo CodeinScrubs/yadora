@@ -39,6 +39,12 @@ object ExamCountdown {
                 "de" -> "$name ist heute"
                 else -> "$name is today"
             }
+            // English and German inflect the noun at exactly one; Persian does not ("۱ روز" is correct).
+            days == 1L -> when (languageCode) {
+                "fa" -> "${n(days)} روز تا $name"
+                "de" -> "Noch ${n(days)} Tag bis $name"
+                else -> "${n(days)} day until $name"
+            }
             else -> when (languageCode) {
                 "fa" -> "${n(days)} روز تا $name"
                 "de" -> "Noch ${n(days)} Tage bis $name"

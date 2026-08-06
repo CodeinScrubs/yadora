@@ -66,7 +66,10 @@ fun JalaliDatePickerDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                "${PersianDate.faDigits(day)} ${PersianDate.monthName(month)} ${PersianDate.faDigits(year)}",
+                // Calendar format is user-selectable INDEPENDENTLY of UI language, so this dialog can
+                // appear on an English or German screen. rtlIsolate keeps the date reading
+                // day → month → year there too, exactly like every other Jalali date in the app.
+                PersianDate.rtlIsolate("$day ${PersianDate.monthName(month)} $year"),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
@@ -80,11 +83,15 @@ fun JalaliDatePickerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = { year--; clampDay() }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "سال قبل")
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "سال قبل"; "de" -> "Vorheriges Jahr"; else -> "Previous year" })
                     }
-                    Text(PersianDate.faDigits(year), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (com.example.ui.i18n.LocalStrings.current.languageCode == "fa")
+                            PersianDate.faDigits(year) else year.toString(),
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    )
                     IconButton(onClick = { year++; clampDay() }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "سال بعد")
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "سال بعد"; "de" -> "Nächstes Jahr"; else -> "Next year" })
                     }
                 }
                 // Month stepper.
@@ -94,11 +101,11 @@ fun JalaliDatePickerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = { if (month == 1) { month = 12; year-- } else month--; clampDay() }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "ماه قبل")
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "ماه قبل"; "de" -> "Vorheriger Monat"; else -> "Previous month" })
                     }
                     Text(PersianDate.monthName(month), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     IconButton(onClick = { if (month == 12) { month = 1; year++ } else month++; clampDay() }) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "ماه بعد")
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "ماه بعد"; "de" -> "Nächster Monat"; else -> "Next month" })
                     }
                 }
                 // Weekday header, Saturday-first.

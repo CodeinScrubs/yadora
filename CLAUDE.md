@@ -85,6 +85,28 @@ These were decided deliberately. Re-suggesting them wastes a session:
   no-cliff property. A rated topic's schedule no longer depends on `studiedAt` at
   all; an UNRATED topic is still due on its study date, and editing that date
   moves the due date.
+- **One memory seed per history.** `Fsrs.initialState` may only be re-applied for the
+  chronologically FIRST review log of a topic. A merged topic legitimately carries
+  several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each
+  as a seed silently reset the merged FSRS state on any later rating correction or
+  study-date edit. `editReviewRating` normalizes the extra rows to `RECALL` as it
+  replays, so histories merged by older builds self-heal.
+- **`priorityScore`'s lapse term is capped** at `MAX_SCORED_LAPSES` (5). `lapseCount`
+  only ever grows, so uncapped it eventually outweighed high-yield (100) and let an
+  old struggle permanently outrank a genuinely important topic. The overdue term is
+  deliberately left uncapped so nothing can starve.
+- **Retention is clamped on read** (`MedScheduler.safeRetention`), not just on write.
+  Prefs store a `Float` and FSRS consumes a `Double`, so even a value clamped to
+  exactly `0.99` reads back fractionally outside the band `FsrsParameters` accepts —
+  and that `require()` throws. A bad setting must degrade to a sane schedule, never
+  brick reviewing.
+- **First-study intervals ARE fuzzed** (Good/Easy first ratings clear the 3-day
+  threshold). This is intentional: it stops five topics added in one session coming
+  due together forever. Only the doc comment claiming otherwise was wrong.
+- **Transient reminder state lives in its own `medreview_transient` prefs file**,
+  excluded from cloud backup and device transfer. Android backs up whole prefs FILES,
+  so `last_notif_shown_at` / `reminder_snoozed_until` / `reminder_next_nudge_at`
+  otherwise travel to a new phone and silence its first reminders.
 - **Policy versioning**: bump `MedScheduler.POLICY_VERSION` whenever any
   product-layer number changes (understanding factors, relearn step, caps,
   fuzz, high-yield retention). Logs store the version + applied factor;

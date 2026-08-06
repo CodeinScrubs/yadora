@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -272,8 +273,12 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
 
                 item {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        StatCard(title = strings.totalTopics, value = total.toString(), modifier = Modifier.weight(1f))
-                        StatCard(title = strings.past7days, value = reviews7d.toString(), modifier = Modifier.weight(1f))
+                        // The rest of this screen converts its numerals; these two headline cards
+                        // were the odd ones out, mixing 0-9 with ۰-۹ in a single view.
+                        val faDigits = strings.languageCode == "fa"
+                        fun num(v: Int) = if (faDigits) com.example.ui.i18n.PersianDate.faDigits(v) else v.toString()
+                        StatCard(title = strings.totalTopics, value = num(total), modifier = Modifier.weight(1f))
+                        StatCard(title = strings.past7days, value = num(reviews7d), modifier = Modifier.weight(1f))
                     }
                 }
 
@@ -649,7 +654,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                             Text(
                                                 text = unit.title,
-                                                style = MaterialTheme.typography.bodyMedium,
+                                                style = MaterialTheme.typography.bodyMedium.autoDirection(),
                                                 fontWeight = FontWeight.SemiBold,
                                                 maxLines = 1,
                                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
