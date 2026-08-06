@@ -277,7 +277,12 @@ class ReviewViewModel(
         viewModelScope.launch {
           try {
             // Reload from the DB so edits made on the Edit screen aren't clobbered by a stale copy.
-            val unit = repository.getUnitById(currentId) ?: return@launch
+            val loaded = repository.getUnitById(currentId) ?: return@launch
+            // Carry the topic onto the current memory model BEFORE anything schedules from it. An
+            // FSRS-5 stability is not an FSRS-6 stability, so the state is rebuilt by replaying this
+            // topic's real rating history through FSRS-6. No-op once it is already on the new model,
+            // and it never touches the dates — only the latent state moves.
+            val unit = repository.projectOntoCurrentModel(loaded)
 
             val now = System.currentTimeMillis()
             // Clamped: a future-dated topic reviewed early would otherwise log NEGATIVE elapsed days
@@ -297,6 +302,7 @@ class ReviewViewModel(
                 understanding = understandingRating,
                 highYield = unit.highYield,
                 reviewNumber = reviewNumber,
+                model = MedScheduler.CURRENT_MODEL,
             )
 
             // Deterministic ±5% fuzz (seeded by unit + prior review count) de-clumps cohorts; same
@@ -311,12 +317,22 @@ class ReviewViewModel(
                 justForgot = memoryRating == MemoryRating.Forgot,
             )
 
+            // TWO CLOCKS (DB v6). The memory model's date is preserved exactly in modelDueAt; a weak
+            // understanding adds a SHORT repair deadline instead of scaling that prediction down. The
+            // topic surfaces on whichever comes first, so a 250-day memory prediction with Partial
+            // understanding is still a 250-day prediction — the user just sees it again in 4 days.
+            val memoryDueAt = now + (nextInterval * 86400000).toLong()
+            val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
+            val effectiveDueAt = listOfNotNull(memoryDueAt, understandingDueAt).min()
+
             val updatedUnit = unit.copy(
                 lastReviewedAt = now,
-                nextReviewAt = now + (nextInterval * 86400000).toLong(),
+                nextReviewAt = effectiveDueAt,
                 // A real review resets the honest-scheduling pair (DB v5): the model's date IS the
                 // effective date again, and any earlier user deferral is spent.
-                modelDueAt = now + (nextInterval * 86400000).toLong(),
+                modelDueAt = memoryDueAt,
+                understandingDueAt = understandingDueAt,
+                memoryModel = MedScheduler.CURRENT_MODEL.id,
                 deferredUntil = null,
                 currentIntervalDays = nextInterval,
                 reviewCount = newReviewCount,
@@ -936,6 +952,7 @@ fun ReviewSessionScreen(
                                 understanding = rating,
                                 highYield = currentUnit.highYield,
                                 reviewNumber = previewReviewNumber,
+                                model = MedScheduler.CURRENT_MODEL,
                             )
                             val finalInterval = MedScheduler.fuzzedInterval(
                                 previewOutcome.intervalDays,

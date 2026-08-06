@@ -206,8 +206,11 @@ object MedScheduler {
         return if (highYield) (base + 0.03).coerceAtMost(0.97) else base
     }
 
-    /** Version tag written into every review log so exported data is analyzable across upgrades. */
-    const val SCHEDULER_VERSION = "FSRS-5"
+    /**
+     * Version tag written into every NEW review log. Old logs keep the tag they were written with,
+     * which is exactly what lets history replay under the model that produced it.
+     */
+    const val SCHEDULER_VERSION = "FSRS-6"
 
     /**
      * Version of the YADORA POLICY BUNDLE around the memory model — everything product-layer:
@@ -216,7 +219,7 @@ object MedScheduler {
      * whenever ANY of those numbers changes; each review log stores the version + the understanding
      * factor actually applied, so history replays under its original policy instead of the new one.
      */
-    const val POLICY_VERSION = "YADORA-3"
+    const val POLICY_VERSION = "YADORA-4"
 
     /**
      * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.
@@ -429,6 +432,28 @@ object MedScheduler {
             baseIntervalDays = baseInterval,
             remediationDays = remediationDays(memoryRating, understanding),
         )
+    }
+
+    /** The model that schedules NEW reviews. Older states are projected onto it before they are used. */
+    val CURRENT_MODEL = MemoryModel.FSRS_6
+
+    /**
+     * One step of a history projection: rebuild a memory state under the CURRENT model from a past
+     * rating. `null` means "this is the first graded rating", which seeds rather than transitions.
+     *
+     * Used to carry a topic from FSRS-5 onto FSRS-6 by replaying what the user actually did, since
+     * the stored stability itself is not portable between models.
+     */
+    fun projectStep(
+        previous: MemoryState?,
+        elapsedDays: Double,
+        memoryRating: MemoryRating,
+        highYield: Boolean,
+    ): MemoryState {
+        val p = params6(highYield)
+        val grade = memoryRating.toGrade()
+        return if (previous == null) Fsrs6.initialState(grade, p)
+        else Fsrs6.nextState(previous, elapsedDays, grade, p)
     }
 
     /** FSRS-6 parameters, sharing the same clamped retention policy as the FSRS-5 path. */

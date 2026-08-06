@@ -93,6 +93,31 @@ These were decided deliberately. Re-suggesting them wastes a session:
   for the product layer. If you change `Fsrs.kt` or `MedScheduler.kt`, these two are the
   tests that matter: a wrong exponent would not crash and would not fail a relational test,
   it would silently mis-time every review for years.
+- **The live memory model is FSRS-6** (`MedScheduler.CURRENT_MODEL`), policy `YADORA-4`.
+  FSRS-5 is KEPT, frozen, in `Fsrs.kt` — a stored stability is only meaningful together with
+  the model that produced it, so old history must keep replaying under FSRS-5. Never delete it.
+  - `study_units.memoryModel` says which model owns a row's state; `ReviewLogEntity
+    .schedulerVersion` says which produced each log.
+  - `MedReviewRepository.projectOntoCurrentModel` carries a topic across by REPLAYING its real
+    rating history through FSRS-6 — the stored FSRS-5 stability is not portable. It runs lazily
+    at the next review (so upgrading moves nothing), is idempotent, skips re-encoding
+    exposures, and deliberately does NOT recompute the schedule: the date the user was already
+    promised is kept, only the latent state moves.
+  - `editReviewRating` replays the WHOLE history under the topic's CURRENT model, not per-log.
+    Mixing models mid-stream would yield a state belonging to neither, and this keeps replay
+    consistent with the projection. A topic still on FSRS-5 replays under FSRS-5.
+  - **`ReplayEqualsLiveTest` must mirror the real commit path** (project + `CURRENT_MODEL`).
+    When FSRS-6 went live it kept passing while production disagreed with itself, because the
+    test's own helper still defaulted to FSRS-5. If you change the commit path, change it there.
+- **Understanding uses a SECOND CLOCK, not a multiplier** (DB v6). `modelDueAt` holds the pure
+  memory prediction; `understandingDueAt` holds a short repair deadline (Confused or any lapse:
+  1 day; Partial: 2/3/4 by recall strength; Clear: none); `nextReviewAt` is the earlier of the
+  two. The old ×0.8/×0.9 was incoherent at long intervals — a topic the user said they did NOT
+  understand still vanished for 80 days after a 100-day prediction. FSRS-5 keeps the multiplier
+  so legacy replay reproduces what users actually experienced.
+- **YADORA-3 damping is superseded on the live path.** FSRS-6's own refit puts S₀(Easy) at 8.30
+  versus FSRS-5's 15.69, so the hand-chosen shrink is no longer needed — a fitted value replaced
+  it. The damping code stays for FSRS-5 replay only; applying both would double-count.
 - **WHAT THE TESTS DO AND DO NOT PROVE.** `FsrsSpecComplianceTest` and
   `SchedulerInvariantsTest` establish **implementation validity**: the code computes the
   FSRS-5 equations correctly, intervals stay bounded, replay is deterministic, invariants

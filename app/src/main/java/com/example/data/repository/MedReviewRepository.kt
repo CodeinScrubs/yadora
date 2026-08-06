@@ -12,6 +12,7 @@ import com.example.domain.model.MemoryRating
 import com.example.domain.model.StudyState
 import com.example.domain.model.UnderstandingRating
 import com.example.domain.srs.MedScheduler
+import com.example.domain.srs.MemoryState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
@@ -97,6 +98,66 @@ class MedReviewRepository(
                 studyUnitDao.updateUnit(unit.copy(nextReviewAt = unit.studiedAt, modelDueAt = unit.studiedAt))
             }
         }
+    }
+
+    /**
+     * Bring a topic onto the CURRENT memory model before its next review.
+     *
+     * An FSRS-5 stability cannot simply be relabelled as an FSRS-6 stability: the two models fit
+     * different curves, so the same number means different things and handing one to the other would
+     * silently corrupt the schedule. What IS portable is the user's actual history — the ratings and
+     * the times they happened — so the state is REBUILT by replaying that history through FSRS-6.
+     *
+     * Deliberately lazy: this runs at the moment of the next review rather than during migration, so
+     * upgrading the app moves nothing, and a topic the user never touches again is never rewritten.
+     * Idempotent — once `memoryModel` is FSRS-6 it returns the row unchanged.
+     *
+     * Re-encoding exposures (a later FIRST_STUDY row, only possible after a merge) are skipped, for
+     * the same reason the FSRS-5 replay skips them: a re-study is not a retrieval and must not earn
+     * recall credit. An unrated topic has nothing to project, so it just adopts the new model id.
+     */
+    suspend fun projectOntoCurrentModel(unit: StudyUnitEntity): StudyUnitEntity {
+        if (MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL) return unit
+
+        val logs = reviewLogDao.getLogsForUnit(unit.id).first()
+            .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+        val graded = logs.filterIndexed { index, log -> index == 0 || log.logType != "FIRST_STUDY" }
+
+        if (graded.isEmpty()) {
+            // Never rated: no evidence to replay, so only the model label changes.
+            return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id, updatedAt = System.currentTimeMillis())
+        }
+
+        var state: MemoryState? = null
+        var prevTime = unit.studiedAt
+        var lapses = 0
+        var reviews = 0
+        for (log in graded) {
+            val grade = runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrNull() ?: continue
+            val elapsed = ((log.reviewedAt - prevTime) / 86400000.0).coerceAtLeast(0.0)
+            val highYield = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
+            state = MedScheduler.projectStep(state, elapsed, grade, highYield)
+            if (grade == MemoryRating.Forgot) lapses++
+            reviews++
+            prevTime = log.reviewedAt
+        }
+        val projected = state ?: return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id)
+
+        // The SCHEDULE is not recomputed here. The user was promised a date by the old model and that
+        // promise is kept; only the latent state moves onto the new model, and the next real review
+        // schedules from it. Counts are re-derived from the same evidence so they cannot drift.
+        return unit.copy(
+            stability = projected.stability,
+            difficulty = projected.difficulty,
+            reviewCount = reviews,
+            lapseCount = lapses,
+            state = MedScheduler.masteryState(
+                projected.stability,
+                justForgot = graded.lastOrNull()?.memoryRating == MemoryRating.Forgot.name,
+            ).name,
+            memoryModel = MedScheduler.CURRENT_MODEL.id,
+            updatedAt = System.currentTimeMillis(),
+        )
     }
 
     suspend fun archiveUnit(id: Long) {
@@ -392,6 +453,8 @@ class MedReviewRepository(
         var lastStability = stability
         var lastDifficulty = difficulty
         var lastStateName = unit.state
+        val replayModel = MedScheduler.MemoryModel.of(unit.memoryModel)
+        var lastRemediationDays: Double? = null
         val updatedLogs = ArrayList<ReviewLogEntity>(logs.size)
 
         for (log in logs) {
@@ -495,6 +558,12 @@ class MedReviewRepository(
                 // YADORA-3 damps the first-study seed; older logs must replay undamped so a rating
                 // correction reproduces the schedule the user actually had.
                 dampFirstStudyPrior = MedScheduler.dampsFirstStudyPrior(policyForThisLog),
+                // Replay the WHOLE history under the model this topic currently sits on, not
+                // per-log. Mixing models mid-stream would produce a state belonging to neither, and
+                // this keeps the replay consistent with projectOntoCurrentModel, which rebuilds the
+                // same history the same way. A topic still on FSRS-5 replays under FSRS-5, so a
+                // rating correction there still reproduces the schedule the user actually had.
+                model = replayModel,
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.
@@ -528,6 +597,7 @@ class MedReviewRepository(
                 )
             )
 
+            lastRemediationDays = outcome.remediationDays
             stability = outcome.state.stability
             difficulty = outcome.state.difficulty
             if (mem == MemoryRating.Forgot) lapseCount++
@@ -552,9 +622,16 @@ class MedReviewRepository(
             lapseCount = lapseCount,
             currentIntervalDays = lastInterval,
             lastReviewedAt = lastReviewedAt,
-            nextReviewAt = lastReviewedAt + (lastInterval * 86400000).toLong(),
+            // Two clocks (DB v6): the replay recomputes BOTH, and the topic surfaces on whichever
+            // is earlier. Under FSRS-5 remediation is always null, so this collapses to the memory
+            // date and legacy replay is unchanged.
+            nextReviewAt = listOfNotNull(
+                lastReviewedAt + (lastInterval * 86400000).toLong(),
+                lastRemediationDays?.let { lastReviewedAt + (it * 86400000).toLong() },
+            ).min(),
             // A replay recomputes the MODEL's truth, and any prior user deferral is superseded by it.
             modelDueAt = lastReviewedAt + (lastInterval * 86400000).toLong(),
+            understandingDueAt = lastRemediationDays?.let { lastReviewedAt + (it * 86400000).toLong() },
             deferredUntil = null,
             updatedAt = System.currentTimeMillis(),
         )

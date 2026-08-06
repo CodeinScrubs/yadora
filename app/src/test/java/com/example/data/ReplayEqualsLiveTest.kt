@@ -49,20 +49,30 @@ class ReplayEqualsLiveTest {
 
     /** Mirrors the live commit in ReviewSessionViewModel.rateCurrentUnit (same math, same writes). */
     private fun liveReview(unitId: Long, now: Long, memory: MemoryRating, understanding: UnderstandingRating): Long = runBlocking {
-        val unit = repo.getUnitById(unitId)!!
+        // Must mirror the REAL commit path, including projecting onto the current memory model and
+        // selecting it explicitly. Without this the test would compare an FSRS-5 "live" review with an
+        // FSRS-6 replay (or vice versa) and pass while production disagreed with itself.
+        val unit = repo.projectOntoCurrentModel(repo.getUnitById(unitId)!!)
         val elapsedDays = (now - (unit.lastReviewedAt ?: unit.studiedAt)) / 86400000.0
         val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
         val outcome = MedScheduler.review(
             stability = unit.stability, difficulty = unit.difficulty, elapsedDays = elapsedDays,
             memoryRating = memory, understanding = understanding, highYield = unit.highYield,
-            reviewNumber = reviewNumber,
+            reviewNumber = reviewNumber, model = MedScheduler.CURRENT_MODEL,
         )
-        val nextInterval = MedScheduler.fuzzedInterval(outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount)
+        val nextInterval = MedScheduler.fuzzedInterval(
+            outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount,
+            isFirstStudy = reviewNumber == 0,
+        )
+        val memoryDueAt = now + (nextInterval * 86400000).toLong()
+        val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
         val nextState = MedScheduler.masteryState(outcome.state.stability, memory == MemoryRating.Forgot)
         val updated = unit.copy(
             lastReviewedAt = now,
-            nextReviewAt = now + (nextInterval * 86400000).toLong(),
-            modelDueAt = now + (nextInterval * 86400000).toLong(),
+            nextReviewAt = listOfNotNull(memoryDueAt, understandingDueAt).min(),
+            modelDueAt = memoryDueAt,
+            understandingDueAt = understandingDueAt,
+            memoryModel = MedScheduler.CURRENT_MODEL.id,
             deferredUntil = null,
             currentIntervalDays = nextInterval,
             reviewCount = unit.reviewCount + 1,
