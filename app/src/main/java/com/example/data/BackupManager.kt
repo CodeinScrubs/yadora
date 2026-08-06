@@ -207,7 +207,12 @@ object BackupManager {
             require(u.systemId == null || u.systemId in systemIds) { "Damaged backup: topic ${i + 1} references missing collection" }
         }
         units.forEachIndexed { i, u ->
-            require(u.stability > 0.0 && u.stability.isFinite()) { "Damaged backup: invalid stability (topic ${i + 1})" }
+            // Must clear the MODEL's floor, not merely be positive: a sub-floor stability is a value
+            // the scheduler can never produce, and it used to make the first Forgot rating on that
+            // topic throw out of the FSRS lapse branch.
+            require(u.stability >= com.example.domain.srs.Fsrs.S_MIN && u.stability.isFinite()) {
+                "Damaged backup: invalid stability (topic ${i + 1})"
+            }
             require(u.difficulty in 1.0..10.0) { "Damaged backup: invalid difficulty (topic ${i + 1})" }
             require(u.currentIntervalDays >= 0.0 && u.currentIntervalDays.isFinite()) { "Damaged backup: invalid interval (topic ${i + 1})" }
             require(u.reviewCount >= 0 && u.lapseCount >= 0) { "Damaged backup: invalid counts (topic ${i + 1})" }

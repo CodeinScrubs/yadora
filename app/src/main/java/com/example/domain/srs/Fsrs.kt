@@ -75,7 +75,12 @@ object Fsrs {
     /** FACTOR is chosen so that R = 0.9 exactly when elapsed time == stability. Equals 19/81. */
     val FACTOR: Double = 0.9.pow(1.0 / DECAY) - 1.0
 
-    private const val S_MIN = 0.01
+    /**
+     * Floor on stability. Public because it is a contract with everything that can WRITE a memory
+     * state — notably backup restore, which must not admit a value the model itself would never
+     * produce.
+     */
+    const val S_MIN = 0.01
     private const val D_MIN = 1.0
     private const val D_MAX = 10.0
 
@@ -175,6 +180,13 @@ object Fsrs {
     /**
      * FSRS-5 stability after a lapse (Again). Clamped to never exceed the pre-lapse stability, so
      * forgetting always shortens the next interval.
+     *
+     * The two bounds are applied SEPARATELY and in this order, never as a single `coerceIn(S_MIN,
+     * stability)` range: when the incoming stability is itself below [S_MIN] that range is empty and
+     * `coerceIn` throws. Everything the scheduler produces is already floored at [S_MIN], but a
+     * RESTORED BACKUP is outside data whose stability only has to be positive — so a topic carrying
+     * e.g. 1e-6 used to crash the moment the user rated it Forgot. Capping first and flooring second
+     * is total: it can never throw, and it still means "a lapse never strengthens memory".
      */
     private fun postLapseStability(s: MemoryState, r: Double, p: FsrsParameters): Double {
         val w = p.weights
@@ -182,6 +194,6 @@ object Fsrs {
             s.difficulty.pow(-w[12]) *
             ((s.stability + 1.0).pow(w[13]) - 1.0) *
             exp(w[14] * (1.0 - r))
-        return sFail.coerceIn(S_MIN, s.stability)
+        return sFail.coerceAtMost(s.stability).coerceAtLeast(S_MIN)
     }
 }

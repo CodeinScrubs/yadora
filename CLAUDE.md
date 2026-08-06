@@ -85,6 +85,23 @@ These were decided deliberately. Re-suggesting them wastes a session:
   no-cliff property. A rated topic's schedule no longer depends on `studiedAt` at
   all; an UNRATED topic is still due on its study date, and editing that date
   moves the due date.
+- **Fidelity to FSRS-5 is verified, not assumed.** `FsrsSpecComplianceTest` re-implements the
+  published FSRS-5 equations independently and asserts `Fsrs.kt` agrees to ~1e-9 across a
+  sweep of stabilities, difficulties, grades and elapsed times — plus no NaN/∞ from any
+  reachable input, and the monotonicity properties (a later successful recall never yields
+  less stability; a lapse never strengthens memory). `SchedulerInvariantsTest` does the same
+  for the product layer. If you change `Fsrs.kt` or `MedScheduler.kt`, these two are the
+  tests that matter: a wrong exponent would not crash and would not fail a relational test,
+  it would silently mis-time every review for years.
+- **The scientific basis of the product-layer choices** (do not "simplify" these away):
+  power-law forgetting `R = (1 + FACTOR·t/S)^-0.5` is FSRS-4.5+/5's deliberate replacement for
+  the exponential curve because it fits real review data better; scheduling at ~0.90 retention
+  (slider 0.85–0.95) sits in the workload-optimal band from FSRS's own retention simulations
+  and matches Bjork's desirable-difficulty argument that retrieval should be effortful but
+  successful; and `FIRST_STUDY_MAX_DAYS` exists because a self-rating taken immediately after
+  studying measures *current fluency*, not delayed retention (the well-documented
+  judgment-of-learning illusion), so the model's own `S₀(Easy) ≈ 15.7 d` must not be trusted
+  before one real retrieval test has happened.
 - **One memory seed per history.** `Fsrs.initialState` may only be re-applied for the
   chronologically FIRST review log of a topic. A merged topic legitimately carries
   several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each

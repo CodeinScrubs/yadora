@@ -305,7 +305,10 @@ object MedScheduler {
         if (baseIntervalDays < 3.0) return intervalDays
         val rng = kotlin.random.Random(unitId * 31L + reviewCount)
         val factor = 1.0 + rng.nextDouble(-0.05, 0.05)
-        return (intervalDays * factor).coerceIn(1.0, 365.0)
+        // Bounds come from the model's own parameters, not a second hardcoded copy of them: fuzz is
+        // the LAST step before a due date is written, so it must not be able to nudge an interval
+        // past the ceiling review() just enforced.
+        return (intervalDays * factor).coerceIn(MIN_INTERVAL_DAYS, FsrsParameters().maximumIntervalDays)
     }
 
     /** Convenience for the rating-button preview; identical math to [review]. */
