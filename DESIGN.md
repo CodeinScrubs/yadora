@@ -229,6 +229,37 @@ Explicitly rejected for any version (re-litigated multiple times): first rating 
 mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
 streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
 
+### FSRS-5 → FSRS-6 migration (2026-08)
+
+Adopted after an external audit's FSRS-6 arithmetic was independently reproduced to ten
+significant figures (S=20, D=5, t=45 → Good 86.24141137779552, Forgot 2.1613332322199135),
+and after a factual error here — the claim that FSRS-6 "behaves near-identically on default
+weights" — was conceded. It does not: S₀(Easy) 15.69 → 8.30, and the curve exponent goes from
+a fixed 0.5 to a trainable default of 0.1542.
+
+**Why it was worth doing.** FSRS-6's fitted `S₀(Easy) = 8.2956` replaces the hand-chosen
+YADORA-3 damping (7.06) — an *invented* constant swapped for a *fitted* one. That was the
+single strongest criticism this project received, and the migration resolves it rather than
+defending it.
+
+**Shape of the migration** (details in CLAUDE.md):
+- FSRS-5 is kept frozen; a stored stability only means something with its model.
+- DB v6 records model identity per topic and the understanding clock. The migration itself is
+  inert — upgrading moves no schedule.
+- State is carried across by REPLAYING real rating history through FSRS-6, lazily at the next
+  review. The stored FSRS-5 number is not portable and is never reinterpreted.
+- Understanding became a second clock instead of a multiplier.
+
+**What it cost, honestly.** Making FSRS-6 live broke `preview == commit == replay` in
+production while the suite still passed, because `ReplayEqualsLiveTest`'s helper also defaulted
+to FSRS-5 — it compared two FSRS-5 paths and agreed with itself. That is exactly the
+"test mirrors the implementation, not the behaviour" failure this project warns about
+elsewhere. Fixed, and CLAUDE.md now requires that test to mirror the real commit path.
+
+**Deliberately NOT taken from the same patch:** removing the 365-day interval cap (→36,500)
+and switching to rate-before-reveal. Neither is required by the migration; the second also drops
+the "finalise after comparing" step that made it defensible. Both remain open product decisions.
+
 ### Adversarial audit OF THIS PROJECT'S OWN CLAIMS (2026-08)
 
 A review not of the code but of the *confidence* attached to it. Largely fair; three of its

@@ -25,7 +25,9 @@ object BackupManager {
     // tolerant of v1/v2 files (missing fields fall back to defaults; missing settings are skipped).
     // v5: honest-scheduling fields (modelDueAt/deferredUntil), soft delete (deletedAt), per-log
     // policy snapshot (schedulerPolicyVersion/understandingFactorAtReview).
-    const val BACKUP_VERSION = 5
+    // v6: study_units.understandingDueAt + memoryModel. Without these a restore would reset every
+    // topic to FSRS-5 and drop its pending understanding repair — silently rewriting the schedule.
+    const val BACKUP_VERSION = 6
 
     // The user-preference keys worth carrying across devices (deliberately excludes transient state
     // like last_notif_shown_at).
@@ -86,6 +88,8 @@ object BackupManager {
                 put("lapseCount", u.lapseCount); put("archived", u.archived)
                 put("modelDueAt", u.modelDueAt); put("deferredUntil", u.deferredUntil ?: JSONObject.NULL)
                 put("deletedAt", u.deletedAt ?: JSONObject.NULL)
+                put("understandingDueAt", u.understandingDueAt ?: JSONObject.NULL)
+                put("memoryModel", u.memoryModel)
             })
         })
         root.put("reviewLogs", JSONArray().apply {
@@ -186,6 +190,11 @@ object BackupManager {
                 modelDueAt = o.optLong("modelDueAt", o.optLong("nextReviewAt", System.currentTimeMillis())),
                 deferredUntil = o.longOrNull("deferredUntil"),
                 deletedAt = o.longOrNull("deletedAt"),
+                understandingDueAt = o.longOrNull("understandingDueAt"),
+                // Pre-v6 files predate the model split, and everything in them was FSRS-5 by
+                // definition. Falling back to the entity default would claim the same thing, but
+                // saying it explicitly keeps the intent obvious at the restore site.
+                memoryModel = o.optString("memoryModel", "FSRS-5").ifBlank { "FSRS-5" },
             )
         }
         // Whole-file preflight: reject structurally corrupt topics BEFORE any current data is deleted.

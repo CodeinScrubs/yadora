@@ -46,10 +46,13 @@ object AnalyticsExporter {
         // snapshot, log ids (join key for STUDY_ACTION events), reminder/exam context.
         // v4: per-log adherence (scheduledForAt/daysLate) + the scheduler's own policy constants, so an
         // interval in the data can be checked against the policy that produced it without the source.
-        root.put("exportVersion", 4)
+        // v5: per-topic memoryModel + understandingDueAt, and the model/parameter identity in the
+        // policy block. Calibration MUST group by model — pooling FSRS-5 and FSRS-6 outcomes would
+        // average two different curves and make the result meaningless.
+        root.put("exportVersion", 5)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
-        root.put("scheduler", "FSRS-5")
+        root.put("scheduler", com.example.domain.srs.MedScheduler.CURRENT_MODEL.id)
         root.put("unitCount", units.size)
         root.put("reviewLogCount", logs.size)
 
@@ -99,6 +102,14 @@ object AnalyticsExporter {
         // year-old export should not require digging out the matching source revision.
         root.put("policy", JSONObject().apply {
             put("version", com.example.domain.srs.MedScheduler.POLICY_VERSION)
+            // The model that schedules NEW reviews, and the exact frozen weight vector it uses. A
+            // retrained vector must ship a new id, or two different sets of weights would be pooled
+            // under one name and the calibration numbers would silently stop meaning anything.
+            put("memoryModel", com.example.domain.srs.MedScheduler.CURRENT_MODEL.id)
+            put("parameterSetId", com.example.domain.srs.Fsrs6Parameters.DEFAULT_PARAMETER_SET_ID)
+            put("legacyModelRetainedForReplay", com.example.domain.srs.MedScheduler.MemoryModel.FSRS_5.id)
+            // Understanding is a separate clock now, not a multiplier on the memory interval.
+            put("understandingIsSeparateClock", true)
             put("firstStudyMaxDays", com.example.domain.srs.MedScheduler.FIRST_STUDY_MAX_DAYS)
             put("relearnStepDays", com.example.domain.srs.MedScheduler.RELEARN_STEP_DAYS)
             put("minIntervalDays", com.example.domain.srs.MedScheduler.MIN_INTERVAL_DAYS)
@@ -132,6 +143,8 @@ object AnalyticsExporter {
                 put("modelDueAt", u.modelDueAt)
                 put("deferredUntil", u.deferredUntil ?: JSONObject.NULL)
                 put("deletedAt", u.deletedAt ?: JSONObject.NULL)
+                put("understandingDueAt", u.understandingDueAt ?: JSONObject.NULL)
+                put("memoryModel", u.memoryModel)
             })
         }
         root.put("studyUnits", unitsArr)

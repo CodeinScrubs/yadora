@@ -961,11 +961,18 @@ fun ReviewSessionScreen(
                                 currentUnit.reviewCount,
                                 isFirstStudy = previewReviewNumber == 0,
                             )
-                            val intervalStr = if (finalInterval < 1.0) {
-                                val hrs = (finalInterval * 24).toInt()
+                            // Show when the topic will actually COME BACK, which under the two-clock
+                            // model is the earlier of the memory prediction and the understanding
+                            // repair deadline. Showing the raw memory interval here would print the
+                            // same number on all three buttons (understanding no longer scales it)
+                            // and then contradict itself by resurfacing the topic days earlier.
+                            val effectiveInterval =
+                                minOf(finalInterval, previewOutcome.remediationDays ?: Double.MAX_VALUE)
+                            val intervalStr = if (effectiveInterval < 1.0) {
+                                val hrs = (effectiveInterval * 24).toInt()
                                 if (hrs < 1) "<1h" else "${hrs}h"
                             } else {
-                                "${(finalInterval * 10).toInt() / 10.0}d".replace(".0d", "d")
+                                "${(effectiveInterval * 10).toInt() / 10.0}d".replace(".0d", "d")
                             }
                             Button(
                                 onClick = {

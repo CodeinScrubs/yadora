@@ -85,11 +85,24 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 4, json.getInt("exportVersion"))
+        assertEquals("export version", 5, json.getInt("exportVersion"))
+
+        // The live model must be named, and the legacy one named as retained -- calibration that
+        // pooled FSRS-5 and FSRS-6 outcomes would be averaging two different forgetting curves.
+        assertEquals("top-level scheduler reports the LIVE model",
+            com.example.domain.srs.MedScheduler.CURRENT_MODEL.id, json.getString("scheduler"))
 
         // v4 policy block: an interval in the data is meaningless without the constants that produced
         // it, and a year-old export must be readable without the matching source revision.
         val policy = json.getJSONObject("policy")
+        assertEquals("policy names the live model",
+            com.example.domain.srs.MedScheduler.CURRENT_MODEL.id, policy.getString("memoryModel"))
+        assertEquals("and the exact frozen weight vector",
+            com.example.domain.srs.Fsrs6Parameters.DEFAULT_PARAMETER_SET_ID, policy.getString("parameterSetId"))
+        assertEquals("FSRS-5 is recorded as retained for replay",
+            "FSRS-5", policy.getString("legacyModelRetainedForReplay"))
+        assertEquals("understanding is documented as a separate clock",
+            true, policy.getBoolean("understandingIsSeparateClock"))
         assertEquals("policy version", com.example.domain.srs.MedScheduler.POLICY_VERSION, policy.getString("version"))
         assertEquals(
             "first-study cap is exported",
