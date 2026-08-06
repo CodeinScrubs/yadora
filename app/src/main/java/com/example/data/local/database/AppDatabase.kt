@@ -22,7 +22,7 @@ import com.example.data.local.entity.SystemEntity
         ReviewLogEntity::class,
         EventLogEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -100,6 +100,25 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE study_units ADD COLUMN deletedAt INTEGER")
                 db.execSQL("ALTER TABLE review_logs ADD COLUMN schedulerPolicyVersion TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE review_logs ADD COLUMN understandingFactorAtReview REAL NOT NULL DEFAULT -1.0")
+            }
+        }
+
+        /**
+         * v5 → v6 (additive, like every migration here): the second clock, and model identity.
+         *
+         *  - study_units.understandingDueAt: the UNDERSTANDING remediation deadline, separate from
+         *    the memory prediction. Backfilled NULL — no existing topic has a pending repair, and
+         *    inventing one would drag every topic forward on upgrade day.
+         *  - study_units.memoryModel: which model produced this row's stability/difficulty. Every
+         *    existing row is FSRS-5 by definition, so that is the backfill. The first review after
+         *    the upgrade projects the topic's real history into FSRS-6 and flips this.
+         *
+         * Nothing is rewritten: no schedule moves purely because the app was updated.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE study_units ADD COLUMN understandingDueAt INTEGER")
+                db.execSQL("ALTER TABLE study_units ADD COLUMN memoryModel TEXT NOT NULL DEFAULT 'FSRS-5'")
             }
         }
     }

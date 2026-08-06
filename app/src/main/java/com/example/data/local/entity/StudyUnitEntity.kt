@@ -48,4 +48,25 @@ data class StudyUnitEntity(
     // archive screen), then is purged on app start. NULL = not deleted. Deleted rows also have
     // archived=true so every active-list query excludes them for free.
     val deletedAt: Long? = null,
+    // --- DB v6: the second clock, and which memory model owns this row's state ---
+    /**
+     * UNDERSTANDING remediation deadline, independent of the memory model. NULL = nothing to repair.
+     *
+     * Understanding used to be folded into the memory interval as a multiplier (Confused = ×0.8),
+     * which is incoherent at long intervals: a topic the user says they do NOT understand would
+     * still vanish for 80 days after a 100-day memory prediction. The two are different questions,
+     * so they get different clocks — [nextReviewAt] is the EARLIER of this and [modelDueAt], and
+     * this value never touches stability or difficulty.
+     */
+    val understandingDueAt: Long? = null,
+    /**
+     * The memory model that produced this row's current stability/difficulty.
+     *
+     * A stored FSRS state is only meaningful together with the model that computed it, so an
+     * FSRS-5 state must never be fed to FSRS-6 as though the latent variables meant the same thing.
+     * Existing rows migrate as "FSRS-5"; the first review after the upgrade PROJECTS the topic's
+     * real history under FSRS-6 and flips this to "FSRS-6". Old review logs keep replaying under
+     * the model each of them recorded.
+     */
+    val memoryModel: String = "FSRS-5",
 )
