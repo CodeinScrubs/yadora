@@ -3,6 +3,7 @@ package com.example.domain.srs
 import com.example.domain.model.MemoryRating
 import com.example.domain.model.UnderstandingRating
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
@@ -18,6 +19,68 @@ class RegressionTest {
 
     private fun at(year: Int, month: Int, day: Int, hour: Int): Long =
         Calendar.getInstance().apply { clear(); set(year, month - 1, day, hour, 0, 0) }.timeInMillis
+
+    // --- 0. POLICY YADORA-3: the first-study prior is damped toward neutral -----------------------
+
+    /**
+     * A rating given moments after studying measures current FLUENCY, not durable memory (the
+     * judgment-of-learning illusion). FSRS's S₀(Easy) ≈ 15.7 d was fitted on genuine *delayed*
+     * recall, so taking it at face value from an immediate self-rating claims evidence that has not
+     * been collected — and it is the value that decides how the second review gets interpreted, so
+     * the error propagates. YADORA-3 shrinks it toward the neutral Good prior.
+     */
+    @Test
+    fun `the first-study prior is shrunk toward neutral but keeps the user's ordering`() {
+        val p = FsrsParameters()
+        val w = FsrsParameters.DEFAULT_WEIGHTS
+        fun damped(g: Grade) = MedScheduler.firstRatingState(g, p, damp = true).stability
+
+        // Geometric mean with the Good prior: preserves order, halves the reach of the boldest answer.
+        assertEquals("Easy is damped", kotlin.math.sqrt(w[3] * w[2]), damped(Grade.Easy), 1e-9)
+        assertEquals("Hard is damped", kotlin.math.sqrt(w[1] * w[2]), damped(Grade.Hard), 1e-9)
+        assertEquals("Good is the neutral anchor and must not move", w[2], damped(Grade.Good), 1e-9)
+
+        // Hand anchors, so a future refactor cannot quietly change the numbers.
+        assertEquals("Easy ~ 7.06d, not 15.69d", 7.056, damped(Grade.Easy), 1e-3)
+        assertEquals("Hard ~ 1.94d", 1.938, damped(Grade.Hard), 1e-3)
+
+        assertTrue("ordering the user expressed is preserved", damped(Grade.Hard) < damped(Grade.Good))
+        assertTrue("ordering the user expressed is preserved", damped(Grade.Good) < damped(Grade.Easy))
+        assertTrue("and Easy is strictly below its undamped value", damped(Grade.Easy) < w[3])
+    }
+
+    @Test
+    fun `damping never lets a first rating exceed the calm first-study window`() {
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false).state
+        for (m in listOf(MemoryRating.Hard, MemoryRating.Good, MemoryRating.Easy)) {
+            val o = MedScheduler.review(
+                seed.stability, seed.difficulty, elapsedDays = 0.0,
+                memoryRating = m, understanding = UnderstandingRating.Clear,
+                highYield = false, reviewNumber = 0,
+            )
+            assertTrue("$m first rating stays within the cap", o.baseIntervalDays <= MedScheduler.FIRST_STUDY_MAX_DAYS + 1e-9)
+            assertTrue("$m first rating is still at least a day out", o.intervalDays >= MedScheduler.MIN_INTERVAL_DAYS - 1e-9)
+        }
+    }
+
+    /**
+     * Replay must reproduce the schedule the user ACTUALLY had, not re-decide it under today's rules.
+     * A log written under YADORA-1/2 therefore keeps the undamped seed when its history is replayed.
+     */
+    @Test
+    fun `replay of an older policy keeps the undamped seed`() {
+        assertTrue("YADORA-3 damps", MedScheduler.dampsFirstStudyPrior("YADORA-3"))
+        assertTrue("unknown/newer policies damp by default", MedScheduler.dampsFirstStudyPrior("YADORA-9"))
+        assertFalse("YADORA-1 predates damping", MedScheduler.dampsFirstStudyPrior("YADORA-1"))
+        assertFalse("YADORA-2 predates damping", MedScheduler.dampsFirstStudyPrior("YADORA-2"))
+
+        val p = FsrsParameters()
+        assertEquals(
+            "an old log replays from the raw FSRS prior",
+            FsrsParameters.DEFAULT_WEIGHTS[3],
+            MedScheduler.firstRatingState(Grade.Easy, p, damp = false).stability, 1e-12,
+        )
+    }
 
     // --- 1. The first graded rating is always review #0 (no overdue cliff) -------------------------
 

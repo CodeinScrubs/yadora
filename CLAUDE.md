@@ -102,6 +102,21 @@ These were decided deliberately. Re-suggesting them wastes a session:
   studying measures *current fluency*, not delayed retention (the well-documented
   judgment-of-learning illusion), so the model's own `S₀(Easy) ≈ 15.7 d` must not be trusted
   before one real retrieval test has happened.
+- **The first-study prior is DAMPED toward neutral** (POLICY `YADORA-3`). A rating given
+  moments after studying measures current *fluency*, not durable memory — the
+  judgment-of-learning illusion — whereas FSRS's `S₀(Easy) ≈ 15.7 d` was fitted on genuine
+  *delayed* recall. `MedScheduler.firstRatingState` therefore seeds the geometric mean of the
+  rating's own `S₀` and the neutral Good prior (Easy 15.7 → 7.1 d, Good unchanged, Hard
+  1.2 → 1.9 d), preserving the ordering the user expressed while limiting how far one
+  over-confident answer propagates. DIFFICULTY is deliberately left undamped (bounded,
+  mean-reverting, and it does not set the interval directly). Replay honors the damping rule of
+  the policy each log was STAMPED with, so correcting an old rating reproduces the schedule the
+  user actually had rather than re-deciding it under today's rules.
+- **Merging keeps the review-count-weighted average** rather than replaying the combined history
+  chronologically. Replay is arguably more principled (stability/difficulty are nonlinear
+  summaries, so averaging them is not a real memory state), and the machinery exists — but the
+  averaging behaviour is conservative, tested, and easy to explain. User-confirmed 2026-08;
+  revisit only with evidence, not on theory alone.
 - **One memory seed per history.** `Fsrs.initialState` may only be re-applied for the
   chronologically FIRST review log of a topic. A merged topic legitimately carries
   several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each

@@ -171,7 +171,45 @@ object MedScheduler {
      * whenever ANY of those numbers changes; each review log stores the version + the understanding
      * factor actually applied, so history replays under its original policy instead of the new one.
      */
-    const val POLICY_VERSION = "YADORA-2"
+    const val POLICY_VERSION = "YADORA-3"
+
+    /**
+     * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.
+     *
+     * Replay must reproduce what ACTUALLY happened, not re-decide history under today's rules — the
+     * same principle that makes each log store its own understanding factor and retention target. A
+     * log stamped YADORA-1/2 therefore keeps the undamped seed when its topic's history is replayed.
+     */
+    fun dampsFirstStudyPrior(policyVersion: String): Boolean = when (policyVersion) {
+        "YADORA-1", "YADORA-2" -> false
+        else -> true
+    }
+
+    /**
+     * The memory state seeded by a FIRST graded rating.
+     *
+     * POLICY YADORA-3: the rating's own FSRS initial stability is shrunk toward the neutral "Good"
+     * prior (geometric mean) instead of being used raw. A rating given moments after studying
+     * measures CURRENT FLUENCY, not durable memory — the well-documented judgment-of-learning
+     * illusion — whereas FSRS's S₀(Easy) ≈ 15.7 d was fitted on genuine *delayed* recall of
+     * flashcards. Treating "that felt easy" as fifteen days of proven stability claims evidence we
+     * have not collected yet, and it is the value that then decides how the second review is
+     * interpreted, so the error propagates.
+     *
+     * Shrinking keeps the ordering the user actually expressed (Hard < Medium < Easy) while halving
+     * how far the most over-confident answer can reach: Easy 15.7 d → 7.1 d, Medium 3.2 d unchanged,
+     * Hard 1.2 d → 1.9 d. The first interval is still capped by [FIRST_STUDY_MAX_DAYS], and the
+     * second review is a real retrieval that corrects the estimate quickly in either direction.
+     *
+     * DIFFICULTY is deliberately left undamped: it is bounded to 1..10, mean-reverts toward D₀(Easy)
+     * on every subsequent review, and does not set the interval directly the way stability does.
+     */
+    fun firstRatingState(grade: Grade, p: FsrsParameters, damp: Boolean = true): MemoryState {
+        val raw = Fsrs.initialState(grade, p)
+        if (!damp) return raw
+        val neutral = Fsrs.initialState(Grade.Good, p).stability
+        return raw.copy(stability = kotlin.math.sqrt(raw.stability * neutral))
+    }
 
     /**
      * The difficulty label a first-study memory-rating stands for (the UI buttons say
@@ -240,6 +278,9 @@ object MedScheduler {
         // factors ever change, replay applies the factor that was ORIGINALLY used. Live reviews and
         // rating EDITS leave this null (an edited rating should get the current policy's factor).
         understandingFactorOverride: Double? = null,
+        // Replay passes the damping rule of the policy that ORIGINALLY produced the log, so editing a
+        // rating never silently re-decides old history under today's policy. Live reviews use current.
+        dampFirstStudyPrior: Boolean = true,
     ): Outcome {
         val p = params(highYield, desiredRetentionOverride)
         val before = MemoryState(stability = stability, difficulty = difficulty)
@@ -248,7 +289,7 @@ object MedScheduler {
         val rAtReview = Fsrs.retrievability(elapsedDays, before.stability)
         // FSRS models MEMORY only — understanding never contaminates stability/difficulty.
         val newState = if (reviewNumber <= 0) {
-            Fsrs.initialState(grade, p)
+            firstRatingState(grade, p, dampFirstStudyPrior)
         } else {
             Fsrs.nextState(before, elapsedDays, grade, p)
         }

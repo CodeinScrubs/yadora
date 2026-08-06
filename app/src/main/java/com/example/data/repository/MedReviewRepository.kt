@@ -448,6 +448,10 @@ class MedReviewRepository(
             val histFactor = if (log.id != logId || newUnderstanding == null)
                 log.understandingFactorAtReview.takeIf { it > 0.0 }
             else null
+            // The policy this row replays under: the EDITED row is a new decision made today, every
+            // untouched row keeps the one it was stamped with. Same rule the stamping below uses.
+            val policyForThisLog = if (log.id == logId) MedScheduler.POLICY_VERSION
+                else log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION }
             val outcome = MedScheduler.review(
                 stability = stability,
                 difficulty = difficulty,
@@ -458,6 +462,9 @@ class MedReviewRepository(
                 reviewNumber = reviewNumber,
                 desiredRetentionOverride = histRetention,
                 understandingFactorOverride = histFactor,
+                // YADORA-3 damps the first-study seed; older logs must replay undamped so a rating
+                // correction reproduces the schedule the user actually had.
+                dampFirstStudyPrior = MedScheduler.dampsFirstStudyPrior(policyForThisLog),
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.

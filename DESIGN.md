@@ -229,6 +229,53 @@ Explicitly rejected for any version (re-litigated multiple times): first rating 
 mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
 streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
 
+### External research review (2026-08, "Scientific and Algorithmic Design of Optimal Topic Review")
+
+A long, unusually careful external document. Spot-checks passed: its FSRS-6 curve algebra is
+correct (with w₂₀ = 0.1542, f ≈ 0.9804 gives R(S,S) = 0.9000), Cepeda et al. 2006's
+839/317/184 figures are right, Brunmair & Richter's interleaving g = 0.42 and its similarity
+moderator are right, and its sample-size claim reproduces (90 % → 91 % at 80 % power = ~13,480
+per arm vs its "≈13,500"). Worth taking seriously as a result.
+
+**Adopted:** damping the first-study prior (POLICY YADORA-3 — see CLAUDE.md).
+
+**Rejected — "commit the recall rating BEFORE opening the source."** A grade given before you
+can check yourself rates *confidence*, not *accuracy* — which is exactly the
+judgment-of-learning illusion the same document warns about elsewhere. FSRS grades are
+retrospective ("how did that retrieval go"), which requires seeing the material. Yadora's order
+(prompt → attempt retrieval → reveal → grade) already matches FSRS semantics. The salvageable
+part is UI copy making "attempt retrieval before revealing" explicit.
+
+**Rejected for now — migrate to FSRS-6.** Its one meaningful gain over FSRS-5 is the *trainable*
+decay w₂₀, and a trainable parameter only pays once trained, which needs thousands of reviews.
+On default weights FSRS-6 behaves near-identically to FSRS-5, while migrating would require
+keeping FSRS-5 alive anyway so existing logs still replay faithfully. Real cost, ~zero benefit
+at current data volume. Revisit if the review corpus ever gets large enough to fit parameters.
+
+**Rejected — merge by chronological replay** (user-confirmed; see CLAUDE.md).
+
+**Not verifiable:** its FSRS-7 claims (35 parameters, benchmark table) are outside what can be
+confirmed here, and its citation markers are internal tool references rather than resolvable
+sources. Its own recommendation is shadow-mode-only, so nothing turns on it.
+
+**Genuinely good v2 candidates, recorded not implemented:**
+- **Content-currency guardrail** — a clock separate from memory for "you recall this perfectly,
+  but the guideline changed." Uniquely apt for a medical app; independently proposed by the
+  2026-07 review too (see the content-currency entry above), which strengthens it.
+- **Explicit rating rubric**, especially "Hard is a SUCCESS, never a failure" — FSRS reads Hard
+  as successful recall, so misuse silently lengthens intervals. Cheap copy change, directly
+  protects input quality.
+- **Recall anchors** (3–7 per topic) to stabilise what "remembering Appendicitis" means and vary
+  the retrieval cue, without flashcard-scale authoring.
+- **Capacity planning in MINUTES rather than topic count** — `reviewDurationMs` is already
+  logged, so the data exists. The full min-cost planner in the document is over-engineered for
+  this app; an EWMA per-topic cost plus a daily minute budget would capture most of the value.
+- **Proper calibration scoring** (Brier / log-loss / ECE, reliability diagrams) instead of the
+  single predicted-vs-actual line on Progress. This is what would make the 40-day field test
+  actually measurable.
+- **Interleaving in the daily queue** — avoid serving several near-identical topics
+  consecutively. Affects queue order only, never the memory model.
+
 ### Post-publish audit round (2026-08, 14-dimension multi-agent audit)
 
 A full adversarially-verified audit run after launch, prompted by the question "when a
