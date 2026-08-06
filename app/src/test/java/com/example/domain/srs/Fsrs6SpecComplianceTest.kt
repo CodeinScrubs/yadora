@@ -1,0 +1,202 @@
+package com.example.domain.srs
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import kotlin.math.exp
+import kotlin.math.pow
+
+/**
+ * FIDELITY OF [Fsrs6] TO THE PUBLISHED FSRS-6 SPECIFICATION.
+ *
+ * Same method as [FsrsSpecComplianceTest] does for FSRS-5: the equations are re-implemented here
+ * INDEPENDENTLY from the specification and the production code is required to agree across a wide
+ * sweep. Relational tests ("Easy grows more than Good") would pass even with a wrong exponent.
+ *
+ * It also pins two GOLDEN VALUES that were computed outside this codebase and reproduced to ten
+ * significant figures, so the weight vector and every formula on the recall and lapse paths are
+ * anchored to numbers no refactor here can quietly redefine.
+ */
+class Fsrs6SpecComplianceTest {
+
+    private val p = Fsrs6Parameters()
+    private val w = Fsrs6Parameters.DEFAULT_WEIGHTS
+    private val eps = 1e-9
+
+    // --- Independent transcription of the FSRS-6 specification ------------------------------------
+
+    private fun specDecay() = -w[20]
+    private fun specFactor() = 0.9.pow(1.0 / specDecay()) - 1.0
+    private fun specR(t: Double, s: Double) = (1.0 + specFactor() * t / s).pow(specDecay())
+    private fun specInterval(s: Double, r: Double) = (s / specFactor()) * (r.pow(1.0 / specDecay()) - 1.0)
+    private fun specD0(g: Int) = (w[4] - exp(w[5] * (g - 1)) + 1.0).coerceIn(1.0, 10.0)
+
+    private fun specNextD(d: Double, g: Int): Double {
+        val damped = d + (-w[6] * (g - 3)) * (10.0 - d) / 9.0
+        return (w[7] * specD0(4) + (1.0 - w[7]) * damped).coerceIn(1.0, 10.0)
+    }
+
+    private fun specRecallS(s: Double, d: Double, r: Double, g: Int): Double {
+        val hard = if (g == 2) w[15] else 1.0
+        val easy = if (g == 4) w[16] else 1.0
+        return s * (1.0 + exp(w[8]) * (11.0 - d) * s.pow(-w[9]) * (exp(w[10] * (1.0 - r)) - 1.0) * hard * easy)
+    }
+
+    private fun specLapseS(s: Double, d: Double, r: Double): Double =
+        (w[11] * d.pow(-w[12]) * ((s + 1.0).pow(w[13]) - 1.0) * exp(w[14] * (1.0 - r))).coerceAtMost(s)
+
+    /** FSRS-6 short-term adds the S^(-w19) term that FSRS-5 does not have. */
+    private fun specShortS(s: Double, g: Int) = s * exp(w[17] * (g - 3 + w[18])) * s.pow(-w[19])
+
+    // --- Golden anchors ---------------------------------------------------------------------------
+
+    @Test
+    fun `golden transition values reproduce exactly`() {
+        val s = 20.0
+        val d = 5.0
+        val t = 45.0
+        assertEquals("R(45, S=20)", 0.835574, Fsrs6.retrievability(t, s, p), 1e-6)
+
+        val good = Fsrs6.nextState(MemoryState(s, d), t, Grade.Good, p)
+        assertEquals("Good after 45 days at S=20, D=5", 86.24141137779552, good.stability, 1e-9)
+
+        val forgot = Fsrs6.nextState(MemoryState(s, d), t, Grade.Again, p)
+        assertEquals("Forgot after 45 days at S=20, D=5", 2.1613332322199135, forgot.stability, 1e-9)
+    }
+
+    @Test
+    fun `the weight vector is the frozen published default`() {
+        assertEquals("FSRS-6 has 21 weights", 21, w.size)
+        assertEquals("S0(Again)", 0.212, w[0], 1e-12)
+        assertEquals("S0(Hard)", 1.2931, w[1], 1e-12)
+        assertEquals("S0(Good)", 2.3065, w[2], 1e-12)
+        assertEquals("S0(Easy)", 8.2956, w[3], 1e-12)
+        assertEquals("curve shape w20", 0.1542, w[20], 1e-12)
+    }
+
+    // --- The sweeps -------------------------------------------------------------------------------
+
+    @Test
+    fun `the forgetting curve matches the specification exactly`() {
+        assertEquals("decay is -w20", specDecay(), p.decay, 1e-15)
+        assertEquals("factor", specFactor(), p.factor, 1e-15)
+        for (s in listOf(0.05, 1.0, 2.3065, 8.2956, 100.0, 3650.0)) {
+            for (t in listOf(0.0, 0.25, 1.0, 5.0, 45.0, 365.0, 3650.0)) {
+                assertEquals("R(t=$t, S=$s)", specR(t, s), Fsrs6.retrievability(t, s, p), eps)
+            }
+            assertEquals("R(S,S) must be 0.9 whatever the curve shape", 0.9, Fsrs6.retrievability(s, s, p), 1e-12)
+        }
+    }
+
+    @Test
+    fun `the interval inverse matches the specification and round-trips`() {
+        for (s in listOf(0.05, 1.0, 10.0, 86.24, 365.0)) {
+            for (r in listOf(0.70, 0.80, 0.85, 0.90, 0.95, 0.99)) {
+                assertEquals("I(S=$s, r=$r)", specInterval(s, r), Fsrs6.intervalDays(s, r, p), 1e-8)
+                assertEquals("round trip at r=$r", r, Fsrs6.retrievability(Fsrs6.intervalDays(s, r, p), s, p), 1e-9)
+            }
+            assertEquals("I(S, 0.90) == S by construction", s, Fsrs6.intervalDays(s, 0.90, p), 1e-8)
+        }
+    }
+
+    @Test
+    fun `initial state and difficulty match the specification`() {
+        for (g in Grade.entries) {
+            assertEquals("S0(${g.name})", w[g.value - 1], Fsrs6.initialState(g, p).stability, 1e-12)
+            assertEquals("D0(${g.name})", specD0(g.value), Fsrs6.initialDifficulty(g, p), eps)
+        }
+    }
+
+    @Test
+    fun `stability and difficulty updates match the specification everywhere`() {
+        val stabilities = listOf(0.05, 0.5, 2.3065, 8.2956, 60.0, 400.0)
+        val difficulties = listOf(1.0, 3.0, 5.0, 7.5, 10.0)
+
+        for (s in stabilities) for (d in difficulties) {
+            for (g in Grade.entries) {
+                // Same-day branch.
+                assertEquals(
+                    "short-term S'(S=$s, ${g.name})",
+                    specShortS(s, g.value).coerceIn(0.01, p.maximumIntervalDays * 10),
+                    Fsrs6.nextState(MemoryState(s, d), 0.0, g, p).stability, 1e-9,
+                )
+                // Delayed branch.
+                for (t in listOf(1.0, 7.0, 45.0, 300.0, 1200.0)) {
+                    val r = specR(t, s)
+                    val expected = if (g == Grade.Again) specLapseS(s, d, r) else specRecallS(s, d, r, g.value)
+                    assertEquals(
+                        "S'(S=$s, D=$d, t=$t, ${g.name})",
+                        expected.coerceIn(0.01, p.maximumIntervalDays * 10),
+                        Fsrs6.nextState(MemoryState(s, d), t, g, p).stability, 1e-7,
+                    )
+                    assertEquals(
+                        "D'($d, ${g.name})", specNextD(d, g.value),
+                        Fsrs6.nextState(MemoryState(s, d), t, g, p).difficulty, eps,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `core memory invariants hold, as they must for any weight vector`() {
+        for (s in listOf(0.05, 1.0, 10.0, 120.0)) for (d in listOf(1.0, 5.0, 10.0)) for (t in listOf(1.0, 20.0, 400.0)) {
+            val lapsed = Fsrs6.nextState(MemoryState(s, d), t, Grade.Again, p).stability
+            assertTrue("a lapse must not strengthen memory (S=$s D=$d t=$t)", lapsed <= s + 1e-12)
+            for (g in listOf(Grade.Hard, Grade.Good, Grade.Easy)) {
+                val recalled = Fsrs6.nextState(MemoryState(s, d), t, g, p).stability
+                assertTrue("a successful recall must not weaken memory (${g.name})", recalled >= s - 1e-12)
+            }
+        }
+    }
+
+    @Test
+    fun `no reachable input produces NaN or infinity`() {
+        for (s in listOf(0.01, 1e-6, 1.0, 1e4, 1e6)) for (d in listOf(1.0, 5.5, 10.0)) {
+            for (t in listOf(0.0, 1e-9, 1.0, 1e6, 1e9)) for (g in Grade.entries) {
+                val next = Fsrs6.nextState(MemoryState(s, d), t, g, p)
+                assertTrue("S' finite (S=$s D=$d t=$t ${g.name})", next.stability.isFinite() && next.stability > 0.0)
+                assertTrue("D' in range", next.difficulty.isFinite() && next.difficulty in 1.0..10.0)
+                assertTrue("R in (0,1]", Fsrs6.retrievability(t, s, p).let { it.isFinite() && it in 0.0..1.0 })
+            }
+        }
+    }
+
+    @Test
+    fun `a sub-floor stability cannot throw on the lapse path`() {
+        // The FSRS-5 equivalent of this crashed on restored backup data; the same guard is required here.
+        val next = Fsrs6.nextState(MemoryState(1e-9, 5.0), 30.0, Grade.Again, p)
+        assertTrue("clamped, not thrown", next.stability >= Fsrs6.S_MIN - 1e-12 && next.stability.isFinite())
+    }
+
+    // --- Why the migration is worth doing ---------------------------------------------------------
+
+    @Test
+    fun `FSRS-6 differs from FSRS-5 in the ways that motivated the migration`() {
+        val five = FsrsParameters()
+        // 1. An "Easy" first rating no longer claims two weeks of proven stability. This FITTED value
+        //    is what replaces the hand-chosen YADORA-3 damping.
+        val easy6 = Fsrs6.initialState(Grade.Easy, p).stability
+        val easy5 = Fsrs.initialState(Grade.Easy, five).stability
+        assertEquals("FSRS-6 S0(Easy)", 8.2956, easy6, 1e-9)
+        assertEquals("FSRS-5 S0(Easy)", 15.69105, easy5, 1e-9)
+        assertTrue("and it is far lower than FSRS-5's", easy6 < easy5 * 0.6)
+
+        // 2. The curve is genuinely flatter, so the two models disagree away from the 0.90 anchor...
+        assertNotEquals("decay is no longer fixed at -0.5", -0.5, p.decay, 1e-6)
+        assertEquals("but both still pin I(S, 0.90) == S",
+            Fsrs.intervalDays(50.0, 0.90), Fsrs6.intervalDays(50.0, 0.90, p), 1e-6)
+        assertTrue("longer intervals at a 0.85 target", Fsrs6.intervalDays(50.0, 0.85, p) > Fsrs.intervalDays(50.0, 0.85))
+        assertTrue("shorter intervals at a 0.95 target", Fsrs6.intervalDays(50.0, 0.95, p) < Fsrs.intervalDays(50.0, 0.95))
+
+        // 3. FSRS-5's parameter object must reject a 21-weight vector and vice versa, so the two models
+        //    can never be silently crossed once both are in the codebase.
+        var crossed = false
+        try { FsrsParameters(weights = Fsrs6Parameters.DEFAULT_WEIGHTS) } catch (e: IllegalArgumentException) { crossed = true }
+        assertTrue("FSRS-5 must reject 21 weights", crossed)
+        crossed = false
+        try { Fsrs6Parameters(weights = FsrsParameters.DEFAULT_WEIGHTS) } catch (e: IllegalArgumentException) { crossed = true }
+        assertTrue("FSRS-6 must reject 19 weights", crossed)
+    }
+}
