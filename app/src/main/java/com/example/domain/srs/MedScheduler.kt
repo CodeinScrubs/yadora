@@ -38,9 +38,27 @@ object MedScheduler {
      */
     const val HIGH_YIELD_RETENTION = 0.93
 
+    /**
+     * The range [Fsrs] will accept. Outside it, `FsrsParameters` THROWS rather than degrading, so
+     * every value reaching it must already be inside — see [safeRetention].
+     */
+    const val MIN_RETENTION = 0.70
+    const val MAX_RETENTION = 0.99
+
     /** User-chosen desired retention (0.85..0.95), set from Settings at startup; defaults to BASE. */
     @Volatile
     var userRetention: Double = BASE_RETENTION
+
+    /**
+     * Last line of defence for the retention target. The Settings slider is bounded to 0.85..0.95,
+     * but a RESTORED BACKUP writes `desired_retention` straight into [userRetention] with no UI in
+     * the way, and `MedReviewApplication` re-reads it on every cold start. Before this clamp, one
+     * hand-edited or corrupt backup made `FsrsParameters`' `require()` throw on every single review,
+     * on every launch, permanently — with nothing on screen explaining why. A nonsensical setting
+     * must degrade to a sane schedule, never brick the app's core loop.
+     */
+    private fun safeRetention(value: Double): Double =
+        if (value.isFinite()) value.coerceIn(MIN_RETENTION, MAX_RETENTION) else BASE_RETENTION
 
     /** The schedule never asks for a review sooner than the next day. */
     const val MIN_INTERVAL_DAYS = 1.0
@@ -134,13 +152,14 @@ object MedScheduler {
     }
 
     private fun params(highYield: Boolean, retentionOverride: Double? = null) = FsrsParameters(
-        requestRetention = retentionOverride?.coerceIn(0.70, 0.99)
-            ?: if (highYield) (userRetention + 0.03).coerceAtMost(0.97) else userRetention,
+        requestRetention = retentionOverride?.let { safeRetention(it) } ?: effectiveRetention(highYield),
     )
 
     /** The retention target actually in force for an item — logged per review for later tuning. */
-    fun effectiveRetention(highYield: Boolean): Double =
-        if (highYield) (userRetention + 0.03).coerceAtMost(0.97) else userRetention
+    fun effectiveRetention(highYield: Boolean): Double {
+        val base = safeRetention(userRetention)
+        return if (highYield) (base + 0.03).coerceAtMost(0.97) else base
+    }
 
     /** Version tag written into every review log so exported data is analyzable across upgrades. */
     const val SCHEDULER_VERSION = "FSRS-5"

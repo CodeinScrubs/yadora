@@ -287,8 +287,32 @@ object BackupManager {
             val e = sp.edit()
             SETTINGS_STRING_KEYS.forEach { k -> if (s.has(k)) e.putString(k, s.optString(k)) }
             SETTINGS_BOOL_KEYS.forEach { k -> if (s.has(k)) e.putBoolean(k, s.optBoolean(k)) }
-            SETTINGS_INT_KEYS.forEach { k -> if (s.has(k)) e.putInt(k, s.optInt(k)) }
-            SETTINGS_FLOAT_KEYS.forEach { k -> if (s.has(k)) e.putFloat(k, s.optDouble(k).toFloat()) }
+            // Settings get the same scepticism as topic rows. A backup is an EDITABLE file from
+            // outside the app, so a value here can be anything — and desired_retention in particular
+            // is load-bearing: out of range it used to make FSRS throw on every review, forever.
+            // Clamp rather than reject, so one silly number can't cost the user their whole restore.
+            SETTINGS_FLOAT_KEYS.forEach { k ->
+                if (s.has(k)) {
+                    val raw = s.optDouble(k)
+                    val safe = when {
+                        !raw.isFinite() -> null // drop it; the app default applies
+                        k == "desired_retention" -> raw.coerceIn(
+                            com.example.domain.srs.MedScheduler.MIN_RETENTION,
+                            com.example.domain.srs.MedScheduler.MAX_RETENTION,
+                        )
+                        k == "daily_review_limit" -> raw.coerceIn(1.0, 500.0)
+                        else -> raw
+                    }
+                    if (safe != null) e.putFloat(k, safe.toFloat())
+                }
+            }
+            SETTINGS_INT_KEYS.forEach { k ->
+                if (s.has(k)) when (k) {
+                    "reminder_hour" -> e.putInt(k, s.optInt(k).coerceIn(0, 23))
+                    "reminder_minute" -> e.putInt(k, s.optInt(k).coerceIn(0, 59))
+                    else -> e.putInt(k, s.optInt(k))
+                }
+            }
             SETTINGS_LONG_KEYS.forEach { k -> if (s.has(k)) e.putLong(k, s.optLong(k)) }
             // commit() (not apply()): restore success is reported after this returns, so the
             // settings must actually be on disk by then.

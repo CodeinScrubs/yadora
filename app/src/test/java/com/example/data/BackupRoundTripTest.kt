@@ -25,6 +25,86 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class BackupRoundTripTest {
 
+    /**
+     * A backup is a plain JSON file the user can hand-edit, share, or corrupt. `desired_retention`
+     * is the one restored setting that used to be able to BRICK the app: out of FSRS's accepted
+     * 0.70..0.99 band it made `FsrsParameters`' require() throw on every single review, on every
+     * launch, permanently — because MedReviewApplication re-reads it from prefs at each cold start.
+     * A nonsensical value must now degrade to a sane schedule instead.
+     */
+    @Test
+    fun `a backup with an out-of-range retention cannot break reviewing`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+
+        // NaN/Infinity are deliberately absent here: org.json refuses to represent them at all, so
+        // they cannot arrive through a backup FILE. They are still covered directly against the
+        // scheduler in the sibling test below, which is the layer that can actually receive one.
+        for (bad in listOf(1.0, 0.0, -3.0, 42.0)) {
+            val json = org.json.JSONObject().apply {
+                put("backupVersion", BackupManager.BACKUP_VERSION)
+                put("subjects", org.json.JSONArray())
+                put("systems", org.json.JSONArray())
+                put("studyUnits", org.json.JSONArray())
+                put("reviewLogs", org.json.JSONArray())
+                put("eventLogs", org.json.JSONArray())
+                put("settings", org.json.JSONObject().put("desired_retention", bad))
+            }.toString()
+
+            BackupManager.restoreFromJson(context, json)
+
+            val stored = sp.getFloat("desired_retention", 0.90f).toDouble()
+            assertTrue("restored retention $stored (from $bad) must at least be a real number", stored.isFinite())
+
+            // NOTE: prefs store a Float while FSRS consumes a Double, so a value clamped to exactly
+            // 0.99 reads back as 0.9900000095367432 — fractionally OUTSIDE the band FsrsParameters
+            // accepts. That is precisely why the clamp also lives in MedScheduler.safeRetention on
+            // the READ side; asserting on the raw stored float would test the wrong layer. The
+            // invariant that actually matters to the user is the one below: reviewing still works.
+            com.example.domain.srs.MedScheduler.userRetention = stored
+            val effective = com.example.domain.srs.MedScheduler.effectiveRetention(highYield = false)
+            assertTrue(
+                "effective retention $effective (restored from $bad) must be usable by FSRS",
+                effective.isFinite() && effective in 0.70..0.99,
+            )
+
+            // The real proof: scheduling still works for BOTH branches (high-yield adds +0.03 on top,
+            // which is where an unclamped low value would also have blown up).
+            for (important in listOf(false, true)) {
+                val outcome = com.example.domain.srs.MedScheduler.review(
+                    stability = 10.0, difficulty = 5.0, elapsedDays = 12.0,
+                    memoryRating = com.example.domain.model.MemoryRating.Good,
+                    understanding = com.example.domain.model.UnderstandingRating.Clear,
+                    highYield = important, reviewNumber = 3,
+                )
+                assertTrue("a review after restoring $bad still produces a usable interval",
+                    outcome.intervalDays.isFinite() && outcome.intervalDays >= 1.0)
+            }
+        }
+    }
+
+    /** Even if a bad value reaches the scheduler by some other route, it must not throw. */
+    @Test
+    fun `the scheduler clamps a nonsensical retention instead of throwing`() {
+        val original = com.example.domain.srs.MedScheduler.userRetention
+        try {
+            for (bad in listOf(1.5, 0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY)) {
+                com.example.domain.srs.MedScheduler.userRetention = bad
+                val eff = com.example.domain.srs.MedScheduler.effectiveRetention(highYield = false)
+                assertTrue("effectiveRetention($bad) = $eff must be usable", eff.isFinite() && eff in 0.70..0.99)
+                val outcome = com.example.domain.srs.MedScheduler.review(
+                    stability = 8.0, difficulty = 5.0, elapsedDays = 9.0,
+                    memoryRating = com.example.domain.model.MemoryRating.Easy,
+                    understanding = com.example.domain.model.UnderstandingRating.Clear,
+                    highYield = false, reviewNumber = 2,
+                )
+                assertTrue(outcome.intervalDays.isFinite())
+            }
+        } finally {
+            com.example.domain.srs.MedScheduler.userRetention = original
+        }
+    }
+
     @Test
     fun `export then restore reproduces every table field-for-field`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
