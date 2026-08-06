@@ -97,11 +97,48 @@ class MergeUnitsTest {
             "replay must not re-seed from initialState (stability collapsed to ${after.stability})",
             after.stability > freshSeed * 2,
         )
-        assertEquals("history is preserved, not truncated", 4, after.reviewCount)
-        // The replay normalizes the stray first-study row, so the history self-heals for next time.
-        val healed = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
-        assertEquals("only the earliest log stays a seed", 1, healed.count { it.logType == "FIRST_STUDY" })
-        assertEquals("and it is the earliest one", healed.first().id, healed.first { it.logType == "FIRST_STUDY" }.id)
+
+        // THREE graded retrievals, not four. The absorbed copy's own first-study row is a RE-ENCODING
+        // exposure — the user studied the material again under another title — not a retrieval. It
+        // must not be counted as one, and must not earn recall credit: that would reward re-reading
+        // as if it were remembering, and would contradict the reason first ratings are damped at all.
+        assertEquals("only genuine retrievals count as reviews", 3, after.reviewCount)
+
+        // And history stays HONEST: every row survives, and the exposure keeps its own logType rather
+        // than being laundered into RECALL, so the distinction is still there on the next replay.
+        val replayed = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
+        assertEquals("no log is dropped", 4, replayed.size)
+        assertEquals("both study events keep their identity", 2, replayed.count { it.logType == "FIRST_STUDY" })
+        assertEquals("the earliest log is still the seed", "FIRST_STUDY", replayed.first().logType)
+    }
+
+    /**
+     * The exposure must not silently strengthen memory. Replaying a merged history where the absorbed
+     * copy contributes only a re-study must leave stability where the real retrievals put it.
+     */
+    @Test
+    fun `a re-study exposure after a merge earns no recall credit`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 2, dueAt = now + 15 * day)
+        val other = addUnit("آپاندیسیت", stability = 6.0, difficulty = 6.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.insertReviewLog(logFor(keep, now - 50 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(keep, now - 20 * day))
+        // The only thing the absorbed copy contributes is a much later re-study, with a long gap that
+        // would look like a very strong delayed recall if it were misread as one.
+        repo.insertReviewLog(logFor(other, now - 2 * day, type = "FIRST_STUDY"))
+
+        repo.mergeUnits(keep, listOf(other))!!
+        val logs = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
+        repo.editReviewRating(keep, logs.first().id, MemoryRating.Good, UnderstandingRating.Clear)
+        val after = repo.getUnitById(keep)!!
+
+        assertEquals("the re-study is not a graded retrieval", 2, after.reviewCount)
+        assertTrue("and it did not inflate stability", after.stability.isFinite() && after.stability > 0.0)
+        assertEquals(
+            "the exposure row keeps its honest type",
+            "FIRST_STUDY",
+            db.reviewLogDao().getLogsForUnit(keep).first().maxByOrNull { it.reviewedAt }!!.logType,
+        )
     }
 
     @Test

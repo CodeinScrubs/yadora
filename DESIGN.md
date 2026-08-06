@@ -229,6 +229,42 @@ Explicitly rejected for any version (re-litigated multiple times): first rating 
 mechanism); raising minSdk above 26 (excludes older devices common among our users); strict
 streaks with permanent-fail recovery challenges (stress-inducing, against the calm-tone rule).
 
+### Adversarial audit OF THIS PROJECT'S OWN CLAIMS (2026-08)
+
+A review not of the code but of the *confidence* attached to it. Largely fair; three of its
+points were acted on.
+
+**Conceded — a factual error.** It was claimed here that FSRS-6 "behaves near-identically to
+FSRS-5 on default weights, so the benefit is ~zero until trained." That is wrong. The default
+parameter sets differ materially: `S₀(Easy)` 15.69 → 8.30 (−47%), `S₀(Good)` 3.17 → 2.31,
+`S₀(Again)` 0.40 → 0.21, and the forgetting-curve exponent goes from a fixed 0.5 to a trainable
+default of 0.1542 — a much flatter curve. Adopting FSRS-6 defaults is a real behavioural change
+and does NOT require personal training first. The migration-cost argument (keeping FSRS-5 alive
+for faithful replay of existing logs, and changing every live user's schedule) still stands on
+its own, but it must be argued on cost, not on a false claim of equivalence.
+
+**Conceded — overstated confidence.** "The five-day cap is the single best design decision" and
+similar phrasing treated policy constants as science. Tests here prove *implementation*
+validity only. CLAUDE.md now says so explicitly and labels the policy constants as unvalidated.
+
+**Conceded and FIXED — a real defect.** Rewriting a later `FIRST_STUDY` row as `RECALL` during
+replay granted a re-study the stability growth of a successful delayed recall. That rewards
+re-reading as remembering, and trusts completely the very signal YADORA-3 exists to distrust.
+Such rows are now treated as re-encoding exposures: they re-anchor the clock, change no memory
+state, are not counted as graded reviews, and keep their own `logType`.
+
+**Not accepted:**
+- *"Remove YADORA-3 damping as invented."* The direction is supported; the magnitude is a
+  judgement call — but so is every alternative on offer, including using FSRS-5's raw `S₀(Easy)`,
+  which was fitted on *delayed flashcard recall*, not immediate topic self-ratings. Notably
+  FSRS-6's own refit moved that value 47% in the same direction. It is labelled as policy, not
+  removed.
+- *"Reverse weighted-average merging."* The theoretical objection is recorded and stands, but
+  this was the user's explicit informed choice between two presented options. It is their call.
+- The "contradiction" framing: revising a position on new evidence is correct behaviour. The
+  fair version of the criticism is that conclusions were sometimes announced with more
+  confidence than the evidence carried — which is conceded above.
+
 ### External code audit + patch (2026-08, `Yadora_suggestions.patch`, against `yadora1.zip`)
 
 A 43-file patch (2,259 insertions / 1,015 deletions). **The patch was NOT applied**: it was built

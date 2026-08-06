@@ -429,12 +429,42 @@ class MedReviewRepository(
             // one per absorbed copy (merging re-points their logs onto the survivor). Without this
             // guard, correcting any old rating — or merely editing the merged topic's studied date,
             // which replays through here too — silently discarded the merge's weighted-average
-            // memory state. Only the chronologically FIRST log can be a seed; a later FIRST_STUDY
-            // row continues the running state as a recall, and gets normalized to RECALL below so
-            // the history self-heals on the first replay after a merge.
+            // memory state. Only the chronologically FIRST log can be a seed.
             val isFirstLogOfHistory = log.id == logs.first().id
+
+            // A LATER first-study row is a RE-ENCODING EXPOSURE, not a retrieval.
+            //
+            // It can only exist after a merge: it is the absorbed copy's own post-study self-rating,
+            // recorded when the user studied the same material again under a different title. Feeding
+            // it through the recall path would grant it the stability growth a successful delayed
+            // recall earns — i.e. it would reward RE-READING as if it were REMEMBERING, and inflate
+            // the merged topic's schedule. It would also contradict the reason the first rating is
+            // damped at all (POLICY YADORA-3: an immediate post-study judgement measures fluency, not
+            // durable memory), since the same unreliable signal would be trusted completely here.
+            //
+            // An exposure therefore leaves stability, difficulty and the graded review count ALONE,
+            // and only re-anchors the clock: the next real retrieval's elapsed time is measured from
+            // the day the material was last actually studied, which is the honest baseline.
+            if (log.logType == "FIRST_STUDY" && !isFirstLogOfHistory) {
+                updatedLogs.add(
+                    log.copy(
+                        previousIntervalDays = prevInterval,
+                        nextIntervalDays = prevInterval,
+                        previousState = prevStateName,
+                        nextState = prevStateName,
+                        retrievabilityAtReview = com.example.domain.srs.Fsrs.retrievability(elapsed, stability),
+                        elapsedDays = elapsed,
+                        // logType is deliberately PRESERVED. Rewriting it to RECALL would launder a
+                        // study exposure into retrieval history and destroy the distinction forever.
+                    )
+                )
+                prevTime = log.reviewedAt
+                lastReviewedAt = log.reviewedAt
+                continue
+            }
+
             val reviewNumber = when {
-                log.logType == "FIRST_STUDY" -> if (isFirstLogOfHistory) 0 else maxOf(reviewCount, 1)
+                log.logType == "FIRST_STUDY" -> 0 // first-of-history, guaranteed by the branch above
                 log.logType == "RECALL" -> maxOf(reviewCount, 1)
                 else -> MedScheduler.effectiveReviewNumber(reviewCount)
             }

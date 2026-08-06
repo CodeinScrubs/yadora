@@ -93,6 +93,19 @@ These were decided deliberately. Re-suggesting them wastes a session:
   for the product layer. If you change `Fsrs.kt` or `MedScheduler.kt`, these two are the
   tests that matter: a wrong exponent would not crash and would not fail a relational test,
   it would silently mis-time every review for years.
+- **WHAT THE TESTS DO AND DO NOT PROVE.** `FsrsSpecComplianceTest` and
+  `SchedulerInvariantsTest` establish **implementation validity**: the code computes the
+  FSRS-5 equations correctly, intervals stay bounded, replay is deterministic, invariants
+  hold. They establish **nothing** about **predictive validity** (are the predicted recall
+  probabilities calibrated for real Yadora users?) or **decision validity** (does this
+  schedule actually minimise study time for a given retention?). Those need held-out
+  outcome data, which does not exist yet. Never write "the algorithm is verified" — write
+  "the implementation is verified." The product-layer constants below are POLICY, chosen by
+  reasoning, not fitted to evidence.
+- **`FIRST_STUDY_MAX_DAYS = 5`, the understanding factors, the relearn step and the
+  YADORA-3 damping amount are UNVALIDATED POLICY CONSTANTS.** Their *direction* is
+  defensible from the literature (see below); their *magnitudes* are judgement calls. Treat
+  them as candidates to test against real data, not as settled science.
 - **The scientific basis of the product-layer choices** (do not "simplify" these away):
   power-law forgetting `R = (1 + FACTOR·t/S)^-0.5` is FSRS-4.5+/5's deliberate replacement for
   the exponential curve because it fits real review data better; scheduling at ~0.90 retention
@@ -112,6 +125,17 @@ These were decided deliberately. Re-suggesting them wastes a session:
   mean-reverting, and it does not set the interval directly). Replay honors the damping rule of
   the policy each log was STAMPED with, so correcting an old rating reproduces the schedule the
   user actually had rather than re-deciding it under today's rules.
+  CAVEAT, stated honestly: the *direction* of damping is supported (judgment-of-learning
+  illusion), but the *amount* — geometric mean, i.e. halfway in log space — was chosen by
+  reasoning, not fitted. The one piece of independent corroboration is that FSRS-6's own refit
+  moved `S₀(Easy)` from 15.69 to 8.30 (−47%) while this damping gives 7.06 (−55%): a large
+  independent re-estimation landed close to the same place. That is encouraging, not proof.
+- **A later `FIRST_STUDY` log is a RE-ENCODING EXPOSURE, never a recall.** Only reachable after
+  a merge (the absorbed copy's own post-study self-rating). The replay leaves stability,
+  difficulty and the graded review count untouched for it and only re-anchors the elapsed-time
+  clock, and it KEEPS its `logType` rather than being rewritten to `RECALL`. Feeding it through
+  the recall path would reward re-reading as if it were remembering, and would trust completely
+  the very signal YADORA-3 exists to distrust.
 - **Merging keeps the review-count-weighted average** rather than replaying the combined history
   chronologically. Replay is arguably more principled (stability/difficulty are nonlinear
   summaries, so averaging them is not a real memory state), and the machinery exists — but the
