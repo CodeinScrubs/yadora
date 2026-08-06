@@ -92,6 +92,44 @@ object MedScheduler {
     const val UNDERSTANDING_PARTIAL_FACTOR = 0.90
     const val UNDERSTANDING_CONFUSED_FACTOR = 0.80
 
+    /**
+     * Which memory model owns a state. The ids match `ReviewLogEntity.schedulerVersion`, so a log
+     * always says which model produced it and history replays under that model rather than today's.
+     */
+    enum class MemoryModel(val id: String) {
+        FSRS_5("FSRS-5"),
+        FSRS_6("FSRS-6");
+
+        companion object {
+            /** Legacy/blank ids mean pre-versioning rows, which were all FSRS-5. */
+            fun of(id: String): MemoryModel = entries.firstOrNull { it.id == id } ?: FSRS_5
+        }
+    }
+
+    /**
+     * UNDERSTANDING REMEDIATION — the second clock, in days. Null means nothing to repair.
+     *
+     * Replaces the old "multiply the memory interval by 0.8/0.9" approach, which was incoherent at
+     * long intervals: a topic the user says they do NOT understand still disappeared for 80 days
+     * after a 100-day memory prediction. Scaling a memory prediction was never the right tool for a
+     * comprehension problem — they are different questions and now get different clocks. The memory
+     * prediction is preserved exactly; the topic simply surfaces at whichever date comes first.
+     *
+     * A Forgot already relearns tomorrow, so its entry is consistent rather than additive.
+     * These day counts are POLICY, not fitted constants (see the note in CLAUDE.md).
+     */
+    fun remediationDays(memoryRating: MemoryRating, understanding: UnderstandingRating): Double? = when {
+        memoryRating == MemoryRating.Forgot -> 1.0
+        understanding == UnderstandingRating.Confused -> 1.0
+        understanding == UnderstandingRating.Partial -> when (memoryRating) {
+            MemoryRating.Hard -> 2.0
+            MemoryRating.Good -> 3.0
+            MemoryRating.Easy -> 4.0
+            MemoryRating.Forgot -> 1.0 // unreachable: handled above
+        }
+        else -> null // Clear: memory schedule stands on its own
+    }
+
     /** Everything the UI/persistence needs after a scheduling decision. */
     data class Outcome(
         val state: MemoryState,
@@ -105,6 +143,13 @@ object MedScheduler {
          * Partial (2.88d) wouldn't, silently breaking the exact ×0.9/×0.8 ratio invariant.
          */
         val baseIntervalDays: Double = intervalDays,
+        /**
+         * The UNDERSTANDING clock, in days, or null when there is nothing to repair. Never folded
+         * into [intervalDays] — the caller stores it separately and shows the topic on whichever
+         * date is earlier. FSRS-5 (legacy replay) always reports null, because under that policy
+         * understanding was a multiplier and is already inside [intervalDays].
+         */
+        val remediationDays: Double? = null,
     )
 
     /** Structured rationale so the "why was this scheduled again?" sentence can be localized later. */
@@ -281,7 +326,16 @@ object MedScheduler {
         // Replay passes the damping rule of the policy that ORIGINALLY produced the log, so editing a
         // rating never silently re-decides old history under today's policy. Live reviews use current.
         dampFirstStudyPrior: Boolean = true,
+        // Which memory model computes this transition. Defaults to FSRS-5 so legacy replay and every
+        // pre-existing caller keep byte-identical behaviour; the live path passes FSRS-6 explicitly.
+        model: MemoryModel = MemoryModel.FSRS_5,
     ): Outcome {
+        if (model == MemoryModel.FSRS_6) {
+            return reviewFsrs6(
+                stability, difficulty, elapsedDays, memoryRating, understanding,
+                highYield, reviewNumber, desiredRetentionOverride,
+            )
+        }
         val p = params(highYield, desiredRetentionOverride)
         val before = MemoryState(stability = stability, difficulty = difficulty)
         val grade = memoryRating.toGrade()
@@ -319,6 +373,68 @@ object MedScheduler {
             baseIntervalDays = baseInterval,
         )
     }
+
+    /**
+     * FSRS-6 scheduling. Two things differ from the FSRS-5 path above, both deliberate:
+     *
+     *  1. NO understanding multiplier. Understanding gets its own clock ([remediationDays]) instead
+     *     of scaling a memory prediction it has no business scaling. [Outcome.intervalDays] is the
+     *     pure memory interval, and the caller stores the remediation deadline separately.
+     *  2. NO first-study damping. YADORA-3 shrank FSRS-5's S0(Easy)=15.69 by hand because an
+     *     immediate post-study rating cannot justify two weeks of proven stability. FSRS-6's own
+     *     refit already lowers it to 8.30 — a FITTED value replacing a hand-chosen one, which is
+     *     the main reason this migration is worth doing. Damping on top would double-count.
+     *
+     * The calm first-study ceiling still applies: a first rating is a self-assessment, not a
+     * measured retrieval, whichever model is doing the arithmetic.
+     */
+    private fun reviewFsrs6(
+        stability: Double,
+        difficulty: Double,
+        elapsedDays: Double,
+        memoryRating: MemoryRating,
+        understanding: UnderstandingRating,
+        highYield: Boolean,
+        reviewNumber: Int,
+        desiredRetentionOverride: Double?,
+    ): Outcome {
+        val p = params6(highYield, desiredRetentionOverride)
+        val before = MemoryState(stability = stability, difficulty = difficulty)
+        val grade = memoryRating.toGrade()
+
+        val rAtReview = Fsrs6.retrievability(elapsedDays, before.stability, p)
+        val newState = if (reviewNumber <= 0) {
+            Fsrs6.initialState(grade, p)
+        } else {
+            Fsrs6.nextState(before, elapsedDays, grade, p)
+        }
+
+        val baseInterval: Double
+        val interval: Double
+        if (memoryRating == MemoryRating.Forgot) {
+            baseInterval = RELEARN_STEP_DAYS
+            interval = RELEARN_STEP_DAYS
+        } else {
+            var fsrsInterval = Fsrs6.intervalDays(newState.stability, p.requestRetention, p)
+            if (reviewNumber <= 0) fsrsInterval = fsrsInterval.coerceAtMost(FIRST_STUDY_MAX_DAYS)
+            baseInterval = fsrsInterval
+            interval = fsrsInterval.coerceIn(MIN_INTERVAL_DAYS, p.maximumIntervalDays)
+        }
+
+        return Outcome(
+            state = newState,
+            intervalDays = interval,
+            retrievabilityAtReview = rAtReview,
+            reason = ReviewReason(memoryRating, understanding, highYield, interval),
+            baseIntervalDays = baseInterval,
+            remediationDays = remediationDays(memoryRating, understanding),
+        )
+    }
+
+    /** FSRS-6 parameters, sharing the same clamped retention policy as the FSRS-5 path. */
+    private fun params6(highYield: Boolean, retentionOverride: Double? = null) = Fsrs6Parameters(
+        requestRetention = retentionOverride?.let { safeRetention(it) } ?: effectiveRetention(highYield),
+    )
 
     /**
      * Anki-style interval fuzz (±5%), applied ON TOP of [review]'s interval by the preview, commit,
