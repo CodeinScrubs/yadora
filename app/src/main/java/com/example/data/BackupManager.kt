@@ -346,6 +346,14 @@ object BackupManager {
         }
         // Stop every scheduled reminder/alarm — there is nothing left to review.
         runCatching { com.example.notifications.NotificationScheduler.cancelReminder(context) }
+        // Also take down any reminder ALREADY in the shade: its body lists real topic titles, so
+        // leaving it there after "all data deleted" both contradicts the message and keeps the very
+        // content the user just erased visible on their lock screen.
+        runCatching {
+            androidx.core.app.NotificationManagerCompat.from(context)
+                .cancel(com.example.notifications.NotificationScheduler.NOTIFICATION_ID)
+        }
+        runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
         // Clear settings but PRESERVE the language choice (a wipe shouldn't reset the UI to English).
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
         val keptLanguage = sp.getString("app_language", "en")

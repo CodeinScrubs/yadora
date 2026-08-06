@@ -25,6 +25,11 @@ class ReminderSafetyWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
         // notification, it puts the whole reminder system back on its feet.
         runCatching { NotificationScheduler.scheduleDailyReminder(ctx) }
 
+        // Repair the chain, then stand down: the user explicitly said "not now". This layer exists to
+        // revive a reminder chain an OEM killed, not to overrule a deliberate snooze — and with alarm
+        // mode on it would otherwise RING during the window the user just silenced.
+        if (NotificationScheduler.isSnoozed(ctx)) return Result.success()
+
         val hour = sp.getInt("reminder_hour", 20)
         val minute = sp.getInt("reminder_minute", 0)
         val now = Calendar.getInstance()

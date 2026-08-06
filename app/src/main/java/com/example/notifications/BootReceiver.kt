@@ -61,6 +61,8 @@ class BootReceiver : BroadcastReceiver() {
                     set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
                 }.timeInMillis
                 val alreadyShownToday = sp.getLong("last_notif_shown_at", 0L) >= startOfToday
+                // A reboot must not cancel out a snooze the user chose before shutting down.
+                if (NotificationScheduler.isSnoozed(appContext)) return@Thread
                 // Only fire the catch-up during waking hours and only if today's time already passed.
                 if (due > 0 && !alreadyShownToday && now.after(reminderToday) && now.get(Calendar.HOUR_OF_DAY) in 8..21) {
                     NotificationScheduler.showReviewNotification(appContext, source = "boot_catchup")

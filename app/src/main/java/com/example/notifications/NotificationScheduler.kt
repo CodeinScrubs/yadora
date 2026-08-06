@@ -279,24 +279,42 @@ object NotificationScheduler {
         armAlarm(context, target, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
     }
 
+    /**
+     * True while a snooze the USER chose is still in the future. The extra reliability layers (the
+     * WorkManager sweep and the boot catch-up) must consult this: they exist to revive a dead
+     * reminder chain, not to overrule a deliberate "not now".
+     */
+    fun isSnoozed(context: Context): Boolean =
+        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+            .getLong(PREF_SNOOZED_UNTIL, 0L) > System.currentTimeMillis()
+
     /** Consume persisted snooze state when its dedicated alarm fires. */
     fun clearSnooze(context: Context) {
         context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
             .edit().remove(PREF_SNOOZED_UNTIL).apply()
     }
 
-    /** Push a trigger time into the 08:00–22:00 waking window (next 08:00 if it lands at night). */
-    private fun clampToWakingWindow(timeMillis: Long): Long {
-        val hour = Calendar.getInstance().apply { timeInMillis = timeMillis }.get(Calendar.HOUR_OF_DAY)
+    /**
+     * Pull a trigger time into the 08:00–22:00 waking window, WITHOUT moving it to another day.
+     *
+     * It used to roll forward a day whenever the hour was past the window, which quietly broke the
+     * snooze button's own promise: with a reminder time of 22:00 or 23:00, "Tomorrow" produced
+     * tomorrow-at-23:00, got clamped forward again, and landed the DAY AFTER tomorrow at 08:00 — a
+     * two-day silence where the label said one. Keeping the clamp inside the target's own day means
+     * the label and the behaviour always agree; the only day-roll left is the safety check below,
+     * for a clamped time that would otherwise sit in the past.
+     */
+    internal fun clampToWakingWindow(timeMillis: Long): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = timeMillis }
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
         if (hour in WAKING_START_HOUR until WAKING_END_HOUR) return timeMillis
-        return Calendar.getInstance().apply {
-            timeInMillis = timeMillis
-            if (hour >= WAKING_END_HOUR) add(Calendar.DAY_OF_YEAR, 1)
-            set(Calendar.HOUR_OF_DAY, WAKING_START_HOUR)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        cal.set(Calendar.HOUR_OF_DAY, if (hour >= WAKING_END_HOUR) WAKING_END_HOUR - 1 else WAKING_START_HOUR)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        // Never arm something in the past (a late-night target pulled back to 21:00 today).
+        if (cal.timeInMillis <= System.currentTimeMillis()) cal.add(Calendar.DAY_OF_YEAR, 1)
+        return cal.timeInMillis
     }
 
     private fun cancelAlarm(context: Context, requestCode: Int, action: String) {
