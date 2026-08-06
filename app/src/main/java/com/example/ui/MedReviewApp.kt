@@ -112,24 +112,24 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
             composable<Screen.Today> {
                 TodayScreen(
                     repository = repository,
-                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) },
-                    onNavigateToReview = { unitId -> navController.navigate(Screen.ReviewSession(unitId)) },
-                    onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings) }
+                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) { launchSingleTop = true } },
+                    onNavigateToReview = { unitId -> navController.navigate(Screen.ReviewSession(unitId)) { launchSingleTop = true } },
+                    onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) { launchSingleTop = true } },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
                 )
             }
             composable<Screen.Library> {
                 LibraryScreen(
                     repository = repository,
-                    onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) },
-                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings) }
+                    onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) { launchSingleTop = true } },
+                    onNavigateToAdd = { navController.navigate(Screen.AddUnit) { launchSingleTop = true } },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
                 )
             }
             composable<Screen.Progress> {
                 ProgressScreen(
                     repository = repository,
-                    onNavigateToSettings = { navController.navigate(Screen.Settings) }
+                    onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
                 )
             }
             composable<Screen.AddUnit> {
@@ -152,7 +152,7 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 ReviewSessionScreen(
                     repository = repository,
                     unitId = reviewSession.unitId,
-                    onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id)) },
+                    onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id)) { launchSingleTop = true } },
                     onFinish = { navController.popBackStack() }
                 )
             }
@@ -160,7 +160,7 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 SettingsScreen(
                     onBack = { navController.popBackStack() },
                     onLanguageChange = onLanguageChange,
-                    onOpenThemeSettings = { navController.navigate(Screen.ThemeSettings) }
+                    onOpenThemeSettings = { navController.navigate(Screen.ThemeSettings) { launchSingleTop = true } }
                 )
             }
             composable<Screen.ThemeSettings> {

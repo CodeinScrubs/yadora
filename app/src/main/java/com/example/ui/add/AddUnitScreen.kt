@@ -56,7 +56,20 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
 
     private var logsJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * The topic this screen is EDITING, known synchronously from the navigation argument.
+     *
+     * [existingUnit] arrives asynchronously, so it must never be what decides insert-vs-update: the
+     * form's own fields are rememberSaveable and come back instantly after process death, which means
+     * Save can be pressed while the row is still loading. Branching on a null [existingUnit] then
+     * silently INSERTED a second copy of a topic the user was only editing (and, before the insert,
+     * ran the new-topic duplicate check against their own unchanged title).
+     */
+    var editingUnitId: Long? = null
+        private set
+
     fun loadUnit(id: Long) {
+        editingUnitId = id
         viewModelScope.launch { existingUnit = repository.getUnitById(id) }
         // Cancel any previous log collector so repeated Edit visits don't pile up infinite collectors.
         logsJob?.cancel()
@@ -86,15 +99,18 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
 
     fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
         viewModelScope.launch {
+            // "Am I editing?" comes from the nav argument, NOT from whether the row has finished
+            // loading — see editingUnitId.
+            val isEditing = editingUnitId != null
             // Block true duplicates on NEW topics only (editing an existing one is never a dup of itself).
-            if (existingUnit == null && repository.isDuplicate(title, subjectId, notes, source)) {
+            if (!isEditing && repository.isDuplicate(title, subjectId, notes, source)) {
                 onDuplicate()
                 return@launch
             }
             // An ARCHIVED topic with this title: OFFER to restore it (with its whole history). Only an
             // offer — the dialog's "Create new" re-invokes save with the check skipped, so a same-title
             // topic that's genuinely different (e.g. another subject) is never blocked.
-            if (existingUnit == null && !skipArchivedDuplicateCheck) {
+            if (!isEditing && !skipArchivedDuplicateCheck) {
                 repository.findArchivedDuplicate(title)?.let { archived ->
                     onArchivedDuplicate(archived)
                     return@launch
@@ -106,7 +122,9 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
             // so the Save button never stays stuck disabled.
             val ok = try {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                val current = existingUnit
+                // If the row hasn't landed yet but we KNOW we're editing, fetch it rather than
+                // falling through to the insert branch and forking a duplicate.
+                val current = existingUnit ?: editingUnitId?.let { repository.getUnitById(it) }
                 if (current != null) {
                     val newStudiedAt = studiedAt ?: current.studiedAt
                     val newNext = nextReviewAt ?: current.nextReviewAt

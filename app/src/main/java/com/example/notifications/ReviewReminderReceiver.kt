@@ -40,7 +40,13 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 val pending = goAsync()
                 val appContext = context.applicationContext
                 Thread {
-                    try { NotificationScheduler.showReviewNotification(appContext, markShown = false, source = "test") } finally { pending.finish() }
+                    try {
+                        NotificationScheduler.showReviewNotification(appContext, markShown = false, source = "test")
+                    } catch (t: Throwable) {
+                        android.util.Log.w("Yadora", "test reminder failed", t)
+                    } finally {
+                        pending.finish()
+                    }
                 }.start()
             }
             NotificationScheduler.ACTION_DISMISS -> {
@@ -65,6 +71,11 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                                 )
                             }
                         }
+                    } catch (t: Throwable) {
+                        // Best-effort background work: an exception here would reach the thread's uncaught
+                        // handler, which chains to the app's global handler and takes the whole app down —
+                        // over what is only a reminder refresh. Swallow and log instead.
+                        android.util.Log.w("Yadora", "background work failed", t)
                     } finally {
                         pending.finish()
                     }
@@ -98,6 +109,11 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                         NotificationManagerCompat.from(appContext).cancel(NotificationScheduler.NOTIFICATION_ID)
                         NotificationScheduler.scheduleNextDayReminder(appContext)
                         com.example.widget.DueWidgetProvider.updateAll(appContext) // count just went to 0
+                    } catch (t: Throwable) {
+                        // Best-effort background work: an exception here would reach the thread's uncaught
+                        // handler, which chains to the app's global handler and takes the whole app down —
+                        // over what is only a reminder refresh. Swallow and log instead.
+                        android.util.Log.w("Yadora", "background work failed", t)
                     } finally {
                         pending.finish()
                     }
@@ -130,6 +146,11 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                             // a broken chain means silent days until the next boot or app open.
                             runCatching { NotificationScheduler.scheduleDailyReminder(appContext) }
                         }
+                    } catch (t: Throwable) {
+                        // Best-effort background work: an exception here would reach the thread's uncaught
+                        // handler, which chains to the app's global handler and takes the whole app down —
+                        // over what is only a reminder refresh. Swallow and log instead.
+                        android.util.Log.w("Yadora", "background work failed", t)
                     } finally {
                         pending.finish()
                     }

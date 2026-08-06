@@ -25,6 +25,11 @@ class DueWidgetProvider : AppWidgetProvider() {
         Thread {
             try {
                 render(context, appWidgetManager, appWidgetIds)
+            } catch (t: Throwable) {
+                // Best-effort background work: an exception here would reach the thread's uncaught
+                // handler, which chains to the app's global handler and takes the whole app down —
+                // over what is only a reminder refresh. Swallow and log instead.
+                android.util.Log.w("Yadora", "background work failed", t)
             } finally {
                 pending.finish()
             }

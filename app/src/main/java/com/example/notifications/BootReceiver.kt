@@ -69,6 +69,11 @@ class BootReceiver : BroadcastReceiver() {
                     NotificationScheduler.showReviewNotification(appContext, source = "boot_catchup")
                 }
                 com.example.widget.DueWidgetProvider.updateAll(appContext) // refresh count after reboot
+            } catch (t: Throwable) {
+                // Best-effort background work: an exception here would reach the thread's uncaught
+                // handler, which chains to the app's global handler and takes the whole app down —
+                // over what is only a reminder refresh. Swallow and log instead.
+                android.util.Log.w("Yadora", "background work failed", t)
             } finally {
                 pending.finish()
             }

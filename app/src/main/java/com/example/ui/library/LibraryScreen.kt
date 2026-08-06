@@ -129,16 +129,21 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         }
     }
 
+    // Batch actions run under runCatching so a DB failure surfaces as "didn't work" instead of an
+    // unhandled coroutine exception, and onComplete still runs so the UI can never stick in
+    // selection mode with a spinner. Matches the discipline already used for review commits.
     fun archiveUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.archiveUnits(unitIds)
+            runCatching { repository.archiveUnits(unitIds) }
+                .onFailure { android.util.Log.w("Yadora", "archive failed", it) }
             onComplete()
         }
     }
 
     fun unarchiveUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.unarchiveUnits(unitIds)
+            runCatching { repository.unarchiveUnits(unitIds) }
+                .onFailure { android.util.Log.w("Yadora", "unarchive failed", it) }
             onComplete()
         }
     }
@@ -173,7 +178,8 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
 
     fun softDeleteUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.softDeleteUnits(unitIds)
+            runCatching { repository.softDeleteUnits(unitIds) }
+                .onFailure { android.util.Log.w("Yadora", "batch delete failed", it) }
             onComplete()
         }
     }
