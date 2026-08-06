@@ -359,6 +359,12 @@ object BackupManager {
         val keptLanguage = sp.getString("app_language", "en")
         @Suppress("ApplySharedPref")
         sp.edit().clear().putString("app_language", keptLanguage).commit()
+        // Device-local reminder bookkeeping lives in its own file (kept out of cloud backup), so
+        // clearing settings alone would leave a stale "already shown today" / snooze behind.
+        runCatching {
+            com.example.notifications.NotificationScheduler.transientPrefs(context)
+                .edit().clear().apply()
+        }
         runCatching {
             com.example.domain.srs.MedScheduler.userRetention =
                 sp.getFloat("desired_retention", 0.90f).toDouble()

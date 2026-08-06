@@ -462,7 +462,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     "fullScreen=$fullScreenOk",
                                     "alarmMode=${sharedPrefs.getBoolean("alarm_enabled", false)}",
                                     "reminder=${reminderHour}:${reminderMinute}",
-                                    "lastShownAt=${sharedPrefs.getLong("last_notif_shown_at", 0L)}",
+                                    "lastShownAt=${NotificationScheduler.transientPrefs(context).getLong(NotificationScheduler.PREF_LAST_SHOWN_AT, 0L)}",
                                 ).joinToString(" ")
                                 app.database.eventLogDao().insert(
                                     com.example.data.local.entity.EventLogEntity(type = "MISSED_REMINDER_REPORT", detail = snapshot)

@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android auto-backup (pre-Android-12 devices).
+
+  The Room database is deliberately NOT included. Auto-backup copies the live SQLite files with no
+  WAL checkpoint, so a restore can land a torn snapshot — and Yadora already ships its own complete,
+  validated JSON backup/restore (Settings → Export full backup) for moving between phones, which is
+  the path that is actually tested. Cloud-copying the raw DB would add risk without adding capability.
+
+  Settings ARE included so a new phone keeps language, theme, reminder time and retention. The
+  device-local reminder bookkeeping in "medreview_transient" is excluded: it records when THIS phone
+  last fired, how long the user snoozed, and when the next nudge is armed — restoring that onto a new
+  device can silence the very first reminder the user is waiting to see.
+-->
 <full-backup-content>
-    <include domain="database" path="."/>
     <include domain="sharedpref" path="."/>
+    <exclude domain="sharedpref" path="medreview_transient.xml"/>
 </full-backup-content>

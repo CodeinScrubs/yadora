@@ -60,6 +60,46 @@ object NotificationScheduler {
     private const val WAKING_END_HOUR = 22
     private const val PREF_SNOOZED_UNTIL = "reminder_snoozed_until"
     private const val PREF_NEXT_NUDGE_AT = "reminder_next_nudge_at"
+    const val PREF_LAST_SHOWN_AT = "last_notif_shown_at"
+
+    /**
+     * DEVICE-LOCAL reminder bookkeeping, deliberately kept OUT of "medreview_settings".
+     *
+     * Android's cloud backup / device transfer copies whole SharedPreferences FILES, so anything
+     * living beside the real settings rides along to a new phone. These three values describe the
+     * state of *this* device's reminder chain — when it last fired, how long the user snoozed it,
+     * when the next nudge is armed — and are actively harmful once restored elsewhere: a
+     * same-day transfer could arrive with "already shown today" or a still-running snooze and go
+     * silent on the new phone exactly when the user is checking that it works. res/xml/backup_rules
+     * and data_extraction_rules exclude this file by name.
+     */
+    const val TRANSIENT_PREFS = "medreview_transient"
+
+    private val TRANSIENT_KEYS = listOf(PREF_SNOOZED_UNTIL, PREF_NEXT_NUDGE_AT, PREF_LAST_SHOWN_AT)
+
+    /**
+     * The transient store, migrating any values still sitting in the old settings file on first use.
+     * Idempotent: once moved, the settings file holds none of these keys and this is a no-op. Without
+     * the migration, updating the app would silently forget an in-flight snooze — reintroducing, once,
+     * the exact "reminder fires during a snooze" problem the snooze checks exist to prevent.
+     */
+    fun transientPrefs(context: Context): android.content.SharedPreferences {
+        val transient = context.getSharedPreferences(TRANSIENT_PREFS, Context.MODE_PRIVATE)
+        val legacy = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        if (TRANSIENT_KEYS.any { legacy.contains(it) }) {
+            val t = transient.edit()
+            val l = legacy.edit()
+            TRANSIENT_KEYS.forEach { k ->
+                if (legacy.contains(k)) {
+                    t.putLong(k, legacy.getLong(k, 0L))
+                    l.remove(k)
+                }
+            }
+            t.apply()
+            l.apply()
+        }
+        return transient
+    }
     private const val COLLISION_WINDOW_MS = 5L * 60 * 1000
 
     /**
@@ -159,7 +199,7 @@ object NotificationScheduler {
             return
         }
         val now = System.currentTimeMillis()
-        val snoozedUntil = sp.getLong(PREF_SNOOZED_UNTIL, 0L)
+        val snoozedUntil = transientPrefs(context).getLong(PREF_SNOOZED_UNTIL, 0L)
         if (snoozedUntil > now) {
             // A real snooze suppresses every ordinary reminder until the chosen target. The safety
             // worker and app-open re-arm paths call this function too, so the state must live in prefs.
@@ -168,7 +208,7 @@ object NotificationScheduler {
             armAlarm(context, snoozedUntil, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
             return
         } else if (snoozedUntil != 0L) {
-            sp.edit().remove(PREF_SNOOZED_UNTIL).apply()
+            transientPrefs(context).edit().remove(PREF_SNOOZED_UNTIL).apply()
         }
 
         val primary = nextNudgeTime(context)
@@ -239,8 +279,7 @@ object NotificationScheduler {
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE))
         // Drop the armed-nudge bookmark too: nothing is scheduled any more, so a stale future value
         // must not be honoured the next time reminders are turned back on.
-        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            .edit().remove(PREF_SNOOZED_UNTIL).remove(PREF_NEXT_NUDGE_AT).apply()
+        transientPrefs(context).edit().remove(PREF_SNOOZED_UNTIL).remove(PREF_NEXT_NUDGE_AT).apply()
     }
 
     /**
@@ -272,8 +311,7 @@ object NotificationScheduler {
     fun scheduleSnooze(context: Context) {
         // Clamp into waking hours so an edge case never rings in the middle of the night.
         val target = clampToWakingWindow(snoozeTargetMillis(context))
-        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            .edit().putLong(PREF_SNOOZED_UNTIL, target).apply()
+        transientPrefs(context).edit().putLong(PREF_SNOOZED_UNTIL, target).apply()
         cancelAlarm(context, REQ_DAILY, ACTION_FIRE)
         cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
         armAlarm(context, target, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
@@ -285,13 +323,11 @@ object NotificationScheduler {
      * reminder chain, not to overrule a deliberate "not now".
      */
     fun isSnoozed(context: Context): Boolean =
-        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            .getLong(PREF_SNOOZED_UNTIL, 0L) > System.currentTimeMillis()
+        transientPrefs(context).getLong(PREF_SNOOZED_UNTIL, 0L) > System.currentTimeMillis()
 
     /** Consume persisted snooze state when its dedicated alarm fires. */
     fun clearSnooze(context: Context) {
-        context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            .edit().remove(PREF_SNOOZED_UNTIL).apply()
+        transientPrefs(context).edit().remove(PREF_SNOOZED_UNTIL).apply()
     }
 
     /**
@@ -368,7 +404,7 @@ object NotificationScheduler {
         // postponed the pending nudge, so the intra-day nag chain never fired at all (confirmed in a
         // real 11-day export: 22 notifications, all from the two fixed daily slots, zero nudges).
         // Keep the instant we already armed until it actually comes due.
-        val armed = sp.getLong(PREF_NEXT_NUDGE_AT, 0L)
+        val armed = transientPrefs(context).getLong(PREF_NEXT_NUDGE_AT, 0L)
         if (armed > now.timeInMillis) {
             val armedHour = Calendar.getInstance().apply { timeInMillis = armed }.get(Calendar.HOUR_OF_DAY)
             if (armedHour in WAKING_START_HOUR until WAKING_END_HOUR) return armed
@@ -377,11 +413,11 @@ object NotificationScheduler {
         val candidate = now.timeInMillis + REPEAT_INTERVAL_MS
         val candHour = Calendar.getInstance().apply { timeInMillis = candidate }.get(Calendar.HOUR_OF_DAY)
         if (candHour in WAKING_START_HOUR until WAKING_END_HOUR) {
-            sp.edit().putLong(PREF_NEXT_NUDGE_AT, candidate).apply()
+            transientPrefs(context).edit().putLong(PREF_NEXT_NUDGE_AT, candidate).apply()
             return candidate
         }
 
-        sp.edit().remove(PREF_NEXT_NUDGE_AT).apply()
+        transientPrefs(context).edit().remove(PREF_NEXT_NUDGE_AT).apply()
         return Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
@@ -536,7 +572,7 @@ object NotificationScheduler {
             // Dedup marker: the WorkManager safety net skips today once this is set. Test notifications
             // pass markShown=false so trying the pipeline never suppresses that evening's real safety net.
             if (markShown) {
-                sp.edit().putLong("last_notif_shown_at", System.currentTimeMillis()).apply()
+                transientPrefs(context).edit().putLong(PREF_LAST_SHOWN_AT, System.currentTimeMillis()).apply()
                 // Adherence + reliability research data: WHEN each real reminder fired and how many
                 // topics were waiting. Joined with STUDY_ACTION timestamps this answers "did the
                 // reminder lead to a review?" and "did reminders fire at all on this device?" —
