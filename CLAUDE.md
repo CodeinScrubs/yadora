@@ -106,6 +106,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - `editReviewRating` replays the WHOLE history under the topic's CURRENT model, not per-log.
     Mixing models mid-stream would yield a state belonging to neither, and this keeps replay
     consistent with the projection. A topic still on FSRS-5 replays under FSRS-5.
+  - **Projection happens at DISPLAY time, not only at commit.** The rating buttons preview an
+    interval from the unit currently on screen, so `ReviewSessionScreen.advanceUnit` projects before
+    assigning `_currentUnit`. Showing a raw FSRS-5 row while the commit projects to FSRS-6 first
+    previewed one number and scheduled another for every un-migrated topic. Projection is a pure
+    function of the logs and idempotent, so running it twice is free and cannot drift.
+  - **Anything that reads a stability must ask which model owns it.** `MedScheduler.retrievability(
+    elapsed, stability, model)` dispatches; the forgetting-curve sparkline and the exposure log both
+    go through it. The two curves agree only at t = stability and diverge sharply in the tail.
+  - **The in-app calibration card is scoped to `CURRENT_MODEL`**, matching the rule the analytics
+    export already states. Pooling FSRS-5 and FSRS-6 logs averages two different forgetting curves
+    and reports an accuracy belonging to neither. It goes quiet after a model change until ten new
+    reviews exist — the honest answer, since nothing is yet known about the new model on this user.
   - **`ReplayEqualsLiveTest` must mirror the real commit path** (project + `CURRENT_MODEL`).
     When FSRS-6 went live it kept passing while production disagreed with itself, because the
     test's own helper still defaulted to FSRS-5. If you change the commit path, change it there.

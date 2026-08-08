@@ -515,7 +515,7 @@ class MedReviewRepository(
                         nextIntervalDays = prevInterval,
                         previousState = prevStateName,
                         nextState = prevStateName,
-                        retrievabilityAtReview = com.example.domain.srs.Fsrs.retrievability(elapsed, stability),
+                        retrievabilityAtReview = MedScheduler.retrievability(elapsed, stability, replayModel),
                         elapsedDays = elapsed,
                         // logType is deliberately PRESERVED. Rewriting it to RECALL would launder a
                         // study exposure into retrieval history and destroy the distinction forever.

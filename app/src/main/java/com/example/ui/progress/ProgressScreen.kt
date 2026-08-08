@@ -166,13 +166,24 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Scheduler calibration: mean predicted recall (FSRS R at review time) vs the actual recall rate. */
-    data class CalibrationStats(val n: Int, val predictedPct: Int, val actualPct: Int)
+    data class CalibrationStats(val n: Int, val predictedPct: Int, val actualPct: Int, val model: String)
 
     // Only real recall events count: first-study rows (elapsed < 1 day with R≈1) and pre-v2 rows
     // (sentinel -1) are excluded so the comparison is honest — predicted R vs "did it come back?".
+    //
+    // Scoped to the model that is scheduling the user RIGHT NOW. Each log stores the R predicted by
+    // whichever model was live at the time, and FSRS-5 and FSRS-6 fit different curves — pooling them
+    // would average two forgetting curves and report an accuracy belonging to neither. Right after a
+    // model change that means the card goes quiet until enough new evidence exists, which is the
+    // honest answer: nothing is yet known about how well the current model predicts THIS user.
+    // MemoryModel.of() fails safe to FSRS-5, so a log of unknown provenance is never miscredited.
     val calibrationStats = repository.getLogsSince(0L)
         .map { logs ->
-            val recallLogs = logs.filter { it.retrievabilityAtReview in 0.0..1.0 && it.elapsedDays >= 1.0 && it.logType != "FIRST_STUDY" }
+            val recallLogs = logs.filter {
+                it.retrievabilityAtReview in 0.0..1.0 && it.elapsedDays >= 1.0 && it.logType != "FIRST_STUDY" &&
+                    com.example.domain.srs.MedScheduler.MemoryModel.of(it.schedulerVersion) ==
+                    com.example.domain.srs.MedScheduler.CURRENT_MODEL
+            }
             if (recallLogs.size < 10) return@map null // too little data to be meaningful
             val predicted = recallLogs.sumOf { it.retrievabilityAtReview } / recallLogs.size
             val actual = recallLogs.count { it.memoryRating != "Forgot" }.toDouble() / recallLogs.size
@@ -180,6 +191,7 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
                 n = recallLogs.size,
                 predictedPct = Math.round(predicted * 100).toInt(),
                 actualPct = Math.round(actual * 100).toInt(),
+                model = com.example.domain.srs.MedScheduler.CURRENT_MODEL.id,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -421,7 +433,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی" else if (strings.languageCode == "de") "Basierend auf ${cal.n} echten Wiederholungen" else "Based on ${cal.n} real recall reviews",
+                                    text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی · ${cal.model}" else if (strings.languageCode == "de") "Basierend auf ${cal.n} echten Wiederholungen · ${cal.model}" else "Based on ${cal.n} real recall reviews · ${cal.model}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

@@ -23,6 +23,10 @@ import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import android.Manifest
 import android.os.Build
@@ -627,6 +631,8 @@ fun StudyUnitCard(
 ) {
     val strings = com.example.ui.i18n.LocalStrings.current
     val haptic = LocalHapticFeedback.current
+    val selectedStateLabel = when (strings.languageCode) { "fa" -> "انتخاب شده"; "de" -> "Ausgewählt"; else -> "Selected" }
+    val unselectedStateLabel = when (strings.languageCode) { "fa" -> "انتخاب نشده"; "de" -> "Nicht ausgewählt"; else -> "Not selected" }
 
     // A topic added retroactively (studied well before it was logged): flagged so back-dated items are
     // visually distinct in Today. Future-planned items (studiedAt in the future) are NOT flagged.
@@ -664,7 +670,17 @@ fun StudyUnitCard(
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onLongClick?.invoke()
                 }
-            ),
+            )
+            // In selection mode this card IS a checkbox. Without saying so, "selected" exists only
+            // as a tint and a slightly heavier border — invisible to a screen reader and easy to
+            // miss for a colour-blind user. Announced as an explicit state, not just a colour.
+            .semantics {
+                if (selectable) {
+                    this.selected = selected
+                    role = androidx.compose.ui.semantics.Role.Checkbox
+                    stateDescription = if (selected) selectedStateLabel else unselectedStateLabel
+                }
+            },
         shape = RoundedCornerShape(24.dp),
         color = backgroundColor,
         border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor),

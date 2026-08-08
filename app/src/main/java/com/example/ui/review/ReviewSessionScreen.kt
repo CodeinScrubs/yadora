@@ -195,9 +195,19 @@ class ReviewViewModel(
         }
     }
 
-    private fun advanceUnit() {
+    /**
+     * Show the next due topic, PROJECTED onto the current memory model first.
+     *
+     * The projection has to happen here and not only at commit time: the rating buttons preview the
+     * interval from the displayed unit's state, so showing an un-projected FSRS-5 stability while the
+     * commit projects to FSRS-6 first would preview one number and then schedule another — breaking
+     * the preview == commit invariant for every topic that has not yet crossed over. Projection is
+     * idempotent, so the commit path re-running it is a no-op.
+     */
+    private suspend fun advanceUnit() {
         if (dueUnits.isNotEmpty()) {
-            _currentUnit.value = dueUnits.removeAt(0)
+            val next = dueUnits.removeAt(0)
+            _currentUnit.value = runCatching { repository.projectOntoCurrentModel(next) }.getOrDefault(next)
         } else {
             _currentUnit.value = null
         }

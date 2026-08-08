@@ -16,6 +16,8 @@ import com.example.ui.i18n.stateLabel
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -247,7 +249,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
 
 /** A small forgetting-curve sparkline: recall probability decaying over time for this topic's stability. */
 @androidx.compose.runtime.Composable
-private fun ForgettingCurve(stability: Double, modifier: Modifier = Modifier) {
+private fun ForgettingCurve(stability: Double, model: com.example.domain.srs.MedScheduler.MemoryModel, modifier: Modifier = Modifier) {
     val primary = MaterialTheme.colorScheme.primary
     val mutedLine = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
     androidx.compose.foundation.Canvas(modifier = modifier) {
@@ -260,7 +262,7 @@ private fun ForgettingCurve(stability: Double, modifier: Modifier = Modifier) {
         val steps = 60
         for (i in 0..steps) {
             val t = maxT * i / steps
-            val r = com.example.domain.srs.Fsrs.retrievability(t, stability).toFloat()
+            val r = com.example.domain.srs.MedScheduler.retrievability(t, stability, model).toFloat()
             val x = w * i / steps
             val y = h * (1f - r)
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -340,6 +342,11 @@ fun AddUnitScreen(
     var showNextReviewAtPicker by remember { mutableStateOf(false) }
     
     val strings = com.example.ui.i18n.LocalStrings.current
+    val titleRequiredHint = when (strings.languageCode) {
+        "fa" -> "برای ذخیره، عنوان لازم است"
+        "de" -> "Zum Speichern wird ein Titel benötigt"
+        else -> "A title is required to save"
+    }
     val reminderContext = androidx.compose.ui.platform.LocalContext.current
     // Dates honor the user's calendar preference (Jalali/Gregorian), independent of UI language.
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
@@ -382,7 +389,14 @@ fun AddUnitScreen(
                                     })
                             }
                         },
-                        enabled = title.isNotBlank() && !saving
+                        enabled = title.isNotBlank() && !saving,
+                        // A greyed-out Save with no stated reason is a dead end — invisible to a
+                        // screen reader and a guessing game for everyone else. Name the one thing
+                        // that is missing. ('saving' is transient and self-explanatory, so it is
+                        // deliberately not narrated.)
+                        modifier = Modifier.semantics {
+                            if (title.isBlank()) stateDescription = titleRequiredHint
+                        }
                     ) {
                         Text(strings.save)
                     }
@@ -444,6 +458,9 @@ fun AddUnitScreen(
                 onValueChange = { title = it },
                 label = { Text(strings.topicTitleLabel) },
                 modifier = Modifier.fillMaxWidth(),
+                // The title is the ONLY required field; say so under the box rather than letting
+                // Save sit greyed out with no explanation.
+                supportingText = { if (title.isBlank()) Text(titleRequiredHint) },
                 // A topic title can be in any language; lay it out by its own first strong character.
                 textStyle = LocalTextStyle.current.autoDirection(),
                 singleLine = true,
@@ -682,7 +699,11 @@ fun AddUnitScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                     Text(if (strings.languageCode == "fa") "منحنی فراموشی" else if (strings.languageCode == "de") "Vergessenskurve" else "Forgetting curve", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-                    ForgettingCurve(stability = unit.stability, modifier = Modifier.fillMaxWidth().height(100.dp))
+                    ForgettingCurve(
+                        stability = unit.stability,
+                        model = com.example.domain.srs.MedScheduler.MemoryModel.of(unit.memoryModel),
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                    )
                 }
             }
 

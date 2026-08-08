@@ -438,6 +438,19 @@ object MedScheduler {
     val CURRENT_MODEL = MemoryModel.FSRS_6
 
     /**
+     * Recall probability under the model a topic is actually ON.
+     *
+     * Both models are built to pass through 0.9 at t = stability, but their curves diverge sharply
+     * away from that point (FSRS-6's trainable decay gives a much heavier tail than FSRS-5's fixed
+     * -0.5). Drawing one topic's memory on the other model's curve — or logging a retrievability
+     * measured on the wrong curve — would quietly contradict the schedule the user was actually given.
+     */
+    fun retrievability(elapsedDays: Double, stability: Double, model: MemoryModel): Double = when (model) {
+        MemoryModel.FSRS_5 -> Fsrs.retrievability(elapsedDays, stability)
+        MemoryModel.FSRS_6 -> Fsrs6.retrievability(elapsedDays, stability)
+    }
+
+    /**
      * One step of a history projection: rebuild a memory state under the CURRENT model from a past
      * rating. `null` means "this is the first graded rating", which seeds rather than transitions.
      *

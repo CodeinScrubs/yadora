@@ -95,6 +95,73 @@ class ReplayEqualsLiveTest {
         repo.commitReview(updated, log)
     }
 
+    /**
+     * Crossing the FSRS-5 -> FSRS-6 boundary must not break preview == commit.
+     *
+     * The rating buttons preview an interval from the DISPLAYED unit's state. When FSRS-6 went live,
+     * the review screen showed the raw un-projected row while the commit path projected first, so an
+     * un-migrated topic previewed one number and then scheduled another. Projection is idempotent
+     * precisely so it can run at display time AND at commit time without drifting.
+     */
+    @Test
+    fun `projecting onto the current model is idempotent and moves state but never dates`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val studiedAt = now - 40 * day
+
+        // A topic as it exists BEFORE the migration: FSRS-5 state, FSRS-5 logs.
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Appendicitis", studyType = "Topic",
+                stability = 68.93, difficulty = 2.13, retrievability = 0.95, state = "Strong",
+                studiedAt = studiedAt, nextReviewAt = now + 30 * day, modelDueAt = now + 30 * day,
+                currentIntervalDays = 110.3, reviewCount = 2, lapseCount = 0,
+                memoryModel = MedScheduler.MemoryModel.FSRS_5.id,
+            )
+        )
+        repo.insertReviewLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = studiedAt + 1 * day,
+                memoryRating = "Easy", understandingRating = "Clear",
+                previousIntervalDays = 0.0, nextIntervalDays = 5.0,
+                previousState = "New", nextState = "Building",
+                retrievabilityAtReview = 1.0, elapsedDays = 1.0, logType = "FIRST_STUDY",
+                schedulerVersion = MedScheduler.MemoryModel.FSRS_5.id,
+            )
+        )
+        repo.insertReviewLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = studiedAt + 7 * day,
+                memoryRating = "Easy", understandingRating = "Clear",
+                previousIntervalDays = 5.0, nextIntervalDays = 110.3,
+                previousState = "Building", nextState = "Strong",
+                retrievabilityAtReview = 0.958, elapsedDays = 6.0, logType = "RECALL",
+                schedulerVersion = MedScheduler.MemoryModel.FSRS_5.id,
+            )
+        )
+
+        val before = repo.getUnitById(unitId)!!
+        val projected = repo.projectOntoCurrentModel(before)
+
+        assertEquals("now owned by the current model", MedScheduler.CURRENT_MODEL.id, projected.memoryModel)
+        // Rebuilt from the real history rather than carried over, so it must actually differ.
+        org.junit.Assert.assertNotEquals("state is rebuilt, not relabelled", before.stability, projected.stability, 1e-6)
+        org.junit.Assert.assertTrue("and is a usable memory", projected.stability > 0.0 && projected.stability.isFinite())
+        assertEquals("graded retrievals recounted from evidence", 2, projected.reviewCount)
+
+        // The user was already promised these dates by the old model; the migration keeps that promise.
+        assertEquals("effective due date untouched", before.nextReviewAt, projected.nextReviewAt)
+        assertEquals("model due date untouched", before.modelDueAt, projected.modelDueAt)
+        assertEquals("study date untouched", before.studiedAt, projected.studiedAt)
+
+        // Idempotent: display-time and commit-time projection must agree exactly.
+        val again = repo.projectOntoCurrentModel(projected)
+        assertEquals("second projection changes nothing", projected.stability, again.stability, 0.0)
+        assertEquals("second projection changes nothing", projected.difficulty, again.difficulty, 0.0)
+        assertEquals("second projection changes nothing", projected.reviewCount, again.reviewCount)
+        assertEquals("second projection changes nothing", projected.memoryModel, again.memoryModel)
+    }
+
     @Test
     fun `replaying identical ratings reproduces the live state exactly`() = runBlocking {
         val day = 86400000L

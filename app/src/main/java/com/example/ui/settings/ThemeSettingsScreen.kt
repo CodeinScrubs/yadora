@@ -3,6 +3,10 @@ package com.example.ui.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,11 +62,15 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
     )
     // storage value -> swatch color. "" is the default sage brand. A small, curated set that all
     // harmonize with the warm-paper surface (no neon); none collide with the reserved rating hues.
+    // A swatch carries its meaning ONLY in its color, so each needs a spoken name — otherwise a
+    // screen-reader user hears four identical unlabeled buttons and cannot pick a color at all.
+    fun accentName(fa: String, de: String, en: String) =
+        if (isFa) fa else if (strings.languageCode == "de") de else en
     val accents = listOf(
-        "" to com.example.ui.theme.Sage, // Sage (default brand)
-        "#33689B" to Color(0xFF33689B),  // Steel blue
-        "#6B5B95" to Color(0xFF6B5B95),  // Muted plum
-        "#A8554E" to Color(0xFFA8554E)   // Clay
+        Triple("", com.example.ui.theme.Sage, accentName("مریم‌گلی", "Salbei", "Sage")),
+        Triple("#33689B", Color(0xFF33689B), accentName("آبی فولادی", "Stahlblau", "Steel blue")),
+        Triple("#6B5B95", Color(0xFF6B5B95), accentName("آلویی", "Pflaume", "Muted plum")),
+        Triple("#A8554E", Color(0xFFA8554E), accentName("خاک‌رس", "Ton", "Clay")),
     )
 
     Scaffold(
@@ -110,8 +118,14 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                accents.forEach { (hex, color) ->
+            // selectableGroup + Role.RadioButton so assistive tech announces this as one exclusive
+            // choice ("Sage, selected, 1 of 4") instead of four unrelated taps. Selection is still
+            // shown visually by the heavier ring, but color alone is no longer the only channel.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.selectableGroup()
+            ) {
+                accents.forEach { (hex, color, name) ->
                     val selected = accent == hex
                     Box(
                         modifier = Modifier
@@ -123,11 +137,16 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
                                 color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                                 shape = CircleShape
                             )
-                            .clickable {
-                                accent = hex
-                                sp.edit().putString("accent_color", hex).apply()
-                                onThemeChange(mode, hex)
-                            }
+                            .selectable(
+                                selected = selected,
+                                role = androidx.compose.ui.semantics.Role.RadioButton,
+                                onClick = {
+                                    accent = hex
+                                    sp.edit().putString("accent_color", hex).apply()
+                                    onThemeChange(mode, hex)
+                                },
+                            )
+                            .semantics { contentDescription = name }
                     )
                 }
             }
