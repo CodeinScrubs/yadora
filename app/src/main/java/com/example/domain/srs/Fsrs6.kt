@@ -106,7 +106,7 @@ object Fsrs6 {
 
     /** Initial memory state for the very first grade an item receives. */
     fun initialState(grade: Grade, p: Fsrs6Parameters = Fsrs6Parameters()): MemoryState {
-        val s0 = p.weights[grade.value - 1].coerceIn(S_MIN, p.maximumIntervalDays * 10)
+        val s0 = p.weights[grade.value - 1].coerceAtLeast(S_MIN)
         return MemoryState(stability = s0, difficulty = initialDifficulty(grade, p))
     }
 
@@ -134,8 +134,13 @@ object Fsrs6 {
             grade == Grade.Again -> postLapseStability(current, r, p)
             else -> recallStability(current, r, grade, p)
         }
+        // Minimum only, as the reference does. A CEILING on stability is not the same thing as a
+        // ceiling on intervals: the interval cap belongs in MedScheduler, where it is a product
+        // decision about how far ahead to schedule. Capping the STATE instead corrupts the memory
+        // model itself — every later transition reads a stability the evidence does not support,
+        // and the error persists after the topic is forgotten and rebuilt.
         return MemoryState(
-            stability = newStability.coerceIn(S_MIN, p.maximumIntervalDays * 10),
+            stability = newStability.coerceAtLeast(S_MIN),
             difficulty = newDifficulty,
         )
     }

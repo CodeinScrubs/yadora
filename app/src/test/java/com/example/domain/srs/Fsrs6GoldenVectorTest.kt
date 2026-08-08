@@ -128,6 +128,44 @@ class Fsrs6GoldenVectorTest {
         assertTrue("long-term vectors present", longTerm >= 1000)
     }
 
+    /**
+     * The COMPOSED step, not just the pieces.
+     *
+     * Testing the internals alone leaves the seams unchecked: which branch a given elapsed time
+     * selects, whether stability is computed from the OLD difficulty before difficulty is updated,
+     * and what final clamps are applied. A max-stability clamp of 3650 days that the reference does
+     * not have lived here undetected while every internal-function vector matched.
+     */
+    @Test
+    fun `the composed transition matches the reference`() {
+        val rows = golden.getJSONArray("fullState")
+        for (i in 0 until rows.length()) {
+            val row = rows.getJSONObject(i)
+            val s = row.getDouble("s")
+            val d = row.getDouble("d")
+            val t = row.getDouble("t")
+            val grade = gradeOf(row.getInt("g"))
+            val actual = Fsrs6.nextState(MemoryState(s, d), t, grade, p)
+            assertClose("nextState(S=$s, D=$d, t=$t, $grade).stability", row.getDouble("outS"), actual.stability)
+            assertClose("nextState(S=$s, D=$d, t=$t, $grade).difficulty", row.getDouble("outD"), actual.difficulty)
+        }
+        assertTrue("full-state vectors present", rows.length() >= 1000)
+    }
+
+    /** Initial seeding: the reference clamps initial stability to the MINIMUM only. */
+    @Test
+    fun `initial states match the reference`() {
+        val rows = golden.getJSONArray("initialStates")
+        assertEquals("one per grade", 4, rows.length())
+        for (i in 0 until rows.length()) {
+            val row = rows.getJSONObject(i)
+            val grade = gradeOf(row.getInt("g"))
+            val actual = Fsrs6.initialState(grade, p)
+            assertClose("initialState($grade).stability", row.getDouble("s"), actual.stability)
+            assertClose("initialState($grade).difficulty", row.getDouble("d"), actual.difficulty)
+        }
+    }
+
     private fun assertClose(what: String, expected: Double, actual: Double) {
         val tol = 1e-9 * maxOf(1.0, abs(expected))
         assertTrue("$what: expected $expected got $actual", abs(expected - actual) <= tol)

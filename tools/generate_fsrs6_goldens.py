@@ -20,7 +20,9 @@ print("unclamped D0(Easy):", s._initial_difficulty(rating=Rating.Easy, clamp=Fal
 print("clamped   D0(Easy):", s._initial_difficulty(rating=Rating.Easy, clamp=True))
 
 rows = []
-stabs = [0.01, 0.5, 1.0, 2.3065, 5.0, 12.0, 68.9, 250.0, 1000.0]
+# Deliberately runs past 3650 days (10 years). Yadora once clamped stability there, which the
+# reference does not do, and a sweep that stopped at 1000 could never have seen it.
+stabs = [0.01, 0.5, 1.0, 2.3065, 5.0, 12.0, 68.9, 250.0, 1000.0, 4000.0, 20000.0]
 diffs = [1.0, 2.1181, 3.5, 5.0, 7.25, 10.0]
 elapsed = [0, 1, 2, 5, 13, 30, 100, 365]
 grades = [Rating.Again, Rating.Hard, Rating.Good, Rating.Easy]
@@ -49,6 +51,31 @@ for S in stabs:
                     "s": S, "d": D, "t": t, "g": int(g), "r": R, "out": out,
                 })
 
+# FULL-STATE transitions: the composed step, so branch selection and the final clamps are covered
+# too. _next_stability is the library's own Again-vs-recall dispatch AND its stability clamp, so the
+# only thing composed here is the same-day branch, which mirrors Scheduler.review_card's Review case.
+full = []
+for S in stabs:
+    for D in diffs:
+        for t in elapsed:
+            R = (1 + s._FACTOR * t / S) ** s._DECAY
+            for g in grades:
+                if t < 1:
+                    S2 = s._short_term_stability(stability=S, rating=g)
+                else:
+                    S2 = s._next_stability(difficulty=D, stability=S, retrievability=R, rating=g)
+                D2 = s._next_difficulty(difficulty=D, rating=g)
+                full.append({"s": S, "d": D, "t": t, "g": int(g), "outS": S2, "outD": D2})
+
+# Initial states: the reference clamps initial stability to the MINIMUM only.
+init = []
+for g in grades:
+    init.append({
+        "g": int(g),
+        "s": s._clamp_stability(stability=s.parameters[g - 1]),
+        "d": s._initial_difficulty(rating=g, clamp=True),
+    })
+
 # Retrievability + interval inversion goldens
 rt = []
 for S in stabs:
@@ -63,6 +90,7 @@ io.open("golden_fsrs6.json", "w", encoding="utf-8").write(json.dumps({
     "pyFsrsVersion": ver,
     "parameters": list(DEFAULT_PARAMETERS),
     "decay": s._DECAY, "factor": s._FACTOR,
-    "transitions": rows, "retrievability": rt, "intervals": iv,
+    "transitions": rows, "fullState": full, "initialStates": init,
+ "retrievability": rt, "intervals": iv,
 }, indent=1))
-print("wrote", len(rows), "transitions,", len(rt), "R rows,", len(iv), "interval rows")
+print("wrote", len(rows), "transitions,", len(full), "full-state,", len(init), "initial,", len(rt), "R,", len(iv), "interval")

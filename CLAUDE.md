@@ -110,6 +110,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
   by the **short-term branch** `S / e^(w17·w18)` ≈ 0.9518·S, not by `S`; the same-day multiplier
   is floored at 1 for **Good and Easy only** (6.3.1 lists just those two — an unreleased `main`
   commit adds Hard; we pin the release); and the stability floor is 0.001, not 0.01.
+  A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
+  stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
+  functions alone left the seams unchecked — branch selection, argument order, final clamps — and
+  the original sweep stopped at S=1000, below the clamp. The sweep now runs to S=20000 on purpose.
+  A ceiling on the interval is a product decision and lives in `MedScheduler`; a ceiling on the
+  STATE corrupts the model, because every later transition then reads a stability the evidence
+  does not support.
   Regenerate the goldens only to adopt a new pinned reference version, and treat every resulting
   diff as a decision to record — never relax the tolerance.
 - **FSRS-6 is fed COMPLETED WHOLE DAYS** (`MedScheduler.completedModelDays`). The reference
