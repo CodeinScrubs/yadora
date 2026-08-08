@@ -26,6 +26,47 @@ class Fsrs6SchedulingTest {
         hy: Boolean = false, rn: Int = 3,
     ) = MedScheduler.review(s, d, t, m, u, hy, rn, model = m6)
 
+    // --- Completed model days -------------------------------------------------------------------
+
+    /**
+     * The model is fed COMPLETED whole days, as the reference measures them and as the weights were
+     * fitted. On a day-granularity app that also removes noise the product cannot justify: reviewing
+     * a topic at 22:00 rather than at 09:00 is the same evidence on the same calendar day and must
+     * not buy a different interval.
+     */
+    @Test
+    fun `the hour of day cannot change the interval`() {
+        for (m in ratings) {
+            for (u in understandings) {
+                val morning = review(s = 12.0, d = 5.0, t = 7.0, m = m, u = u)
+                for (frac in listOf(0.01, 0.25, 0.5, 0.75, 0.99)) {
+                    val later = review(s = 12.0, d = 5.0, t = 7.0 + frac, m = m, u = u)
+                    assertEquals(
+                        "$m/$u at +$frac of a day must match the same calendar day",
+                        morning.intervalDays, later.intervalDays, 0.0,
+                    )
+                    assertEquals("and so must the state", morning.state.stability, later.state.stability, 0.0)
+                }
+            }
+        }
+    }
+
+    /** Crossing into the next day IS new evidence, so it must still move the result. */
+    @Test
+    fun `crossing a day boundary does change the result`() {
+        val day7 = review(s = 12.0, d = 5.0, t = 7.9, m = MemoryRating.Good, u = UnderstandingRating.Clear)
+        val day8 = review(s = 12.0, d = 5.0, t = 8.0, m = MemoryRating.Good, u = UnderstandingRating.Clear)
+        assertNotEquals("a completed extra day is real evidence", day7.intervalDays, day8.intervalDays)
+    }
+
+    /** Flooring must never reroute a genuine long-term review into the same-day branch. */
+    @Test
+    fun `the same-day branch boundary is unchanged by flooring`() {
+        assertEquals("0.99 days is still same-day", 0.0, MedScheduler.completedModelDays(0.99), 0.0)
+        assertEquals("1.0 days is a completed day", 1.0, MedScheduler.completedModelDays(1.0), 0.0)
+        assertEquals("negative elapsed cannot go below zero", 0.0, MedScheduler.completedModelDays(-3.0), 0.0)
+    }
+
     // --- The two clocks -----------------------------------------------------------------------
 
     @Test

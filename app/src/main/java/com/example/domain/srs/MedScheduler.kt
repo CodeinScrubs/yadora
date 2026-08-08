@@ -408,11 +408,12 @@ object MedScheduler {
         val before = MemoryState(stability = stability, difficulty = difficulty)
         val grade = memoryRating.toGrade()
 
-        val rAtReview = Fsrs6.retrievability(elapsedDays, before.stability, p)
+        val modelDays = completedModelDays(elapsedDays)
+        val rAtReview = Fsrs6.retrievability(modelDays, before.stability, p)
         val newState = if (reviewNumber <= 0) {
             Fsrs6.initialState(grade, p)
         } else {
-            Fsrs6.nextState(before, elapsedDays, grade, p)
+            Fsrs6.nextState(before, modelDays, grade, p)
         }
 
         val baseInterval: Double
@@ -481,8 +482,25 @@ object MedScheduler {
         val p = params6(highYield)
         val grade = memoryRating.toGrade()
         return if (previous == null) Fsrs6.initialState(grade, p)
-        else Fsrs6.nextState(previous, elapsedDays, grade, p)
+        else Fsrs6.nextState(previous, completedModelDays(elapsedDays), grade, p)
     }
+
+    /**
+     * Elapsed time as the memory model expects it: COMPLETED whole days.
+     *
+     * The reference measures a review's age with a whole-day difference, and the weights were fitted
+     * on histories recorded that way. Feeding fractional days runs the model outside the domain it
+     * was fitted on. It also injects noise Yadora cannot justify: on a day-granularity app, reviewing
+     * a topic at 22:00 instead of 09:00 must not earn a different interval than reviewing it that
+     * morning -- same calendar day, same evidence.
+     *
+     * Applied on the FSRS-6 path ONLY. The FSRS-5 path stays fractional because it is frozen: it has
+     * to keep reproducing the schedules users were actually given, deviations included.
+     *
+     * The same-day branch is unaffected -- floor(x) < 1 exactly when x < 1.
+     */
+    fun completedModelDays(elapsedDays: Double): Double =
+        kotlin.math.floor(elapsedDays.coerceAtLeast(0.0))
 
     /** FSRS-6 parameters, sharing the same clamped retention policy as the FSRS-5 path. */
     private fun params6(highYield: Boolean, retentionOverride: Double? = null) = Fsrs6Parameters(
