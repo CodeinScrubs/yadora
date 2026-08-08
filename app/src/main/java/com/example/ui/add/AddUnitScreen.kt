@@ -154,8 +154,13 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                     // what was already scheduled. A subsequent history edit recomputes from the logs
                     // (which store per-review importance), so this is a one-time convenience reschedule.
                     if (highYield && !current.highYield && current.reviewCount > 0 && !manualDateChange && current.lastReviewedAt != null) {
-                        val tighter = com.example.domain.srs.Fsrs.intervalDays(
-                            current.stability, MedScheduler.effectiveRetention(true)
+                        // Through the topic's OWN model: a stored stability only means something
+                        // together with the model that produced it, and re-deriving the interval on
+                        // the wrong curve would set a date the next real review then disagrees with.
+                        val tighter = MedScheduler.intervalDays(
+                            current.stability,
+                            MedScheduler.effectiveRetention(true),
+                            MedScheduler.MemoryModel.of(current.memoryModel),
                         ).coerceIn(1.0, 365.0)
                         val tighterNext = current.lastReviewedAt!! + (tighter * 86400000).toLong()
                         if (tighterNext < updated.nextReviewAt) {

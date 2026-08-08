@@ -288,6 +288,11 @@ class MedReviewRepository(
                         reviewCount = 0,
                         lapseCount = 0,
                         state = StudyState.New.name,
+                        // Reset to the same shape a brand-new topic has, model label included: the
+                        // seed above comes from the FSRS-5 first-study prior, and labelling the row
+                        // FSRS-6 would claim a state expressed in units it was not computed in. With
+                        // no history left it re-seeds at its first rating either way.
+                        memoryModel = MedScheduler.MemoryModel.FSRS_5.id,
                         lastReviewedAt = null,
                         nextReviewAt = copy.studiedAt,
                         modelDueAt = copy.studiedAt,

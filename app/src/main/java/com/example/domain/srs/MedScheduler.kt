@@ -451,6 +451,18 @@ object MedScheduler {
     }
 
     /**
+     * How long a stability buys at a given retention target, under the model that owns it.
+     *
+     * The inverse of [retrievability] and equally model-specific: at 0.93 the same stability is worth
+     * ~0.67 S under FSRS-5 and ~0.61 S under FSRS-6. Any code that re-derives an interval outside
+     * [review] must go through here, or it will schedule on a curve the next real review disagrees with.
+     */
+    fun intervalDays(stability: Double, requestRetention: Double, model: MemoryModel): Double = when (model) {
+        MemoryModel.FSRS_5 -> Fsrs.intervalDays(stability, requestRetention)
+        MemoryModel.FSRS_6 -> Fsrs6.intervalDays(stability, requestRetention)
+    }
+
+    /**
      * One step of a history projection: rebuild a memory state under the CURRENT model from a past
      * rating. `null` means "this is the first graded rating", which seeds rather than transitions.
      *
