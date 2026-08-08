@@ -219,7 +219,9 @@ object BackupManager {
             // Must clear the MODEL's floor, not merely be positive: a sub-floor stability is a value
             // the scheduler can never produce, and it used to make the first Forgot rating on that
             // topic throw out of the FSRS lapse branch.
-            require(u.stability >= com.example.domain.srs.Fsrs.S_MIN && u.stability.isFinite()) {
+            // The loosest legitimate floor across models (FSRS-6 allows 0.001, FSRS-5 0.01) -- this
+            // check exists to reject zero/negative/NaN corruption, not to re-impose a model bound.
+            require(u.stability >= com.example.domain.srs.Fsrs6.S_MIN && u.stability.isFinite()) {
                 "Damaged backup: invalid stability (topic ${i + 1})"
             }
             require(u.difficulty in 1.0..10.0) { "Damaged backup: invalid difficulty (topic ${i + 1})" }

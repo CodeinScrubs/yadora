@@ -219,7 +219,10 @@ object MedScheduler {
      * whenever ANY of those numbers changes; each review log stores the version + the understanding
      * factor actually applied, so history replays under its original policy instead of the new one.
      */
-    const val POLICY_VERSION = "YADORA-4"
+    // YADORA-5: three FSRS-6 equations were corrected to match py-fsrs 6.3.1 exactly (unclamped
+    // D0(Easy) in mean reversion, lapse bounded by the short-term branch, same-day Good/Easy cannot
+    // shrink stability) plus the reference stability floor. Live intervals move, so the stamp moves.
+    const val POLICY_VERSION = "YADORA-5"
 
     /**
      * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.

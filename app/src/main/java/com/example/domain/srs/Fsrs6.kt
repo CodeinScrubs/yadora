@@ -8,9 +8,12 @@ import kotlin.math.pow
  *
  * Added ALONGSIDE [Fsrs] (FSRS-5), not replacing it. Yadora is published, so every existing review
  * log was produced by FSRS-5 and must keep replaying under FSRS-5 forever; a stored memory state is
- * only meaningful together with the model that produced it. Nothing calls this yet — wiring it in
- * (state projection + `MIGRATION_5_6`) is the next step, and keeping that separate means this file
- * can be reviewed and tested on its own without changing a single user's schedule.
+ * only meaningful together with the model that produced it. This is now the LIVE model
+ * (`MedScheduler.CURRENT_MODEL`); topics cross over lazily via `projectOntoCurrentModel`.
+ *
+ * Conformance is verified against py-fsrs 6.3.1 itself by `Fsrs6GoldenVectorTest`, not against a
+ * transcription of the equations — three deviations once survived a green hand-written spec suite
+ * because the same misreading produced both the code and the test.
  *
  * WHAT ACTUALLY DIFFERS FROM FSRS-5 (it is not a cosmetic bump):
  *  - The forgetting curve's exponent is a trainable weight (w20) instead of the fixed −0.5. The
@@ -63,16 +66,28 @@ class Fsrs6Parameters(
             0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
         )
 
-        /** Immutable identity of the weight vector above, stored per review log. */
-        const val DEFAULT_PARAMETER_SET_ID = "FSRS6-DEFAULT-21"
+        /**
+         * Immutable identity stored per review log. Names the WEIGHTS **and** the implementation
+         * they run through. Both matter: the same
+         * vector evaluated by a subtly different set of equations produces a different stability,
+         * and calibration that pooled the two would be averaging two models under one label. The
+         * suffix is the exact reference release these values are verified against by
+         * Fsrs6GoldenVectorTest, so a future conformance change forces a new id here.
+         */
+        const val DEFAULT_PARAMETER_SET_ID = "FSRS6-DEFAULT-21-PYFSRS-6.3.1"
     }
 }
 
 /** The FSRS-6 math. Stateless and pure, so every call is reproducible and unit-testable. */
 object Fsrs6 {
 
-    /** Same floor as FSRS-5: a stability below this is not a memory the model can reason about. */
-    const val S_MIN = 0.01
+    /**
+     * The reference stability floor is 0.001 days, not the 0.01 FSRS-5 used here. It only binds after
+     * a long run of consecutive lapses -- the product layer floors every INTERVAL at a day regardless
+     * -- but a floor ten times too high quietly changes the transitions that follow it, so it matches
+     * the reference exactly. FSRS-5 keeps 0.01 because its stored states were produced under it.
+     */
+    const val S_MIN = 0.001
     private const val D_MIN = 1.0
     private const val D_MAX = 10.0
 
@@ -132,22 +147,46 @@ object Fsrs6 {
      * The S^(−w19) term is new in FSRS-6 — it damps same-day gains as stability grows, so cramming a
      * well-known topic stops paying the same dividend as cramming a shaky one.
      */
-    private fun shortTermStability(stability: Double, grade: Grade, p: Fsrs6Parameters): Double {
+    internal fun shortTermStability(stability: Double, grade: Grade, p: Fsrs6Parameters): Double {
         val w = p.weights
         val s = stability.coerceAtLeast(S_MIN)
-        return s * exp(w[17] * (grade.value - 3 + w[18])) * s.pow(-w[19])
+        var increase = exp(w[17] * (grade.value - 3 + w[18])) * s.pow(-w[19])
+        // The reference floors the MULTIPLIER at 1 for GOOD and EASY only: restudying something on
+        // the same day and getting it right cannot make the memory weaker than not restudying it.
+        // Without this the S^(-w19) damping term drives the multiplier below 1 once stability is
+        // large, so a same-day Good on a mature topic silently SHRANK its stability.
+        //
+        // Hard is deliberately NOT floored, and that is not an oversight: py-fsrs 6.3.1 -- the pinned
+        // released reference -- lists only (Good, Easy). An unreleased commit on main widens it to
+        // include Hard. Pinning the RELEASE keeps the goldens reproducible; revisit when a version
+        // containing that change actually ships.
+        if (grade == Grade.Good || grade == Grade.Easy) increase = increase.coerceAtLeast(1.0)
+        return (s * increase).coerceAtLeast(S_MIN)
     }
 
     /** Linear damping of the grade delta, then mean reversion toward D₀(Easy). Unchanged from FSRS-5. */
-    private fun nextDifficulty(difficulty: Double, grade: Grade, p: Fsrs6Parameters): Double {
+    internal fun nextDifficulty(difficulty: Double, grade: Grade, p: Fsrs6Parameters): Double {
         val w = p.weights
         val deltaD = -w[6] * (grade.value - 3)
         val damped = difficulty + deltaD * (10.0 - difficulty) / 9.0
-        return (w[7] * initialDifficulty(Grade.Easy, p) + (1.0 - w[7]) * damped).coerceIn(D_MIN, D_MAX)
+        // Mean reversion pulls toward the RAW D0(Easy), which with the FSRS-6 weights is -4.77 --
+        // far outside the [1,10] band a stored difficulty lives in. The reference is explicit about
+        // this -- py-fsrs calls _initial_difficulty(rating=Easy, clamp=False) here and clamp=True
+        // only when seeding a new card: the clamp applies to a difficulty being STORED, not to the
+        // reversion target. Using the clamped 1.0 instead shifts every
+        // review by w7 * 5.77 in the easy direction -- tiny per review, accumulating over years.
+        return (w[7] * rawInitialDifficulty(Grade.Easy, p) + (1.0 - w[7]) * damped)
+            .coerceIn(D_MIN, D_MAX)
+    }
+
+    /** D0(G) before the storage clamp. Only mean reversion wants this; everything else wants [initialDifficulty]. */
+    private fun rawInitialDifficulty(grade: Grade, p: Fsrs6Parameters): Double {
+        val w = p.weights
+        return w[4] - exp(w[5] * (grade.value - 1)) + 1.0
     }
 
     /** Stability growth on a successful recall (Hard/Good/Easy). Always grows S. */
-    private fun recallStability(s: MemoryState, r: Double, grade: Grade, p: Fsrs6Parameters): Double {
+    internal fun recallStability(s: MemoryState, r: Double, grade: Grade, p: Fsrs6Parameters): Double {
         val w = p.weights
         val hardPenalty = if (grade == Grade.Hard) w[15] else 1.0
         val easyBonus = if (grade == Grade.Easy) w[16] else 1.0
@@ -166,12 +205,16 @@ object Fsrs6 {
      * an empty range when the incoming stability is itself below the floor, which is reachable from
      * restored backup data (the same defect already fixed in [Fsrs]).
      */
-    private fun postLapseStability(s: MemoryState, r: Double, p: Fsrs6Parameters): Double {
+    internal fun postLapseStability(s: MemoryState, r: Double, p: Fsrs6Parameters): Double {
         val w = p.weights
-        val sFail = w[11] *
+        val longTerm = w[11] *
             s.difficulty.pow(-w[12]) *
             ((s.stability + 1.0).pow(w[13]) - 1.0) *
             exp(w[14] * (1.0 - r))
-        return sFail.coerceAtMost(s.stability).coerceAtLeast(S_MIN)
+        // The reference bounds a lapse by the SHORT-TERM branch, S / e^(w17*w18), not by S itself.
+        // With these weights that is 0.9518*S, so a forgotten topic must always come out at least
+        // ~4.8% weaker. Capping at S let a mature memory survive a genuine failure untouched.
+        val shortTerm = s.stability / exp(w[17] * w[18])
+        return minOf(longTerm, shortTerm).coerceAtLeast(S_MIN)
     }
 }
