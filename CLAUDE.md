@@ -261,6 +261,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **First-study intervals ARE fuzzed** (Good/Easy first ratings clear the 3-day
   threshold). This is intentional: it stops five topics added in one session coming
   due together forever. Only the doc comment claiming otherwise was wrong.
+- **The database is EXCLUDED from cloud backup and INCLUDED in device transfer.** User-confirmed
+  2026-08 after an external audit argued for including it everywhere. Phone-to-phone setup carries
+  the full study history; a cloud restore after a lost or wiped phone carries settings only, and
+  topics come back from the app's own JSON export (Settings -> Export full backup), which is the
+  path that is actually tested. The audit's point that Android stops the app before Auto Backup is
+  correct and does weaken the torn-WAL argument -- the decision stands anyway, because a restored
+  database that will not open is a worse failure than one that is absent. Do not re-propose it.
 - **Transient reminder state lives in its own `medreview_transient` prefs file**,
   excluded from cloud backup and device transfer. Android backs up whole prefs FILES,
   so `last_notif_shown_at` / `reminder_snoozed_until` / `reminder_next_nudge_at`
