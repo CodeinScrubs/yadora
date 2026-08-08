@@ -121,6 +121,15 @@ These were decided deliberately. Re-suggesting them wastes a session:
   does not support.
   Regenerate the goldens only to adopt a new pinned reference version, and treat every resulting
   diff as a decision to record — never relax the tolerance.
+- **FSRS-6 elapsed time is LOCAL CALENDAR DAYS** (`MedScheduler.modelElapsedDays`), not floored
+  elapsed milliseconds. The queue offers a topic from 00:00 on its due day, so a topic reviewed at
+  20:00 with a one-day interval is offered at 00:00 the next morning — only 13 hours of elapsed
+  time, which floors to ZERO completed days and routes a genuine next-day review into the SAME-DAY
+  branch, worth a ~5% stability bump instead of a real one. Milliseconds also leave a discontinuity
+  at the previous review's hour. Calendar days remove both and match the fitted domain (the weights
+  come from Anki histories, where elapsed time is a difference of day numbers). Accepted cost: the
+  count depends on the device time zone, so a history replayed after moving continents can shift by
+  a day — rare and bounded, unlike the queue mismatch. FSRS-5 keeps fractional ms; it is frozen.
 - **FSRS-6 is fed COMPLETED WHOLE DAYS** (`MedScheduler.completedModelDays`). The reference
   measures a review's age in whole days and the weights were fitted that way, so fractional
   elapsed time runs the model outside its fitted domain — and on a day-granularity app it also
@@ -231,6 +240,15 @@ These were decided deliberately. Re-suggesting them wastes a session:
   as a seed silently reset the merged FSRS state on any later rating correction or
   study-date edit. `editReviewRating` normalizes the extra rows to `RECALL` as it
   replays, so histories merged by older builds self-heal.
+- **`MedScheduler.review` takes a REQUIRED model parameter.** A default is a trap: a new call site
+  that forgets it schedules on the retired model, compiles, runs and looks right. Tests that pin
+  FSRS-5-only behaviour (the retired ×0.9/×0.8 understanding multiplier) now say `FSRS_5` out loud
+  and are named "legacy"; everything else runs on `CURRENT_MODEL`.
+- **The post-review explanation takes BOTH clocks.** It used to receive only the memory interval,
+  so a Good + Partial review announced "next in 100 days" and then came back in three. The headline
+  is always the date that actually applies; the memory estimate is named beside it when they differ.
+- **Release binaries are NOT tracked in git.** The committed `app/release/app-release.aab` had gone
+  stale by dozens of commits and would have shipped the retired scheduler. Build and sign from a tag.
 - **`priorityScore`'s lapse term is capped** at `MAX_SCORED_LAPSES` (5). `lapseCount`
   only ever grows, so uncapped it eventually outweighed high-yield (100) and let an
   old struggle permanently outrank a genuinely important topic. The overdue term is

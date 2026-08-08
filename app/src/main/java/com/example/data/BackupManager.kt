@@ -333,7 +333,10 @@ object BackupManager {
             // commit() (not apply()): restore success is reported after this returns, so the
             // settings must actually be on disk by then.
             @Suppress("ApplySharedPref")
-            e.commit()
+            // The result is CHECKED, not discarded: reporting "restored" while the settings half of
+            // the restore silently failed leaves the user with someone else's retention target and
+            // reminder times, and no reason to suspect it.
+            check(e.commit()) { "database was restored but settings could not be written" }
             runCatching {
                 com.example.domain.srs.MedScheduler.userRetention =
                     sp.getFloat("desired_retention", 0.90f).toDouble()
@@ -373,8 +376,15 @@ object BackupManager {
         // Clear settings but PRESERVE the language choice (a wipe shouldn't reset the UI to English).
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
         val keptLanguage = sp.getString("app_language", "en")
+        // language_selected must survive with it. Keeping the language but dropping the flag sent the
+        // user back through language onboarding after a wipe -- the opposite of the stated intent.
+        val keptLanguageSelected = sp.getBoolean("language_selected", false)
         @Suppress("ApplySharedPref")
-        sp.edit().clear().putString("app_language", keptLanguage).commit()
+        val prefsCleared = sp.edit().clear()
+            .putString("app_language", keptLanguage)
+            .putBoolean("language_selected", keptLanguageSelected)
+            .commit()
+        check(prefsCleared) { "settings could not be cleared" }
         // Device-local reminder bookkeeping lives in its own file (kept out of cloud backup), so
         // clearing settings alone would leave a stale "already shown today" / snooze behind.
         runCatching {

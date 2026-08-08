@@ -199,15 +199,22 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     onClick = {
                         showDeleteAll = false
                         exportScope.launch {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            // The result decides the message. Announcing "all data deleted" after a
+                            // failed wipe is the worst possible lie this screen can tell: the user
+                            // believes their data is gone -- possibly hands the phone on -- when it
+                            // is still there, and they never retry.
+                            val wiped = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                 runCatching { com.example.data.BackupManager.deleteAllData(context) }
                             }
                             android.widget.Toast.makeText(
                                 context,
-                                when (language) { "fa" -> "همهٔ داده‌ها حذف شد"; "de" -> "Alle Daten gelöscht"; else -> "All data deleted" },
+                                if (wiped.isSuccess)
+                                    when (language) { "fa" -> "همهٔ داده‌ها حذف شد"; "de" -> "Alle Daten gelöscht"; else -> "All data deleted" }
+                                else
+                                    when (language) { "fa" -> "حذف کامل نشد — داده‌ها هنوز روی دستگاه هستند. دوباره تلاش کن."; "de" -> "Löschen fehlgeschlagen — die Daten sind noch auf dem Gerät. Bitte erneut versuchen."; else -> "Delete failed — your data is still on this device. Please try again." },
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
-                            onBack()
+                            if (wiped.isSuccess) onBack()
                         }
                     }
                 ) { Text(when (language) { "fa" -> "حذف همه"; "de" -> "Alles löschen"; else -> "Delete everything" }, color = MaterialTheme.colorScheme.error) }

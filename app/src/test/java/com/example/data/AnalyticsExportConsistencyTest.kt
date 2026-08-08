@@ -47,6 +47,7 @@ class AnalyticsExportConsistencyTest {
             stability = u1.stability, difficulty = u1.difficulty, elapsedDays = 1.0,
             memoryRating = MemoryRating.Good, understanding = UnderstandingRating.Clear,
             highYield = false, reviewNumber = 1,
+            model = MedScheduler.CURRENT_MODEL,
         )
         val logId = repo.commitReview(
             u1.copy(lastReviewedAt = now, nextReviewAt = now + day, modelDueAt = now + day, deferredUntil = null, reviewCount = 1),

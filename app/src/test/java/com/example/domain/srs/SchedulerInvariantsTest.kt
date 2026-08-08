@@ -35,7 +35,7 @@ class SchedulerInvariantsTest {
     fun `every reachable review produces a sane, bounded, finite interval`() {
         val max = FsrsParameters().maximumIntervalDays
         sweep { s, d, t, m, u, hy, rn ->
-            val o = MedScheduler.review(s, d, t, m, u, hy, rn)
+            val o = MedScheduler.review(s, d, t, m, u, hy, rn, model = MedScheduler.CURRENT_MODEL)
             val ctx = "S=$s D=$d t=$t $m/$u hy=$hy rn=$rn"
             assertTrue("interval finite ($ctx)", o.intervalDays.isFinite())
             assertTrue("interval >= 1 day ($ctx) got ${o.intervalDays}", o.intervalDays >= MedScheduler.MIN_INTERVAL_DAYS - 1e-9)
@@ -55,7 +55,7 @@ class SchedulerInvariantsTest {
     @Test
     fun `forgetting always brings the topic back tomorrow, however long it had been`() {
         sweep { s, d, t, _, u, hy, rn ->
-            val o = MedScheduler.review(s, d, t, MemoryRating.Forgot, u, hy, rn)
+            val o = MedScheduler.review(s, d, t, MemoryRating.Forgot, u, hy, rn, model = MedScheduler.CURRENT_MODEL)
             assertEquals(
                 "a lapse relearns tomorrow regardless of lateness (S=$s t=$t)",
                 MedScheduler.RELEARN_STEP_DAYS, o.intervalDays, 1e-9,
@@ -66,12 +66,12 @@ class SchedulerInvariantsTest {
     }
 
     @Test
-    fun `understanding is an exact, transparent multiplier and never touches the memory model`() {
+    fun `legacy FSRS-5 understanding is an exact multiplier and never touches the memory model`() {
         for (s in stabilities) for (d in difficulties) for (t in elapsed)
             for (m in listOf(MemoryRating.Hard, MemoryRating.Good, MemoryRating.Easy)) for (rn in listOf(1, 7)) {
-                val clear = MedScheduler.review(s, d, t, m, UnderstandingRating.Clear, false, rn)
-                val partial = MedScheduler.review(s, d, t, m, UnderstandingRating.Partial, false, rn)
-                val confused = MedScheduler.review(s, d, t, m, UnderstandingRating.Confused, false, rn)
+                val clear = MedScheduler.review(s, d, t, m, UnderstandingRating.Clear, false, rn, model = MedScheduler.MemoryModel.FSRS_5)
+                val partial = MedScheduler.review(s, d, t, m, UnderstandingRating.Partial, false, rn, model = MedScheduler.MemoryModel.FSRS_5)
+                val confused = MedScheduler.review(s, d, t, m, UnderstandingRating.Confused, false, rn, model = MedScheduler.MemoryModel.FSRS_5)
                 val ctx = "S=$s D=$d t=$t $m rn=$rn"
 
                 // FSRS models MEMORY only: the same recall grade must yield the same memory state no
@@ -101,13 +101,13 @@ class SchedulerInvariantsTest {
     fun `the first graded rating is always capped, and identical however late it happens`() {
         for (m in listOf(MemoryRating.Hard, MemoryRating.Good, MemoryRating.Easy)) for (u in understandings) {
             val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, false).state
-            val onTime = MedScheduler.review(seed.stability, seed.difficulty, 0.0, m, u, false, 0)
+            val onTime = MedScheduler.review(seed.stability, seed.difficulty, 0.0, m, u, false, 0, model = MedScheduler.CURRENT_MODEL)
             assertTrue(
                 "first rating must stay inside the calm first-study window ($m/$u) got ${onTime.baseIntervalDays}",
                 onTime.baseIntervalDays <= MedScheduler.FIRST_STUDY_MAX_DAYS + 1e-9,
             )
             for (late in listOf(1.0, 5.0, 40.0, 400.0, 5000.0)) {
-                val delayed = MedScheduler.review(seed.stability, seed.difficulty, late, m, u, false, 0)
+                val delayed = MedScheduler.review(seed.stability, seed.difficulty, late, m, u, false, 0, model = MedScheduler.CURRENT_MODEL)
                 assertEquals(
                     "a first rating $late days late must schedule exactly like an on-time one ($m/$u)",
                     onTime.intervalDays, delayed.intervalDays, 1e-12,
@@ -120,8 +120,8 @@ class SchedulerInvariantsTest {
     @Test
     fun `high-yield topics are always reviewed at least as often, never less`() {
         sweep { s, d, t, m, u, _, rn ->
-            val normal = MedScheduler.review(s, d, t, m, u, highYield = false, reviewNumber = rn)
-            val important = MedScheduler.review(s, d, t, m, u, highYield = true, reviewNumber = rn)
+            val normal = MedScheduler.review(s, d, t, m, u, highYield = false, reviewNumber = rn, model = MedScheduler.CURRENT_MODEL)
+            val important = MedScheduler.review(s, d, t, m, u, highYield = true, reviewNumber = rn, model = MedScheduler.CURRENT_MODEL)
             assertTrue(
                 "marking a topic important must never push it FURTHER away (S=$s t=$t $m rn=$rn): " +
                     "${normal.intervalDays} -> ${important.intervalDays}",
@@ -138,7 +138,7 @@ class SchedulerInvariantsTest {
                 var previous = Double.MAX_VALUE
                 for (r in listOf(0.70, 0.80, 0.85, 0.90, 0.95, 0.99)) {
                     MedScheduler.userRetention = r
-                    val got = MedScheduler.review(s, d, 10.0, m, UnderstandingRating.Clear, false, 3).intervalDays
+                    val got = MedScheduler.review(s, d, 10.0, m, UnderstandingRating.Clear, false, 3, model = MedScheduler.CURRENT_MODEL).intervalDays
                     assertTrue("wanting to remember MORE must not mean reviewing later (S=$s r=$r)", got <= previous + 1e-9)
                     previous = got
                 }
@@ -179,6 +179,7 @@ class SchedulerInvariantsTest {
                     val o = MedScheduler.review(
                         seed.stability, seed.difficulty, elapsedDays = 0.0,
                         memoryRating = m, understanding = u, highYield = hy, reviewNumber = 0,
+                        model = MedScheduler.CURRENT_MODEL,
                     )
                     // reviewCount 0 == the first graded rating, which is what the ceiling protects.
                     val fuzzed = MedScheduler.fuzzedInterval(
@@ -202,6 +203,7 @@ class SchedulerInvariantsTest {
             stability = 200.0, difficulty = 3.0, elapsedDays = 180.0,
             memoryRating = MemoryRating.Good, understanding = UnderstandingRating.Clear,
             highYield = false, reviewNumber = 5,
+            model = MedScheduler.CURRENT_MODEL,
         )
         val fuzzed = MedScheduler.fuzzedInterval(long.intervalDays, long.baseIntervalDays, 9L, reviewCount = 5)
         assertTrue("a mature topic must not be clamped to the first-study window", fuzzed > MedScheduler.FIRST_STUDY_MAX_DAYS)

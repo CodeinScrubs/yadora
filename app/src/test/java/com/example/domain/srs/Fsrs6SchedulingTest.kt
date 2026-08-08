@@ -26,6 +26,63 @@ class Fsrs6SchedulingTest {
         hy: Boolean = false, rn: Int = 3,
     ) = MedScheduler.review(s, d, t, m, u, hy, rn, model = m6)
 
+    // --- Elapsed time as the queue means it ------------------------------------------------------
+
+    /**
+     * THE day-granularity trap. A topic reviewed at 20:00 with a one-day interval is due at 20:00
+     * tomorrow, but the queue offers everything due by end of tomorrow — so it appears at 00:00.
+     * Measured in elapsed milliseconds, a learner reviewing at 09:00 waited only 13 hours, which
+     * floors to ZERO completed days and routes a genuine next-day review into the same-day branch.
+     */
+    @Test
+    fun `a next-day review counts as one day whatever hour it happens at`() {
+        val tz = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Europe/Berlin"))
+            fun at(d: Int, h: Int): Long = java.util.Calendar.getInstance().apply {
+                clear(); set(2026, java.util.Calendar.MARCH, d, h, 0, 0)
+            }.timeInMillis
+
+            val lastReviewed = at(10, 20) // reviewed at 20:00
+            for (hour in 0..23) {
+                val elapsed = MedScheduler.modelElapsedDays(lastReviewed, at(11, hour), m6)
+                assertEquals("reviewing on the next calendar day at ${hour}:00 is one day", 1.0, elapsed, 0.0)
+            }
+            // And the day after is two, again at any hour.
+            for (hour in listOf(0, 9, 23)) {
+                assertEquals("two calendar days later", 2.0, MedScheduler.modelElapsedDays(lastReviewed, at(12, hour), m6), 0.0)
+            }
+            // Same calendar day is still zero, so the same-day branch is reachable when it should be.
+            assertEquals("same day stays same-day", 0.0, MedScheduler.modelElapsedDays(lastReviewed, at(10, 23), m6), 0.0)
+            assertEquals("never negative", 0.0, MedScheduler.modelElapsedDays(at(11, 9), at(10, 9), m6), 0.0)
+        } finally {
+            java.util.TimeZone.setDefault(tz)
+        }
+    }
+
+    /**
+     * The consequence that matters: a one-day relearn step, reviewed the next morning, must be
+     * graded as a real retrieval and not as a same-day restudy worth a few percent.
+     */
+    @Test
+    fun `a next-morning relearn review earns real stability, not a same-day nudge`() {
+        val sameDay = review(s = 1.0, d = 6.0, t = 0.0, m = MemoryRating.Good, u = UnderstandingRating.Clear)
+        val nextDay = review(s = 1.0, d = 6.0, t = 1.0, m = MemoryRating.Good, u = UnderstandingRating.Clear)
+        assertTrue(
+            "a completed day of waiting must be worth more than a same-day restudy " +
+                "(${nextDay.state.stability} vs ${sameDay.state.stability})",
+            nextDay.state.stability > sameDay.state.stability * 1.5,
+        )
+    }
+
+    /** FSRS-5 must keep counting fractional milliseconds — it is frozen. */
+    @Test
+    fun `the legacy model still measures elapsed time in fractional days`() {
+        val day = 86400000L
+        val elapsed = MedScheduler.modelElapsedDays(0L, (2.5 * day).toLong(), MedScheduler.MemoryModel.FSRS_5)
+        assertEquals("FSRS-5 is unchanged", 2.5, elapsed, 1e-9)
+    }
+
     // --- Completed model days -------------------------------------------------------------------
 
     /**
@@ -195,18 +252,44 @@ class Fsrs6SchedulingTest {
         }
     }
 
+    /**
+     * The load-bearing separation, on the LIVE model. FSRS models MEMORY; what the learner says about
+     * their understanding must never move stability or difficulty, or the two-clock design collapses
+     * back into the multiplier it replaced. The equivalent assertion in SchedulerInvariantsTest is
+     * scoped to FSRS-5 because it also pins the retired x0.9/x0.8 ratios.
+     */
+    @Test
+    fun `understanding never touches the FSRS-6 memory state`() {
+        for (s in listOf(1.0, 5.0, 20.0, 110.0)) {
+            for (d in listOf(1.0, 5.0, 9.5)) {
+                for (t in listOf(0.0, 1.0, 12.0, 200.0)) {
+                    for (m in ratings + listOf(MemoryRating.Forgot)) {
+                        val clear = review(s, d, t, m, UnderstandingRating.Clear)
+                        for (u in understandings) {
+                            val other = review(s, d, t, m, u)
+                            val ctx = "S=$s D=$d t=$t $m/$u"
+                            assertEquals("stability must not move ($ctx)", clear.state.stability, other.state.stability, 0.0)
+                            assertEquals("difficulty must not move ($ctx)", clear.state.difficulty, other.state.difficulty, 0.0)
+                            assertEquals("nor the memory interval ($ctx)", clear.intervalDays, other.intervalDays, 0.0)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Model isolation ------------------------------------------------------------------------
 
     @Test
     fun `choosing FSRS-6 changes the schedule but cannot disturb the FSRS-5 path`() {
-        val five = MedScheduler.review(20.0, 5.0, 45.0, MemoryRating.Good, UnderstandingRating.Clear, false, 3)
+        val five = MedScheduler.review(20.0, 5.0, 45.0, MemoryRating.Good, UnderstandingRating.Clear, false, 3, model = MedScheduler.MemoryModel.FSRS_5)
         val six = MedScheduler.review(20.0, 5.0, 45.0, MemoryRating.Good, UnderstandingRating.Clear, false, 3, model = m6)
 
         assertEquals("FSRS-6 matches its own golden transition", 86.24141137779552, six.state.stability, 1e-9)
         assertNotEquals("the two models genuinely disagree", five.state.stability, six.state.stability, 1e-6)
 
         // FSRS-5 keeps folding understanding into the interval (legacy replay depends on it)...
-        val fiveConfused = MedScheduler.review(20.0, 5.0, 45.0, MemoryRating.Good, UnderstandingRating.Confused, false, 3)
+        val fiveConfused = MedScheduler.review(20.0, 5.0, 45.0, MemoryRating.Good, UnderstandingRating.Confused, false, 3, model = MedScheduler.MemoryModel.FSRS_5)
         assertEquals("FSRS-5 still multiplies", five.intervalDays * MedScheduler.UNDERSTANDING_CONFUSED_FACTOR,
             fiveConfused.intervalDays, 1e-9)
         assertNull("and reports no second clock", fiveConfused.remediationDays)

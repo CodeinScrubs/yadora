@@ -37,6 +37,7 @@ class MedSchedulerTest {
                 memoryRating = MemoryRating.Good,
                 understanding = UnderstandingRating.Clear,
                 highYield = false,
+                model = MedScheduler.CURRENT_MODEL,
             )
             assertTrue("interval must not shrink on Good: ${outcome.intervalDays} >= $lastInterval", outcome.intervalDays >= lastInterval)
             lastInterval = outcome.intervalDays
@@ -49,11 +50,11 @@ class MedSchedulerTest {
         var state = MedScheduler.firstStudy(UnderstandingRating.Clear).state
         var interval = 3.0
         repeat(3) {
-            val o = MedScheduler.review(state.stability, state.difficulty, interval, MemoryRating.Good, UnderstandingRating.Clear, false)
+            val o = MedScheduler.review(state.stability, state.difficulty, interval, MemoryRating.Good, UnderstandingRating.Clear, false, model = MedScheduler.CURRENT_MODEL)
             state = o.state; interval = o.intervalDays
         }
         val stabilityBefore = state.stability
-        val forgot = MedScheduler.review(state.stability, state.difficulty, interval, MemoryRating.Forgot, UnderstandingRating.Confused, false)
+        val forgot = MedScheduler.review(state.stability, state.difficulty, interval, MemoryRating.Forgot, UnderstandingRating.Confused, false, model = MedScheduler.CURRENT_MODEL)
 
         assertEquals("Forgot => relearn tomorrow", 1.0, forgot.intervalDays, 1e-9)
         assertTrue("stability must drop after a lapse", forgot.state.stability < stabilityBefore)
@@ -61,17 +62,21 @@ class MedSchedulerTest {
 
     @Test fun high_yield_items_are_scheduled_sooner_than_normal_items() {
         val s = MemoryState(stability = 20.0, difficulty = 5.0)
-        val normal = MedScheduler.review(s.stability, s.difficulty, 20.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = false)
-        val high = MedScheduler.review(s.stability, s.difficulty, 20.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = true)
+        val normal = MedScheduler.review(s.stability, s.difficulty, 20.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = false, model = MedScheduler.CURRENT_MODEL)
+        val high = MedScheduler.review(s.stability, s.difficulty, 20.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = true, model = MedScheduler.CURRENT_MODEL)
         assertTrue("high-yield ${high.intervalDays} < normal ${normal.intervalDays}", high.intervalDays < normal.intervalDays)
     }
 
-    @Test fun lower_understanding_schedules_sooner() {
-        // Same memory grade, worse understanding => shorter next interval (transparent product modifier).
+    /**
+     * LEGACY (FSRS-5) behaviour. The multiplier is gone from the live path -- FSRS-6 gives
+     * understanding its own clock instead -- but frozen replay of pre-migration history still
+     * depends on it, so it is pinned against the model that actually used it.
+     */
+    @Test fun legacy_fsrs5_lower_understanding_schedules_sooner() {
         val s = 20.0; val d = 5.0; val e = 20.0
-        val clear = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Clear, false).intervalDays
-        val partial = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Partial, false).intervalDays
-        val confused = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Confused, false).intervalDays
+        val clear = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Clear, false, model = MedScheduler.MemoryModel.FSRS_5).intervalDays
+        val partial = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Partial, false, model = MedScheduler.MemoryModel.FSRS_5).intervalDays
+        val confused = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Confused, false, model = MedScheduler.MemoryModel.FSRS_5).intervalDays
         assertTrue("clear($clear) > partial($partial) > confused($confused)", clear > partial && partial > confused)
         assertEquals("partial is 90% of clear", clear * 0.90, partial, 1e-6)
         assertEquals("confused is 80% of clear", clear * 0.80, confused, 1e-6)
@@ -80,16 +85,16 @@ class MedSchedulerTest {
     @Test fun understanding_does_not_change_the_fsrs_memory_state() {
         // Understanding affects the interval only, never the stored stability/difficulty.
         val s = 12.0; val d = 6.0; val e = 12.0
-        val clear = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Clear, false).state
-        val confused = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Confused, false).state
+        val clear = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Clear, false, model = MedScheduler.CURRENT_MODEL).state
+        val confused = MedScheduler.review(s, d, e, MemoryRating.Good, UnderstandingRating.Confused, false, model = MedScheduler.CURRENT_MODEL).state
         assertEquals(clear.stability, confused.stability, 1e-12)
         assertEquals(clear.difficulty, confused.difficulty, 1e-12)
     }
 
     @Test fun preview_interval_exactly_matches_committed_interval() {
         val s = MemoryState(stability = 8.0, difficulty = 6.0)
-        val preview = MedScheduler.previewIntervalDays(s.stability, s.difficulty, 8.0, MemoryRating.Hard, UnderstandingRating.Partial, false)
-        val commit = MedScheduler.review(s.stability, s.difficulty, 8.0, MemoryRating.Hard, UnderstandingRating.Partial, false).intervalDays
+        val preview = MedScheduler.previewIntervalDays(s.stability, s.difficulty, 8.0, MemoryRating.Hard, UnderstandingRating.Partial, false, model = MedScheduler.CURRENT_MODEL)
+        val commit = MedScheduler.review(s.stability, s.difficulty, 8.0, MemoryRating.Hard, UnderstandingRating.Partial, false, model = MedScheduler.CURRENT_MODEL).intervalDays
         assertEquals(commit, preview, 1e-12)
     }
 
@@ -105,7 +110,7 @@ class MedSchedulerTest {
         // stays in a calm consolidation window — it is NOT pushed weeks out just because it "felt easy"
         // right after studying (that isn't proof of delayed recall).
         val s = 1.0; val d = 5.0; val elapsed = 0.0
-        fun iv(r: MemoryRating) = MedScheduler.review(s, d, elapsed, r, UnderstandingRating.Clear, false, reviewNumber = 0).intervalDays
+        fun iv(r: MemoryRating) = MedScheduler.review(s, d, elapsed, r, UnderstandingRating.Clear, false, reviewNumber = 0, model = MedScheduler.CURRENT_MODEL).intervalDays
         val again = iv(MemoryRating.Forgot)
         val hard = iv(MemoryRating.Hard)
         val good = iv(MemoryRating.Good)
@@ -116,7 +121,7 @@ class MedSchedulerTest {
     }
 
     @Test fun reason_text_is_present_and_flags_high_yield() {
-        val o = MedScheduler.review(10.0, 5.0, 10.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = true)
+        val o = MedScheduler.review(10.0, 5.0, 10.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = true, model = MedScheduler.CURRENT_MODEL)
         val text = o.reason.defaultText()
         assertTrue(text.isNotBlank())
         assertTrue(text.contains("important")) // user-facing wording: "important", never "high-yield"

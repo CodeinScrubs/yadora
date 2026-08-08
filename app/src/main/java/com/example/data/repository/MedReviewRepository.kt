@@ -142,7 +142,8 @@ class MedReviewRepository(
         var reviews = 0
         for (log in graded) {
             val grade = runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrNull() ?: continue
-            val elapsed = ((log.reviewedAt - prevTime) / 86400000.0).coerceAtLeast(0.0)
+            // Projection rebuilds under the CURRENT model, so time is measured its way too.
+            val elapsed = MedScheduler.modelElapsedDays(prevTime, log.reviewedAt, MedScheduler.CURRENT_MODEL)
             val highYield = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
             state = MedScheduler.projectStep(state, elapsed, grade, highYield)
             if (grade == MemoryRating.Forgot) lapses++
@@ -510,7 +511,9 @@ class MedReviewRepository(
                 log.understandingRating == "NotAsked" -> "NotAsked"
                 else -> und.name
             }
-            val elapsed = ((log.reviewedAt - prevTime) / 86400000.0).coerceAtLeast(0.0)
+            // The topic's OWN model decides how elapsed time is counted; a frozen FSRS-5 history
+            // must keep replaying on fractional milliseconds.
+            val elapsed = MedScheduler.modelElapsedDays(prevTime, log.reviewedAt, replayModel)
 
             // Timezone-stable classification: trust the logType RECORDED at review time. Recomputing
             // it from timestamps here would use the DEVICE'S CURRENT timezone — a user who travels

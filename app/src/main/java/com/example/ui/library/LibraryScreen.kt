@@ -103,7 +103,14 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         }.timeInMillis
         result = when (activeFilter) {
             LibraryFilter.DUE -> result.filter { it.nextReviewAt <= endOfToday }
-            LibraryFilter.WEAK -> result.filter { it.state == "NeedsRelearn" || it.state == "Learning" || it.lapseCount > 0 }
+            // "Weak" is about the topic NOW, not its record. lapseCount only ever grows, so keying
+            // on it meant one bad day years ago branded a topic weak forever -- exactly the kind of
+            // permanent judgement the rest of the app avoids. Current state plus RECENT trouble
+            // (still relearning, or lapses that have not yet been outgrown) is the honest filter.
+            LibraryFilter.WEAK -> result.filter {
+                it.state == "NeedsRelearn" || it.state == "Learning" ||
+                    (it.lapseCount > 0 && it.stability < com.example.domain.srs.MedScheduler.STRONG_STABILITY_DAYS)
+            }
             LibraryFilter.HIGH_YIELD -> result.filter { it.highYield }
             LibraryFilter.ALL -> result
         }

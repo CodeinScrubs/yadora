@@ -16,3 +16,9 @@
 local.properties
 .env
 debug.keystore
+
+# Release binaries are NOT tracked. A committed .aab silently goes stale -- the one that used to
+# live at app/release/ predated the FSRS-6 work by dozens of commits and would have shipped the
+# retired scheduler if anyone had uploaded it. Build and sign from a tagged commit instead.
+app/release/
+*.aab

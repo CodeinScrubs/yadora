@@ -216,11 +216,20 @@ class ReviewViewModel(
     }
 
     /** Localized cause → effect line for the just-committed rating ("why is it scheduled there?"). */
+    /**
+     * The plain-language "why this date".
+     *
+     * Takes BOTH clocks. It used to receive only the memory interval, so a topic rated Good with
+     * Partial understanding announced "next in 100 days" and then came back in three — the headline
+     * number was the one the user did NOT get. Under a two-clock model the honest headline is always
+     * the date that actually applies, with the memory estimate named alongside it when they differ.
+     */
     private fun buildReasonText(
         memory: MemoryRating,
         understanding: UnderstandingRating,
         highYield: Boolean,
         intervalDays: Double,
+        effectiveIntervalDays: Double,
         firstStudy: Boolean,
     ): String {
         val lang = getApplication<android.app.Application>()
@@ -228,7 +237,10 @@ class ReviewViewModel(
             .getString("app_language", "en") ?: "en"
         val fa = lang == "fa"
         val de = lang == "de"
-        val d = Math.round(intervalDays).toInt().coerceAtLeast(1)
+        // The headline is the date the topic ACTUALLY returns — the earlier of the two clocks.
+        val d = Math.round(effectiveIntervalDays).toInt().coerceAtLeast(1)
+        val memoryDays = Math.round(intervalDays).toInt().coerceAtLeast(1)
+        val repairWon = memoryDays > d
         val days = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر" else if (de) (if (d <= 1) "in 1 Tag" else "in $d Tagen") else if (d <= 1) "in 1 day" else "in $d days"
         val core = when {
             firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
@@ -237,9 +249,24 @@ class ReviewViewModel(
             memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — weiter hinausgeschoben, nächste $days." else "Easy — pushed out, next $days."
             else -> if (fa) "خوب به یاد آوردی — مرور بعدی $days." else if (de) "Gut erinnert — nächste $days." else "Recalled well — next $days."
         }
-        val note = if (memory != MemoryRating.Forgot && !firstStudy) when (understanding) {
-            UnderstandingRating.Confused -> if (fa) " چون گیج‌کننده بود، کمی زودتر." else if (de) " Etwas früher, weil es verwirrend war." else " A bit sooner because it was confusing."
-            UnderstandingRating.Partial -> if (fa) " چون فهم ناقص بود، کمی زودتر." else if (de) " Etwas früher wegen teilweisem Verständnis." else " Slightly sooner for partial understanding."
+        // When the understanding clock wins, name the memory estimate too. "A bit sooner" alone hid
+        // how far apart the two can be — a 100-day memory prediction with a 3-day repair is not
+        // "a bit", and the user is entitled to see that their memory is fine and comprehension isn't.
+        val memoryEstimate = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(memoryDays)} روز"
+            else if (de) "$memoryDays Tage" else "$memoryDays days"
+        val note = if (memory != MemoryRating.Forgot && !firstStudy) when {
+            understanding == UnderstandingRating.Confused && repairWon ->
+                if (fa) " حافظه‌ات $memoryEstimate دوام می‌آورد، اما چون گیج‌کننده بود زودتر برمی‌گردد."
+                else if (de) " Dein Gedächtnis hält $memoryEstimate, aber es kommt früher zurück, weil es verwirrend war."
+                else " Your memory should hold for $memoryEstimate, but it returns sooner because it was confusing."
+            understanding == UnderstandingRating.Partial && repairWon ->
+                if (fa) " حافظه‌ات $memoryEstimate دوام می‌آورد، اما فهم ناقص زودتر برش می‌گرداند."
+                else if (de) " Dein Gedächtnis hält $memoryEstimate, aber teilweises Verständnis holt es früher zurück."
+                else " Your memory should hold for $memoryEstimate, but partial understanding brings it back sooner."
+            understanding == UnderstandingRating.Confused ->
+                if (fa) " چون گیج‌کننده بود، کمی زودتر." else if (de) " Etwas früher, weil es verwirrend war." else " A bit sooner because it was confusing."
+            understanding == UnderstandingRating.Partial ->
+                if (fa) " چون فهم ناقص بود، کمی زودتر." else if (de) " Etwas früher wegen teilweisem Verständnis." else " Slightly sooner for partial understanding."
             else -> ""
         } else ""
         val yield = if (highYield && memory != MemoryRating.Forgot) (if (fa) " (فشرده‌تر چون مهم است.)" else if (de) " (Enger getaktet — es ist wichtig.)" else " (Kept tighter — it's important.)") else ""
@@ -297,7 +324,12 @@ class ReviewViewModel(
             val now = System.currentTimeMillis()
             // Clamped: a future-dated topic reviewed early would otherwise log NEGATIVE elapsed days
             // (the FSRS math clamps internally, but the log/export data must stay clean too).
-            val elapsedDays = ((now - (unit.lastReviewedAt ?: unit.studiedAt)) / 86400000.0).coerceAtLeast(0.0)
+            // Measured as the CURRENT model counts time (whole local calendar days for FSRS-6), so
+            // a topic offered by today's queue is credited with the day the learner actually waited
+            // rather than with the clock difference from whatever hour they last reviewed at.
+            val elapsedDays = MedScheduler.modelElapsedDays(
+                unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL,
+            )
 
             // The first graded rating is always review #0 (seeded from the rating, capped by the
             // first-study window) no matter how late it happens. Same rule as the replay path.
@@ -398,7 +430,15 @@ class ReviewViewModel(
             // (The growth event is inserted inside commitReview's transaction, keyed to the log id,
             // so a committed review and its growth can never disagree — and undo removes both.)
             com.example.widget.DueWidgetProvider.updateAll(getApplication())
-            lastReason = buildReasonText(memoryRating, understandingRating, unit.highYield, nextInterval, reviewNumber == 0)
+            // Both clocks: the memory prediction AND the date actually written to the row, so the
+            // message can never announce an interval the schedule did not use.
+            val effectiveIntervalDays = (effectiveDueAt - now) / 86400000.0
+            lastReason = buildReasonText(
+                memoryRating, understandingRating, unit.highYield,
+                intervalDays = nextInterval,
+                effectiveIntervalDays = effectiveIntervalDays,
+                firstStudy = reviewNumber == 0,
+            )
 
             advanceUnit()
           } catch (t: Throwable) {
@@ -951,7 +991,12 @@ fun ReviewSessionScreen(
                     ) {
                         UnderstandingRating.entries.forEach { rating ->
                             val now = System.currentTimeMillis()
-                            val elapsedDays = (now - (currentUnit.lastReviewedAt ?: currentUnit.studiedAt)) / 86400000.0
+                            // Same measure the commit uses, or the buttons would preview an
+                            // interval the commit then disagrees with.
+                            val elapsedDays = MedScheduler.modelElapsedDays(
+                                currentUnit.lastReviewedAt ?: currentUnit.studiedAt, now,
+                                MedScheduler.CURRENT_MODEL,
+                            )
                             // Both choices are known here, so this is the actual interval that commits
                             // (including the same deterministic fuzz the commit path applies).
                             val previewOutcome = MedScheduler.review(

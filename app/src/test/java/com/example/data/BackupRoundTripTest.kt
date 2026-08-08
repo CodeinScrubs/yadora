@@ -76,6 +76,7 @@ class BackupRoundTripTest {
                     memoryRating = com.example.domain.model.MemoryRating.Good,
                     understanding = com.example.domain.model.UnderstandingRating.Clear,
                     highYield = important, reviewNumber = 3,
+                    model = com.example.domain.srs.MedScheduler.CURRENT_MODEL,
                 )
                 assertTrue("a review after restoring $bad still produces a usable interval",
                     outcome.intervalDays.isFinite() && outcome.intervalDays >= 1.0)
@@ -97,6 +98,7 @@ class BackupRoundTripTest {
                     memoryRating = com.example.domain.model.MemoryRating.Easy,
                     understanding = com.example.domain.model.UnderstandingRating.Clear,
                     highYield = false, reviewNumber = 2,
+                    model = com.example.domain.srs.MedScheduler.CURRENT_MODEL,
                 )
                 assertTrue(outcome.intervalDays.isFinite())
             }

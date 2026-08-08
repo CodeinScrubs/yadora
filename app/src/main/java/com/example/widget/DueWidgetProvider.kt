@@ -43,11 +43,16 @@ class DueWidgetProvider : AppWidgetProvider() {
                 val mgr = AppWidgetManager.getInstance(context)
                 val ids = mgr.getAppWidgetIds(ComponentName(context, DueWidgetProvider::class.java))
                 if (ids.isEmpty()) return
-                Thread { runCatching { render(context, mgr, ids) } }.start()
+                // WorkManager, not a bare Thread. Called from a BroadcastReceiver the process can
+                // be torn down the moment onReceive returns, so an unmanaged thread may never finish
+                // and the widget silently keeps a stale count.
+                androidx.work.WorkManager.getInstance(context).enqueue(
+                    androidx.work.OneTimeWorkRequestBuilder<WidgetRefreshWorker>().build()
+                )
             }
         }
 
-        private fun render(context: Context, mgr: AppWidgetManager, ids: IntArray) {
+        internal fun render(context: Context, mgr: AppWidgetManager, ids: IntArray) {
             val app = context.applicationContext as? com.example.MedReviewApplication ?: return
             val endOfToday = Calendar.getInstance().apply {
                 set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)

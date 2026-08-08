@@ -57,6 +57,7 @@ class RegressionTest {
                 seed.stability, seed.difficulty, elapsedDays = 0.0,
                 memoryRating = m, understanding = UnderstandingRating.Clear,
                 highYield = false, reviewNumber = 0,
+                model = MedScheduler.CURRENT_MODEL,
             )
             assertTrue("$m first rating stays within the cap", o.baseIntervalDays <= MedScheduler.FIRST_STUDY_MAX_DAYS + 1e-9)
             assertTrue("$m first rating is still at least a day out", o.intervalDays >= MedScheduler.MIN_INTERVAL_DAYS - 1e-9)
@@ -114,6 +115,7 @@ class RegressionTest {
             understanding = UnderstandingRating.Clear,
             highYield = false,
             reviewNumber = MedScheduler.effectiveReviewNumber(0),
+            model = MedScheduler.CURRENT_MODEL,
         ).intervalDays
 
         val onTime = firstRatingInterval(0.0)
@@ -139,6 +141,7 @@ class RegressionTest {
             understanding = UnderstandingRating.Clear,
             highYield = false,
             reviewNumber = 1,
+            model = MedScheduler.CURRENT_MODEL,
         ).intervalDays
 
         var previous = interval(1.0)
@@ -180,8 +183,8 @@ class RegressionTest {
     fun `same-day review changes the scheduled interval`() {
         // The original bug: same-day re-review left the schedule unchanged (cramming was a no-op).
         val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, false).state
-        val first = MedScheduler.review(seed.stability, seed.difficulty, 0.0, MemoryRating.Good, UnderstandingRating.Clear, false, reviewNumber = 0)
-        val sameDay = MedScheduler.review(first.state.stability, first.state.difficulty, 0.1, MemoryRating.Easy, UnderstandingRating.Clear, false, reviewNumber = 1)
+        val first = MedScheduler.review(seed.stability, seed.difficulty, 0.0, MemoryRating.Good, UnderstandingRating.Clear, false, reviewNumber = 0, model = MedScheduler.CURRENT_MODEL)
+        val sameDay = MedScheduler.review(first.state.stability, first.state.difficulty, 0.1, MemoryRating.Easy, UnderstandingRating.Clear, false, reviewNumber = 1, model = MedScheduler.CURRENT_MODEL)
         assertTrue("same-day Easy must lengthen the interval (${sameDay.intervalDays} vs ${first.intervalDays})",
             sameDay.intervalDays > first.intervalDays)
     }

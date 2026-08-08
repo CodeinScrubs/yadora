@@ -334,7 +334,10 @@ object MedScheduler {
         dampFirstStudyPrior: Boolean = true,
         // Which memory model computes this transition. Defaults to FSRS-5 so legacy replay and every
         // pre-existing caller keep byte-identical behaviour; the live path passes FSRS-6 explicitly.
-        model: MemoryModel = MemoryModel.FSRS_5,
+        // REQUIRED, deliberately. A default here is a trap: any new call site that forgets the
+        // parameter silently schedules on the retired model, compiles, runs, and looks right. The
+        // caller always knows which model owns the state it is handing in -- make it say so.
+        model: MemoryModel,
     ): Outcome {
         if (model == MemoryModel.FSRS_6) {
             return reviewFsrs6(
@@ -499,6 +502,36 @@ object MedScheduler {
      *
      * The same-day branch is unaffected -- floor(x) < 1 exactly when x < 1.
      */
+    /**
+     * Elapsed time between two instants, measured the way the OWNING model expects.
+     *
+     * FSRS-6 gets whole LOCAL CALENDAR DAYS, not floored elapsed milliseconds, because that is what
+     * the queue means by "due". A topic reviewed at 20:00 with a one-day interval is due at 20:00
+     * tomorrow, but the day-granularity queue offers it from 00:00 tomorrow — so a learner who
+     * reviews at 09:00 was, in elapsed-millisecond terms, only 13 hours late from the previous
+     * review. Flooring that gives ZERO completed days, which routes a genuine next-day review into
+     * the SAME-DAY branch and hands out a ~5% stability bump instead of a real one. It also leaves a
+     * discontinuity at the previous review's hour: review before it and you lose a day, after it and
+     * you do not. Calendar days remove both problems, and they match the fitted domain — the FSRS
+     * weights come from Anki histories, where elapsed time is a difference of day numbers.
+     *
+     * FSRS-5 keeps fractional elapsed milliseconds because it is frozen and must keep reproducing
+     * the schedules users were actually given.
+     *
+     * The cost, accepted: a calendar-day count depends on the device time zone, so a history
+     * replayed after moving continents can differ by a day. That is rare and bounded; the queue
+     * mismatch above was neither.
+     */
+    fun modelElapsedDays(fromMillis: Long, toMillis: Long, model: MemoryModel): Double = when (model) {
+        MemoryModel.FSRS_5 -> ((toMillis - fromMillis) / 86400000.0).coerceAtLeast(0.0)
+        MemoryModel.FSRS_6 -> java.time.temporal.ChronoUnit.DAYS
+            .between(localDate(fromMillis), localDate(toMillis))
+            .coerceAtLeast(0L).toDouble()
+    }
+
+    private fun localDate(millis: Long): java.time.LocalDate =
+        java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+
     fun completedModelDays(elapsedDays: Double): Double =
         kotlin.math.floor(elapsedDays.coerceAtLeast(0.0))
 
@@ -561,7 +594,10 @@ object MedScheduler {
         understanding: UnderstandingRating,
         highYield: Boolean,
         reviewNumber: Int = 1,
-    ): Double = review(stability, difficulty, elapsedDays, memoryRating, understanding, highYield, reviewNumber).intervalDays
+        model: MemoryModel,
+    ): Double = review(
+        stability, difficulty, elapsedDays, memoryRating, understanding, highYield, reviewNumber, model = model,
+    ).intervalDays
 
     /**
      * Ordering score for the due queue and the overdue-redistribution plan. Higher = review sooner /
@@ -601,10 +637,16 @@ object MedScheduler {
      * Derive a mastery state from the memory model (replacing the old review-count thresholds, which
      * were decoupled from scheduling). Mastery tracks stability so the badge and the scheduler agree.
      */
+    /** Stability at which a topic stops being "Learning". POLICY, not a measured boundary. */
+    const val BUILDING_STABILITY_DAYS = 7.0
+
+    /** Stability at which a topic counts as "Strong". POLICY, not a measured boundary. */
+    const val STRONG_STABILITY_DAYS = 21.0
+
     fun masteryState(stability: Double, justForgot: Boolean): StudyState = when {
         justForgot -> StudyState.NeedsRelearn
-        stability < 7.0 -> StudyState.Learning
-        stability < 21.0 -> StudyState.Building
+        stability < BUILDING_STABILITY_DAYS -> StudyState.Learning
+        stability < STRONG_STABILITY_DAYS -> StudyState.Building
         else -> StudyState.Strong
     }
 
