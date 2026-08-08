@@ -1,8 +1,9 @@
 # Yadora — CLAUDE.md
 
 Offline Android study-review **scheduler** (not a flashcard app) built around
-FSRS-5 spaced repetition. Kotlin + Jetpack Compose + Material 3 + Room. No
-backend. English + Persian (RTL, Persian digits, Jalali calendar).
+FSRS spaced repetition — **FSRS-6 is live**, FSRS-5 is kept frozen for replay.
+Kotlin + Jetpack Compose + Material 3 + Room. No backend. English + Persian
+(RTL, Persian digits, Jalali calendar) + German.
 
 ## Build & verify
 
@@ -22,14 +23,15 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:lintDebug
 - `namespace = "com.example"` — deliberately kept; internal names
   (`medreview_db`, `medreview_settings`, channel ids) are intentionally NOT
   renamed. Cosmetic churn only; skip it.
-- Version: `versionName` is the public string ("1.0"); bump `versionCode` by 1
-  for every Play upload.
+- Version: `versionName` is the public string (currently "1.1"); bump
+  `versionCode` by 1 for every Play upload (currently 4).
 
 ## Architecture
 
-- `domain/srs/` — `Fsrs.kt` (pure FSRS-5) and `MedScheduler.kt` (product layer:
-  understanding multipliers, high-yield retention, first-study window, interval
-  fuzz, queue priority score). This is the tested core — keep it pure and covered.
+- `domain/srs/` — `Fsrs6.kt` (the LIVE model), `Fsrs.kt` (FSRS-5, frozen for
+  replay) and `MedScheduler.kt` (product layer: the understanding clock,
+  high-yield retention, first-study window, interval fuzz, queue priority score).
+  This is the tested core — keep it pure and covered.
 - `data/` — Room (`AppDatabase`, DAOs, entities), `MedReviewRepository`,
   `BackupManager` (versioned JSON export/import).
 - `ui/<screen>/` — each screen file holds its ViewModel + factory + composables.
@@ -59,8 +61,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/…/4_5`,
-  `exportSchema=true`). Never `fallbackToDestructiveMigration`.
+- **Room migrations are additive only** (`MIGRATION_1_2/…/5_6`, currently DB v6,
+  `exportSchema=true`, schemas 2–6 committed). Never `fallbackToDestructiveMigration`.
 - **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
   query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
   only by user deferrals (Not today / redistribute / manual edit) and cleared by
