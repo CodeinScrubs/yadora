@@ -178,7 +178,7 @@ class ReviewViewModel(
                     }
                 } else {
                     val sharedPrefs = getApplication<android.app.Application>().getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-                    val limit = sharedPrefs.getFloat("daily_review_limit", 50f).toInt()
+                    val limit = MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f).toInt())
                     val now = System.currentTimeMillis()
                     val units = repository.getDueUnits(cutoffTime).first()
                     dueUnits.clear()
@@ -412,7 +412,11 @@ class ReviewViewModel(
                 // v5 policy snapshot: which Yadora policy bundle + which understanding factor actually
                 // shaped this interval — so future policy changes replay history faithfully.
                 schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
-                understandingFactorAtReview = MedScheduler.understandingFactor(understandingRating),
+                // -1.0 is the entity's "not recorded" sentinel. Storing Partial's 0.9 here because
+                // the fast Forgot path passes Partial as a placeholder would put a factor in the
+                // research export that the user never actually selected.
+                understandingFactorAtReview =
+                    if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
             )
             // Update the unit's schedule AND insert its log atomically (one Room transaction), then
             // remember the exact log id so Undo deletes precisely this log.

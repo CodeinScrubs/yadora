@@ -505,7 +505,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
             
             val limitContext = LocalContext.current
             val sharedPrefs = remember { limitContext.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE) }
-            val limitValue = sharedPrefs.getFloat("daily_review_limit", 50f).toInt()
+            val limitValue = com.example.domain.srs.MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f).toInt())
             
             val todayCalendar = Calendar.getInstance().apply {
                 set(Calendar.HOUR_OF_DAY, 0)

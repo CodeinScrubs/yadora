@@ -115,7 +115,12 @@ object AnalyticsExporter {
             put("minIntervalDays", com.example.domain.srs.MedScheduler.MIN_INTERVAL_DAYS)
             put("understandingPartialFactor", com.example.domain.srs.MedScheduler.UNDERSTANDING_PARTIAL_FACTOR)
             put("understandingConfusedFactor", com.example.domain.srs.MedScheduler.UNDERSTANDING_CONFUSED_FACTOR)
-            put("highYieldRetention", com.example.domain.srs.MedScheduler.HIGH_YIELD_RETENTION)
+            // The value ACTUALLY in force, not the legacy HIGH_YIELD_RETENTION constant: the real
+            // target is the user's own setting + 0.03 capped at 0.97, so exporting a fixed 0.93
+            // would describe a policy no review was ever scheduled under.
+            put("baseRetentionInForce", com.example.domain.srs.MedScheduler.effectiveRetention(false))
+            put("highYieldRetentionInForce", com.example.domain.srs.MedScheduler.effectiveRetention(true))
+            put("highYieldRetentionBonus", 0.03)
             put("examDateAffectsScheduling", false)
         })
 

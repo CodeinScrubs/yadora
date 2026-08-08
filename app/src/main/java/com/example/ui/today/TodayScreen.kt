@@ -255,11 +255,11 @@ fun TodayScreen(
     val ctxForLimit = androidx.compose.ui.platform.LocalContext.current
     // Live-read the limit so changing it in Settings reflects here without needing an app restart.
     val dailyLimit by androidx.compose.runtime.produceState(
-        initialValue = ctxForLimit.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE).getFloat("daily_review_limit", 50f).toInt()
+        initialValue = com.example.domain.srs.MedScheduler.safeDailyLimit(ctxForLimit.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE).getFloat("daily_review_limit", 50f).toInt())
     ) {
         val sp = ctxForLimit.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
-            if (key == "daily_review_limit") value = prefs.getFloat("daily_review_limit", 50f).toInt()
+            if (key == "daily_review_limit") value = com.example.domain.srs.MedScheduler.safeDailyLimit(prefs.getFloat("daily_review_limit", 50f).toInt())
         }
         sp.registerOnSharedPreferenceChangeListener(listener)
         awaitDispose { sp.unregisterOnSharedPreferenceChangeListener(listener) }

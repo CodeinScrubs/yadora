@@ -201,6 +201,15 @@ object MedScheduler {
     )
 
     /** The retention target actually in force for an item — logged per review for later tuning. */
+    /**
+     * Daily review cap, clamped on READ.
+     *
+     * Same rule as [safeRetention], and for the same reason: prefs can hold anything (a corrupt
+     * file, a value written by an older build), and this number reaches `List.take()`, which throws
+     * on a negative count. A bad setting must degrade to a sane queue, never crash reviewing.
+     */
+    fun safeDailyLimit(raw: Int): Int = raw.coerceIn(1, 500)
+
     fun effectiveRetention(highYield: Boolean): Double {
         val base = safeRetention(userRetention)
         return if (highYield) (base + 0.03).coerceAtMost(0.97) else base

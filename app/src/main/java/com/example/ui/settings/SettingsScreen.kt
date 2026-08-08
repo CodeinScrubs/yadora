@@ -755,7 +755,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 ) {
                     Text(strings.spacedRepAlgorithm, style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "FSRS-5",
+                        // Read from the scheduler, never hardcoded -- this line told every user the
+                        // app was running FSRS-5 for as long as FSRS-6 had been live.
+                        com.example.domain.srs.MedScheduler.CURRENT_MODEL.id,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -764,7 +766,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    strings.algorithmDesc.format("FSRS-5"),
+                    strings.algorithmDesc.format(com.example.domain.srs.MedScheduler.CURRENT_MODEL.id),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
