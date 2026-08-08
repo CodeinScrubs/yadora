@@ -46,8 +46,13 @@ class DueWidgetProvider : AppWidgetProvider() {
                 // WorkManager, not a bare Thread. Called from a BroadcastReceiver the process can
                 // be torn down the moment onReceive returns, so an unmanaged thread may never finish
                 // and the widget silently keeps a stale count.
-                androidx.work.WorkManager.getInstance(context).enqueue(
-                    androidx.work.OneTimeWorkRequestBuilder<WidgetRefreshWorker>().build()
+                // UNIQUE work, REPLACE: a review session fires this on every rating, and only the
+                // last count is worth drawing. Plain enqueue() would leave a 50-request queue behind
+                // after a 50-topic session, each one re-rendering the same widget.
+                androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                    "yadora-widget-refresh",
+                    androidx.work.ExistingWorkPolicy.REPLACE,
+                    androidx.work.OneTimeWorkRequestBuilder<WidgetRefreshWorker>().build(),
                 )
             }
         }

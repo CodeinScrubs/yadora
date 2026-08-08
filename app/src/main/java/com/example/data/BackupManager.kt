@@ -333,10 +333,11 @@ object BackupManager {
             // commit() (not apply()): restore success is reported after this returns, so the
             // settings must actually be on disk by then.
             @Suppress("ApplySharedPref")
-            // The result is CHECKED, not discarded: reporting "restored" while the settings half of
-            // the restore silently failed leaves the user with someone else's retention target and
-            // reminder times, and no reason to suspect it.
-            check(e.commit()) { "database was restored but settings could not be written" }
+            // Checked but NOT thrown. The database transaction above has already committed, so
+            // raising here would surface as "Restore failed -- invalid backup" for a valid backup
+            // whose topics are sitting restored on disk. Settings are the recoverable half: the user
+            // can see and reset them. Losing the truth about their topics is not recoverable.
+            if (!e.commit()) android.util.Log.w("Yadora", "topics restored, but settings could not be written")
             runCatching {
                 com.example.domain.srs.MedScheduler.userRetention =
                     sp.getFloat("desired_retention", 0.90f).toDouble()
@@ -384,7 +385,11 @@ object BackupManager {
             .putString("app_language", keptLanguage)
             .putBoolean("language_selected", keptLanguageSelected)
             .commit()
-        check(prefsCleared) { "settings could not be cleared" }
+        // NOT a check(): the database was already wiped several lines above, irreversibly. Throwing
+        // here would make the caller report "your data is still on this device" about data that is
+        // provably gone -- a worse lie than the one this failure path exists to prevent. Leftover
+        // settings are cosmetic; the destructive part succeeded, so the success message stands.
+        if (!prefsCleared) android.util.Log.w("Yadora", "data deleted, but settings could not be cleared")
         // Device-local reminder bookkeeping lives in its own file (kept out of cloud backup), so
         // clearing settings alone would leave a stale "already shown today" / snooze behind.
         runCatching {

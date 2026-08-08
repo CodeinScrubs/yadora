@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -160,6 +161,68 @@ class ReplayEqualsLiveTest {
         assertEquals("second projection changes nothing", projected.difficulty, again.difficulty, 0.0)
         assertEquals("second projection changes nothing", projected.reviewCount, again.reviewCount)
         assertEquals("second projection changes nothing", projected.memoryModel, again.memoryModel)
+    }
+
+    /**
+     * A skipped understanding question must STAY skipped through a replay.
+     *
+     * The fast Forgot path passes Partial as a placeholder so the math has a value, and the log
+     * records the honest string "NotAsked". The factor column has to agree: writing Partial's 0.9
+     * there puts a judgement in the research export that the user never made. The commit path was
+     * fixed for this, and the replay quietly undid it on the next rating correction -- a half-fix is
+     * worse than either end, because the data looks right until someone edits an old rating.
+     */
+    @Test
+    fun `a skipped understanding question stays unrecorded through a replay`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Skipped understanding", studyType = "Topic",
+                stability = 3.0, difficulty = 5.0, retrievability = 1.0, state = "Learning",
+                studiedAt = now - 20 * day, nextReviewAt = now, modelDueAt = now,
+                currentIntervalDays = 3.0, reviewCount = 2, lapseCount = 1,
+                memoryModel = MedScheduler.CURRENT_MODEL.id,
+            )
+        )
+        repo.insertReviewLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now - 10 * day,
+                memoryRating = "Good", understandingRating = "Clear",
+                previousIntervalDays = 0.0, nextIntervalDays = 3.0,
+                previousState = "New", nextState = "Learning",
+                retrievabilityAtReview = 1.0, elapsedDays = 10.0, logType = "FIRST_STUDY",
+                schedulerVersion = MedScheduler.CURRENT_MODEL.id,
+                schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
+                understandingFactorAtReview = 1.0,
+            )
+        )
+        // The fast-commit shape: Forgot with the question never asked.
+        repo.insertReviewLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now - 3 * day,
+                memoryRating = "Forgot", understandingRating = "NotAsked",
+                previousIntervalDays = 3.0, nextIntervalDays = 1.0,
+                previousState = "Learning", nextState = "NeedsRelearn",
+                retrievabilityAtReview = 0.7, elapsedDays = 7.0, logType = "RECALL",
+                schedulerVersion = MedScheduler.CURRENT_MODEL.id,
+                schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
+                understandingFactorAtReview = -1.0,
+            )
+        )
+
+        val logs = db.reviewLogDao().getLogsForUnit(unitId).first().sortedBy { it.reviewedAt }
+        // Correct the FIRST rating, leaving the NotAsked row untouched.
+        repo.editReviewRating(unitId, logs.first().id, MemoryRating.Easy, UnderstandingRating.Clear)
+
+        val after = db.reviewLogDao().getLogsForUnit(unitId).first().sortedBy { it.reviewedAt }
+        val skipped = after.first { it.understandingRating == "NotAsked" }
+        assertEquals("the honest string survives", "NotAsked", skipped.understandingRating)
+        assertTrue(
+            "and so must the sentinel -- a factor of ${skipped.understandingFactorAtReview} claims " +
+                "the user answered when they never did",
+            skipped.understandingFactorAtReview < 0.0,
+        )
     }
 
     @Test

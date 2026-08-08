@@ -627,7 +627,14 @@ class MedReviewRepository(
                     // The EDITED row is a new decision under the CURRENT policy — its version must say so.
                     schedulerPolicyVersion = if (log.id == logId) MedScheduler.POLICY_VERSION
                         else log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION },
-                    understandingFactorAtReview = histFactor ?: MedScheduler.understandingFactor(und),
+                    // A row whose understanding was never ASKED keeps the "not recorded" sentinel.
+                    // 'und' maps NotAsked to Partial so the math has something to work with, but
+                    // writing Partial's factor here would put a judgement in the research export
+                    // that the user never made -- and would silently undo the same fix on the commit
+                    // path the first time any rating on this topic was corrected.
+                    understandingFactorAtReview =
+                        if (undStored == "NotAsked") -1.0
+                        else histFactor ?: MedScheduler.understandingFactor(und),
                 )
             )
 
