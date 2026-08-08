@@ -33,6 +33,15 @@ interface ReviewLogDao {
     @Query("SELECT * FROM review_logs ORDER BY reviewedAt ASC, id ASC")
     suspend fun getAllLogsOnce(): List<ReviewLogEntity>
 
+    /**
+     * One-shot chronological history for a single topic. A Flow query cannot be collected inside a
+     * Room transaction (it runs on the query executor and would not see the transaction's own reads),
+     * and replay/projection needs the history in ascending order, which is the opposite of the
+     * newest-first order the UI Flow uses.
+     */
+    @Query("SELECT * FROM review_logs WHERE studyUnitId = :unitId ORDER BY reviewedAt ASC, id ASC")
+    suspend fun getLogsForUnitOnce(unitId: Long): List<ReviewLogEntity>
+
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")
     suspend fun deleteLogsForUnits(unitIds: List<Long>)

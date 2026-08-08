@@ -46,6 +46,12 @@ These were decided deliberately. Re-suggesting them wastes a session:
   screen intentionally has no confidence/difficulty section. A topic is due on
   its study date; the first rating there is review #0.
 - **Day-granularity due model** (date-only). Not a bug; intervals are whole days.
+  Due dates are `reviewedAt + intervalDays * 86_400_000` — ELAPSED milliseconds, not calendar
+  addition. That is required: forgetting is physical, so FSRS must be fed true elapsed time, and a
+  calendar-based due date would make preview/commit/replay depend on the device time zone at the
+  moment each ran. The cost, measured and pinned by `DueDateDstTest`, is that a review between 23:00
+  and midnight on a DST spring-forward night slips one day. Accepted; do NOT "fix" it by switching
+  to calendar addition.
 - **"Forgot" is not red.** Ratings use a calm palette; red = destructive actions
   only. No emoji, confetti, or "Great job!" language (mature tone).
 - **FSRS mean-reversion targets D0(Easy)** — this is canonical FSRS. "Revert to
@@ -173,6 +179,15 @@ These were decided deliberately. Re-suggesting them wastes a session:
   clock, and it KEEPS its `logType` rather than being rewritten to `RECALL`. Feeding it through
   the recall path would reward re-reading as if it were remembering, and would trust completely
   the very signal YADORA-3 exists to distrust.
+- **A merge RECONCILES models before averaging.** Every copy is projected onto `CURRENT_MODEL`
+  first and the survivor is stamped with it. Two copies of the same material can sit on different
+  models (one reviewed since the switch, one not), and an FSRS-5 stability is not measured in the
+  same units as an FSRS-6 one. This also closes a second hole: leaving the merged row on the old
+  model meant the lazy projection at the next review replayed the now-COMBINED history and silently
+  replaced the weighted average with a chronological replay — the behaviour deliberately not chosen.
+  The understanding clock takes the earliest non-null across copies (same never-push-further-away
+  rule as the due date, and it keeps `nextReviewAt` equal to the earlier of the two clocks);
+  neutralized absorbed copies get it cleared along with their counts.
 - **Merging keeps the review-count-weighted average** rather than replaying the combined history
   chronologically. Replay is arguably more principled (stability/difficulty are nonlinear
   summaries, so averaging them is not a real memory state), and the machinery exists — but the

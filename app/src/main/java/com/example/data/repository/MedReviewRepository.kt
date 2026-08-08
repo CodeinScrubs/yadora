@@ -118,9 +118,17 @@ class MedReviewRepository(
      */
     suspend fun projectOntoCurrentModel(unit: StudyUnitEntity): StudyUnitEntity {
         if (MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL) return unit
+        return projectWithHistory(unit, reviewLogDao.getLogsForUnitOnce(unit.id))
+    }
 
-        val logs = reviewLogDao.getLogsForUnit(unit.id).first()
-            .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+    /**
+     * The pure half of [projectOntoCurrentModel], taking the history rather than fetching it, so a
+     * caller already inside a transaction (merge) can project without collecting a Flow there.
+     */
+    private fun projectWithHistory(unit: StudyUnitEntity, history: List<ReviewLogEntity>): StudyUnitEntity {
+        if (MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL) return unit
+
+        val logs = history.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
         val graded = logs.filterIndexed { index, log -> index == 0 || log.logType != "FIRST_STUDY" }
 
         if (graded.isEmpty()) {
@@ -205,13 +213,21 @@ class MedReviewRepository(
             // NOT filter soft-deleted rows (restore/purge need them), so without this guard an
             // ALREADY-ABSORBED copy could be merged a second time and its stale counts folded in
             // again — permanently inflating the survivor's reviewCount and skewing its memory state.
-            val survivor = studyUnitDao.getUnitById(keepId)?.takeIf { it.deletedAt == null }
+            val survivorRow = studyUnitDao.getUnitById(keepId)?.takeIf { it.deletedAt == null }
                 ?: return@withTransaction null
-            val absorbed = requestedIds
+            val absorbedRows = requestedIds
                 .mapNotNull { studyUnitDao.getUnitById(it) }
                 .filter { it.deletedAt == null }
-            if (absorbed.isEmpty()) return@withTransaction null
-            val absorbIds = absorbed.map { it.id }
+            if (absorbedRows.isEmpty()) return@withTransaction null
+            val absorbIds = absorbedRows.map { it.id }
+
+            // Bring EVERY copy onto the current memory model before averaging anything. Two copies of
+            // the same material can sit on different models — one reviewed since the upgrade, one not
+            // — and an FSRS-5 stability is not measured in the same units as an FSRS-6 one. Averaging
+            // across them would produce a number belonging to neither model and silently mis-time the
+            // topic from then on. Projection replays each copy's real history, so nothing is lost.
+            val survivor = projectWithHistory(survivorRow, reviewLogDao.getLogsForUnitOnce(survivorRow.id))
+            val absorbed = absorbedRows.map { projectWithHistory(it, reviewLogDao.getLogsForUnitOnce(it.id)) }
 
             val all = listOf(survivor) + absorbed
             // Weight by evidence: an unrated copy counts once, a well-drilled copy counts per review.
@@ -243,6 +259,13 @@ class MedReviewRepository(
                 // date the user deferred to, and the v5 honest-scheduling rule is that a deferral must
                 // never be laundered into the memory model's own opinion.
                 modelDueAt = all.minOf { it.modelDueAt },
+                // The understanding clock follows the same never-push-further-away rule: if ANY copy
+                // still owed a comprehension repair, the merged topic still owes it. Taking the
+                // earliest also keeps nextReviewAt explainable — it must equal the earlier of the two
+                // clocks, and dropping this would leave a topic due earlier than either of them.
+                understandingDueAt = all.mapNotNull { it.understandingDueAt }.minOrNull(),
+                // Every copy was just projected, so the merged state is expressed in one model.
+                memoryModel = MedScheduler.CURRENT_MODEL.id,
                 deferredUntil = null, // the merged topic is a fresh, un-deferred schedule
                 updatedAt = System.currentTimeMillis(),
             )
@@ -268,6 +291,9 @@ class MedReviewRepository(
                         lastReviewedAt = null,
                         nextReviewAt = copy.studiedAt,
                         modelDueAt = copy.studiedAt,
+                        // No history left to owe a repair for; a stale deadline would otherwise make
+                        // a restored copy due on a date nothing in its (now empty) record justifies.
+                        understandingDueAt = null,
                         deferredUntil = null,
                         updatedAt = stamp,
                     )

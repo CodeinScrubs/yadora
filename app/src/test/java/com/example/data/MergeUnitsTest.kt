@@ -283,15 +283,67 @@ class MergeUnitsTest {
         val keep = addUnit("Appendicitis", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 9 * day)
         val b = addUnit("آپاندیسیت", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 6 * day)
         val c = addUnit("Blinddarmentzündung", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 3 * day)
-        repo.insertReviewLog(logFor(b, now - 2 * day))
-        repo.insertReviewLog(logFor(c, now - 3 * day))
+        // A fourth, untouched copy with the SAME history: the yardstick for what one copy on its own
+        // is worth, so "averaging identical states is the identity" can be asserted without pinning a
+        // literal that would have to be rewritten every time the model's weights change.
+        val solo = addUnit("Solo", stability = 12.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 9 * day)
+        for (id in listOf(keep, b, c, solo)) {
+            repo.insertReviewLog(logFor(id, now - 20 * day, type = "FIRST_STUDY"))
+            repo.insertReviewLog(logFor(id, now - 17 * day))
+        }
 
         val merged = repo.mergeUnits(keep, listOf(b, c))!!
+        val one = repo.projectOntoCurrentModel(repo.getUnitById(solo)!!)
 
         assertEquals("all three review counts add up", 6, merged.reviewCount)
-        assertEquals("identical states average to themselves", 12.0, merged.stability, 1e-9)
+        assertEquals("identical states average to themselves", one.stability, merged.stability, 1e-9)
+        assertEquals("and so do their difficulties", one.difficulty, merged.difficulty, 1e-9)
         assertEquals("earliest of all three", now + 3 * day, merged.nextReviewAt)
-        assertEquals("both absorbed histories moved over", 2, db.reviewLogDao().getLogsForUnit(keep).first().size)
+        assertEquals("all three histories are on the survivor", 6, db.reviewLogDao().getLogsForUnit(keep).first().size)
+    }
+
+    /**
+     * A merge must never average across memory models. Two copies of the same material can sit on
+     * different ones — one reviewed since the FSRS-6 switch, one not — and an FSRS-5 stability is not
+     * measured in the same units as an FSRS-6 stability, so averaging them yields a number belonging
+     * to neither model.
+     *
+     * The same fix closes a second hole: the merged row must be stamped with the CURRENT model, or
+     * the lazy projection at the next review would replay the now-combined history and quietly
+     * REPLACE the weighted average with a full chronological replay — the exact behaviour that was
+     * deliberately not chosen.
+     */
+    @Test
+    fun `merging copies on different memory models reconciles them first`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val legacy = addUnit("Appendicitis", stability = 68.9, difficulty = 2.1, reviewCount = 2, dueAt = now + 30 * day)
+        val current = addUnit("آپاندیسیت", stability = 9.4, difficulty = 5.5, reviewCount = 2, dueAt = now + 8 * day)
+        // An untouched control with the same legacy history: what ONE un-migrated copy is worth once
+        // reconciled. It must stay out of the merge, or its own history would move onto the survivor.
+        val control = addUnit("Control", stability = 68.9, difficulty = 2.1, reviewCount = 2, dueAt = now + 30 * day)
+        for (id in listOf(legacy, current, control)) {
+            repo.insertReviewLog(logFor(id, now - 20 * day, type = "FIRST_STUDY"))
+            repo.insertReviewLog(logFor(id, now - 17 * day))
+        }
+        // The second copy has already crossed over; the first has not.
+        repo.updateUnit(repo.getUnitById(current)!!.copy(memoryModel = MedScheduler.CURRENT_MODEL.id))
+
+        val merged = repo.mergeUnits(legacy, listOf(current))!!
+
+        assertEquals("the merged topic is owned by one model", MedScheduler.CURRENT_MODEL.id, merged.memoryModel)
+
+        // The average must be taken over RECONCILED values: the legacy copy replayed onto FSRS-6,
+        // and the already-migrated copy as-is. Equal review counts, so equal weights.
+        val reconciledLegacy = repo.projectOntoCurrentModel(repo.getUnitById(control)!!).stability
+        assertEquals("averaged in current-model units", (reconciledLegacy + 9.4) / 2.0, merged.stability, 1e-9)
+
+        // The bug this pins: averaging the RAW numbers would have landed near 39, because a stale
+        // FSRS-5 stability of 68.9 is a far bigger number than the same memory expressed in FSRS-6.
+        assertTrue("the raw legacy stability did not leak into the average", merged.stability < 20.0)
+
+        // And because it is stamped current, the next review will NOT re-derive it by replay.
+        val reloaded = repo.projectOntoCurrentModel(repo.getUnitById(legacy)!!)
+        assertEquals("the weighted average survives the next review", merged.stability, reloaded.stability, 0.0)
     }
 
     @Test
