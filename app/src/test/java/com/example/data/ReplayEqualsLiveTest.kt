@@ -225,6 +225,80 @@ class ReplayEqualsLiveTest {
         )
     }
 
+    /**
+     * A topic that goes overdue and is IGNORED must not be touched by the app at all.
+     *
+     * This is the most common real path in a study app: the reminder is dismissed, the user is busy
+     * for weeks, and the topic sits there. Everything the app does in the meantime is a READ — the
+     * queue lists it, the Today screen scores it, the review screen projects it onto the current
+     * memory model to preview intervals. None of that is evidence about the user's memory, so none
+     * of it may be written back. If any of it were, the topic would drift on its own and the review
+     * history would stop explaining the state.
+     *
+     * The projection is the sharp edge: it returns a MODIFIED copy (FSRS-6 state rebuilt from the
+     * FSRS-5 history) and the review screen shows that copy — but the row must stay on FSRS-5 until
+     * a real review commits it.
+     */
+    @Test
+    fun `an overdue topic is never written to just by being looked at`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Ignored for a month", studyType = "Topic",
+                stability = 9.4, difficulty = 5.5, retrievability = 0.9, state = "Building",
+                studiedAt = now - 60 * day,
+                nextReviewAt = now - 30 * day, modelDueAt = now - 30 * day, // a month overdue
+                currentIntervalDays = 9.0, reviewCount = 2, lapseCount = 0,
+                memoryModel = MedScheduler.MemoryModel.FSRS_5.id, // not yet migrated
+            )
+        )
+        repo.insertReviewLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now - 50 * day,
+                memoryRating = "Good", understandingRating = "Clear",
+                previousIntervalDays = 0.0, nextIntervalDays = 3.0,
+                previousState = "New", nextState = "Learning",
+                retrievabilityAtReview = 1.0, elapsedDays = 10.0, logType = "FIRST_STUDY",
+                schedulerVersion = MedScheduler.MemoryModel.FSRS_5.id,
+            )
+        )
+        repo.insertReviewLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now - 39 * day,
+                memoryRating = "Good", understandingRating = "Clear",
+                previousIntervalDays = 3.0, nextIntervalDays = 9.0,
+                previousState = "Learning", nextState = "Building",
+                retrievabilityAtReview = 0.91, elapsedDays = 11.0, logType = "RECALL",
+                schedulerVersion = MedScheduler.MemoryModel.FSRS_5.id,
+            )
+        )
+
+        val before = repo.getUnitById(unitId)!!
+
+        // Everything the app does while the topic sits there ignored, several times over.
+        repeat(3) {
+            val due = repo.getDueUnits(now).first()
+            assertTrue("an overdue topic must stay in the queue", due.any { it.id == unitId })
+            due.forEach { u ->
+                MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
+                MedScheduler.retrievability(30.0, u.stability, MedScheduler.MemoryModel.of(u.memoryModel))
+            }
+            // The review screen projects before displaying — a pure read that must not persist.
+            val projected = repo.projectOntoCurrentModel(repo.getUnitById(unitId)!!)
+            assertEquals("the preview really is on the new model", MedScheduler.CURRENT_MODEL.id, projected.memoryModel)
+        }
+
+        val after = repo.getUnitById(unitId)!!
+        assertEquals("the stored row must be byte-identical after all that reading", before, after)
+        assertEquals("still owned by the legacy model on disk", MedScheduler.MemoryModel.FSRS_5.id, after.memoryModel)
+        assertEquals("no fabricated review", 2, after.reviewCount)
+        assertEquals("no fabricated lapse", 0, after.lapseCount)
+        assertEquals("the promised date is untouched", now - 30 * day, after.nextReviewAt)
+        assertEquals("history is untouched", 2, db.reviewLogDao().getLogsForUnit(unitId).first().size)
+    }
+
     @Test
     fun `replaying identical ratings reproduces the live state exactly`() = runBlocking {
         val day = 86400000L

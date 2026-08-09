@@ -618,8 +618,22 @@ object MedScheduler {
         highYield: Boolean,
         state: String,
         lapseCount: Int,
-        nextReviewAt: Long,
+        /**
+         * The MEMORY MODEL's own due date, not the effective one.
+         *
+         * Deferring is a scheduling choice, not evidence about memory — so it must not lower a
+         * topic's urgency. Ranking by `nextReviewAt` did exactly that: every "Not today" reset the
+         * effective date to tomorrow, so a user who tapped it daily kept their topics at zero
+         * overdue pressure forever, while a user who simply ignored the notification accumulated it.
+         * The app rewarded active procrastination with a quieter queue.
+         *
+         * Whether a deferred topic is OFFERED is still governed by `nextReviewAt` — the deferral is
+         * honoured. This only decides the order among topics already in today's queue.
+         */
+        modelDueAt: Long,
         now: Long,
+        /** Fallback for a row that predates modelDueAt and was never backfilled. */
+        effectiveDueAt: Long = modelDueAt,
     ): Double {
         var score = 0.0
         if (highYield) score += 100.0
@@ -637,7 +651,8 @@ object MedScheduler {
         // below importance, while the still-uncapped overdue term below keeps anything neglected
         // rising until it is actually seen.
         score += minOf(lapseCount, MAX_SCORED_LAPSES) * 10.0
-        val overdueDays = (now - nextReviewAt) / 86400000.0
+        val dueReference = if (modelDueAt > 0L) modelDueAt else effectiveDueAt
+        val overdueDays = (now - dueReference) / 86400000.0
         if (overdueDays > 0) score += overdueDays * 5.0
         return score
     }

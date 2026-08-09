@@ -11,8 +11,8 @@ class PriorityScoreTest {
     private val day = 86_400_000L
 
     @Test fun high_yield_dominates_ordinary_items() {
-        val hy = MedScheduler.priorityScore(highYield = true, state = "New", lapseCount = 0, nextReviewAt = now, now = now)
-        val normal = MedScheduler.priorityScore(highYield = false, state = "Building", lapseCount = 3, nextReviewAt = now - 2 * day, now = now)
+        val hy = MedScheduler.priorityScore(highYield = true, state = "New", lapseCount = 0, modelDueAt = now, now = now)
+        val normal = MedScheduler.priorityScore(highYield = false, state = "Building", lapseCount = 3, modelDueAt = now - 2 * day, now = now)
         assertTrue("high-yield ($hy) outranks a non-high-yield item ($normal)", hy > normal)
     }
 
@@ -43,8 +43,8 @@ class PriorityScoreTest {
         // high-yield weight and let a topic that struggled long ago — but is Strong now — permanently
         // outrank a genuinely important one, contradicting this function's "importance dominates"
         // contract. A pathological lapse history must still lose to a plain high-yield item.
-        val scarredButStrong = MedScheduler.priorityScore(false, "Strong", lapseCount = 50, nextReviewAt = now, now = now)
-        val important = MedScheduler.priorityScore(true, "Strong", lapseCount = 0, nextReviewAt = now, now = now)
+        val scarredButStrong = MedScheduler.priorityScore(false, "Strong", lapseCount = 50, modelDueAt = now, now = now)
+        val important = MedScheduler.priorityScore(true, "Strong", lapseCount = 0, modelDueAt = now, now = now)
         assertTrue("high-yield ($important) still outranks 50 old lapses ($scarredButStrong)", important > scarredButStrong)
     }
 
@@ -66,5 +66,48 @@ class PriorityScoreTest {
         val a = MedScheduler.priorityScore(true, "Learning", 2, now - day, now)
         val b = MedScheduler.priorityScore(true, "Learning", 2, now - day, now)
         assertEquals(a, b, 0.0)
+    }
+
+    /**
+     * Deferring must not buy a quieter queue.
+     *
+     * "Not today" moves the EFFECTIVE date to tomorrow but leaves the model's own date alone. When
+     * ranking used the effective date, a user who tapped it every morning kept every topic at zero
+     * overdue pressure indefinitely, while a user who simply ignored the notification watched theirs
+     * climb. The app was rewarding active procrastination with a shorter-looking backlog. Memory does
+     * not care that you postponed, so the ordering is taken from the model's date.
+     */
+    @Test
+    fun `deferring daily does not hide how overdue a topic really is`() {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+
+        // Same topic, same model date a month ago. One was ignored; one was deferred every day.
+        val ignored = MedScheduler.priorityScore(
+            highYield = false, state = "Building", lapseCount = 0,
+            modelDueAt = now - 30 * day, now = now, effectiveDueAt = now - 30 * day,
+        )
+        val deferredDaily = MedScheduler.priorityScore(
+            highYield = false, state = "Building", lapseCount = 0,
+            modelDueAt = now - 30 * day, now = now, effectiveDueAt = now, // reset to "due today"
+        )
+        assertEquals("a deferral cannot lower real urgency", ignored, deferredDaily, 1e-9)
+        assertTrue("and a month of debt must actually register", deferredDaily > 100.0)
+    }
+
+    /** A row predating modelDueAt (never backfilled, so 0) must fall back, not look infinitely overdue. */
+    @Test
+    fun `a missing model date falls back to the effective date`() {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val fallback = MedScheduler.priorityScore(
+            highYield = false, state = "Building", lapseCount = 0,
+            modelDueAt = 0L, now = now, effectiveDueAt = now - 2 * day,
+        )
+        val direct = MedScheduler.priorityScore(
+            highYield = false, state = "Building", lapseCount = 0,
+            modelDueAt = now - 2 * day, now = now,
+        )
+        assertEquals("epoch-0 must not be read as 1970", direct, fallback, 1e-9)
     }
 }

@@ -131,7 +131,9 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             // Highest-priority first (same score the review queue uses) so DAY 1 gets the important ones
             // (high-yield, needs-relearn, recent forgot, most overdue) instead of a blind round-robin.
             val prioritized = overdueList.sortedByDescending { u ->
-                com.example.domain.srs.MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
+                com.example.domain.srs.MedScheduler.priorityScore(
+                    u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt,
+                )
             }
             val total = prioritized.size
             // The plan is built around what the user actually said they can do in a day. A fixed

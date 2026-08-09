@@ -271,6 +271,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   is always the date that actually applies; the memory estimate is named beside it when they differ.
 - **Release binaries are NOT tracked in git.** The committed `app/release/app-release.aab` had gone
   stale by dozens of commits and would have shipped the retired scheduler. Build and sign from a tag.
+- **The queue is ordered by `modelDueAt`, NOT `nextReviewAt`.** Whether a topic is OFFERED still
+  follows `nextReviewAt`, so a deferral is honoured — but the ORDER among today's due topics comes
+  from the model's own date. Ranking by the effective date meant every "Not today" reset the overdue
+  term to zero, so a user who tapped it daily kept their backlog permanently quiet while a user who
+  simply ignored the notification watched theirs climb. Deferring is a scheduling choice, not
+  evidence about memory. `PriorityScoreTest` pins that the two users get identical urgency.
+- **An IGNORED topic is never written to.** Nothing in the app mutates an overdue row: every
+  `UPDATE` is user-initiated, and app start only purges already-deleted rows. Displaying one
+  projects it onto the current model for the preview, but that copy is never persisted — the row
+  stays on its old model until a real review commits. `NeglectedTopicTest` sweeps neglect from one
+  day to a century across every state/rating/understanding combination (finite, bounded, ordered,
+  never throws), and `ReplayEqualsLiveTest` pins the row as byte-identical after repeated reads.
 - **`priorityScore`'s lapse term is capped** at `MAX_SCORED_LAPSES` (5). `lapseCount`
   only ever grows, so uncapped it eventually outweighed high-yield (100) and let an
   old struggle permanently outrank a genuinely important topic. The overdue term is
