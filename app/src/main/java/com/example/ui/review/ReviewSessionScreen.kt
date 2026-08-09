@@ -114,6 +114,14 @@ class ReviewViewModel(
     var isLoading by androidx.compose.runtime.mutableStateOf(true)
         private set
 
+    /**
+     * Topics left out of this session because their history could not be replayed onto the current
+     * memory model. Surfaced rather than swallowed: a silently shorter queue looks like "nothing
+     * due" and the user would never learn a topic had become unreadable.
+     */
+    var skippedUnprojectable by androidx.compose.runtime.mutableStateOf(0)
+        private set
+
     // Guards against a fast double-tap rating/procrastinating the same card twice (double-log + skip).
     var isProcessing by androidx.compose.runtime.mutableStateOf(false)
         private set
@@ -205,12 +213,23 @@ class ReviewViewModel(
      * idempotent, so the commit path re-running it is a no-op.
      */
     private suspend fun advanceUnit() {
-        if (dueUnits.isNotEmpty()) {
+        var shown: StudyUnitEntity? = null
+        while (dueUnits.isNotEmpty()) {
             val next = dueUnits.removeAt(0)
-            _currentUnit.value = runCatching { repository.projectOntoCurrentModel(next) }.getOrDefault(next)
-        } else {
-            _currentUnit.value = null
+            // FAIL CLOSED. The old fallback here was getOrDefault(next), which on a projection
+            // failure showed the RAW row -- an FSRS-5 stability behind a preview that computes
+            // FSRS-6 intervals, which is precisely the preview-vs-commit mismatch this projection
+            // exists to prevent. A topic whose history cannot be replayed has unreadable data; the
+            // honest response is to leave it out of the session, not to schedule it on a curve its
+            // state was never measured under.
+            val projected = runCatching { repository.projectOntoCurrentModel(next) }.getOrElse {
+                android.util.Log.w("Yadora", "skipping topic ${next.id}: projection failed", it)
+                skippedUnprojectable++
+                null
+            }
+            if (projected != null) { shown = projected; break }
         }
+        _currentUnit.value = shown
         unitShownAt = System.currentTimeMillis()
         _currentUnit.value?.let { checkSplitSuggestion(it) } ?: run { splitSuggestion = false }
     }
@@ -567,6 +586,23 @@ fun ReviewSessionScreen(
             } else if (currentUnit == null) {
                 Spacer(modifier = Modifier.weight(1f))
                 Text(strings.sessionComplete, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                // Topics whose history could not be replayed were left out rather than scheduled on
+                // a model their state was never measured under. Say so: a silently shorter queue is
+                // indistinguishable from "nothing was due", and the user would never find out.
+                if (viewModel.skippedUnprojectable > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = when (strings.languageCode) {
+                            "fa" -> "${num(viewModel.skippedUnprojectable)} مبحث به‌خاطر تاریخچهٔ ناخوانا کنار گذاشته شد. یک پشتیبان بگیر و از تنظیمات بازیابی کن."
+                            "de" -> "${viewModel.skippedUnprojectable} Thema/Themen wegen unlesbarer Historie übersprungen. Sichere deine Daten und stelle sie in den Einstellungen wieder her."
+                            else -> "${viewModel.skippedUnprojectable} topic(s) skipped — their review history could not be read. Export a backup and restore it from Settings."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                }
                 Spacer(modifier = Modifier.height(24.dp))
                 
                 // Expose session stats as an elegant summary card:

@@ -134,8 +134,17 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
                 com.example.domain.srs.MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
             }
             val total = prioritized.size
+            // The plan is built around what the user actually said they can do in a day. A fixed
+            // window turned a 100-topic backlog into 34 a day for someone whose limit is 10 -- a
+            // schedule they cannot execute, which teaches them the dates are not to be trusted.
+            val capacity = com.example.domain.srs.MedScheduler.safeDailyLimit(
+                context.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                    .getFloat("daily_review_limit", 50f).toInt()
+            )
             val updated = prioritized.mapIndexed { index, unit ->
-                val target = OverdueRedistributor.targetMillis(now, OverdueRedistributor.dayOffset(index, total))
+                val target = OverdueRedistributor.targetMillis(
+                    now, OverdueRedistributor.dayOffset(index, total, capacity),
+                )
                 // Recorded as a DEFERRAL (v5): the model's own due date stays in modelDueAt untouched.
                 unit.copy(nextReviewAt = target, deferredUntil = target, updatedAt = now)
             }

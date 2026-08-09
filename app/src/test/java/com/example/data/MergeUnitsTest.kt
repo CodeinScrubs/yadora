@@ -277,6 +277,48 @@ class MergeUnitsTest {
         assertTrue("the survivor is not deleted", keep !in deleted)
     }
 
+    /**
+     * The two history reconstructors must agree, exactly.
+     *
+     * A merged topic carries a later FIRST_STUDY row -- the absorbed copy's own post-study rating,
+     * a re-encoding EXPOSURE. Projection (migration onto the current model) and the replay inside
+     * editReviewRating are two separate implementations of "rebuild this topic from its history",
+     * and they disagreed: projection dropped exposures from the list entirely, so the elapsed clock
+     * was never re-anchored and the following recall was credited with the time since the previous
+     * GRADED review instead. The same evidence produced a different memory state depending on
+     * whether the topic arrived via migration or via a rating correction.
+     */
+    @Test
+    fun `projection and replay reconstruct an exposure history identically`() = runBlocking {
+        val now = System.currentTimeMillis()
+        // study -> recall -> RE-STUDY (exposure) -> recall. The gap that matters is the last one:
+        // measured from the exposure (10 days) or from the previous recall (20 days)?
+        suspend fun history(id: Long) {
+            repo.insertReviewLog(logFor(id, now - 40 * day, type = "FIRST_STUDY"))
+            repo.insertReviewLog(logFor(id, now - 30 * day))
+            repo.insertReviewLog(logFor(id, now - 20 * day, type = "FIRST_STUDY"))
+            repo.insertReviewLog(logFor(id, now - 10 * day))
+        }
+
+        val viaProjection = addUnit("Projected", stability = 40.0, difficulty = 3.0, reviewCount = 3, dueAt = now + day)
+        val viaReplay = addUnit("Replayed", stability = 40.0, difficulty = 3.0, reviewCount = 3, dueAt = now + day)
+        history(viaProjection)
+        history(viaReplay)
+
+        // Both must end up reconstructed under the SAME model or the comparison is meaningless:
+        // one crosses over by projection, the other is already on the current model and rebuilds
+        // through the replay path. Same evidence, same model, two implementations.
+        val projected = repo.projectOntoCurrentModel(repo.getUnitById(viaProjection)!!)
+        repo.updateUnit(repo.getUnitById(viaReplay)!!.copy(memoryModel = MedScheduler.CURRENT_MODEL.id))
+        repo.updateUnitReplayingHistory(repo.getUnitById(viaReplay)!!)
+        val replayed = repo.getUnitById(viaReplay)!!
+
+        assertEquals("same stability from the same evidence", projected.stability, replayed.stability, 1e-9)
+        assertEquals("same difficulty from the same evidence", projected.difficulty, replayed.difficulty, 1e-9)
+        assertEquals("same graded review count", projected.reviewCount, replayed.reviewCount)
+        assertEquals("the exposure is not a retrieval", 3, projected.reviewCount)
+    }
+
     @Test
     fun `merging three copies at once combines all of them`() = runBlocking {
         val now = System.currentTimeMillis()

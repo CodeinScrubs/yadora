@@ -6,6 +6,7 @@ import com.example.data.local.dao.ReviewLogDao
 import com.example.data.local.dao.StudyUnitDao
 import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
+import com.example.data.text.TopicTitle
 import com.example.data.local.entity.SubjectEntity
 import com.example.data.local.entity.SystemEntity
 import com.example.domain.model.MemoryRating
@@ -52,8 +53,13 @@ class MedReviewRepository(
      * the user is deliberately keeping two related-but-distinct topics.
      */
     suspend fun isDuplicate(title: String, subjectId: Long?, notes: String?, source: String?, excludeId: Long = 0L): Boolean {
-        fun norm(s: String?) = (s ?: "").trim().lowercase()
-        return studyUnitDao.findActiveByTitle(title).any { u ->
+        fun norm(s: String?) = TopicTitle.normalize(s ?: "")
+        // Scanned in Kotlin rather than matched in SQL: SQLite compares bytes with an ASCII-only
+        // lower(), which cannot see that Persian text typed on two different keyboards is the same
+        // word (see TopicTitle). One in-memory pass over active topics on save is cheap; missing the
+        // duplicate warning for the exact case this app was built around is not.
+        return studyUnitDao.getAllActiveOnce().any { u ->
+            TopicTitle.sameTopic(u.title, title) &&
             u.id != excludeId &&
                 u.subjectId == subjectId &&
                 norm(u.notes) == norm(notes) &&
@@ -129,9 +135,7 @@ class MedReviewRepository(
         if (MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL) return unit
 
         val logs = history.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
-        val graded = logs.filterIndexed { index, log -> index == 0 || log.logType != "FIRST_STUDY" }
-
-        if (graded.isEmpty()) {
+        if (logs.isEmpty()) {
             // Never rated: no evidence to replay, so only the model label changes.
             return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id, updatedAt = System.currentTimeMillis())
         }
@@ -140,7 +144,22 @@ class MedReviewRepository(
         var prevTime = unit.studiedAt
         var lapses = 0
         var reviews = 0
-        for (log in graded) {
+        var lastGradedRating: String? = null
+        for ((index, log) in logs.withIndex()) {
+            // A LATER first-study row is a re-encoding exposure (only reachable after a merge). It
+            // earns no stability and no review credit, but it DOES re-anchor the elapsed-time clock:
+            // the next retrieval is measured from the day the material was last actually studied.
+            //
+            // This must match editReviewRating's replay exactly. It did not: this loop used to drop
+            // exposures from the list entirely, so prevTime was never advanced and the following
+            // recall was credited with the time since the previous GRADED review instead. For a
+            // history of study/recall/re-study/recall that is 20 elapsed days here against 10 in the
+            // replay -- the same evidence reconstructed two different ways, so a topic's state
+            // depended on whether it arrived via migration or via a rating correction.
+            if (index > 0 && log.logType == "FIRST_STUDY") {
+                prevTime = log.reviewedAt
+                continue
+            }
             val grade = runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrNull() ?: continue
             // Projection rebuilds under the CURRENT model, so time is measured its way too.
             val elapsed = MedScheduler.modelElapsedDays(prevTime, log.reviewedAt, MedScheduler.CURRENT_MODEL)
@@ -148,6 +167,7 @@ class MedReviewRepository(
             state = MedScheduler.projectStep(state, elapsed, grade, highYield)
             if (grade == MemoryRating.Forgot) lapses++
             reviews++
+            lastGradedRating = log.memoryRating
             prevTime = log.reviewedAt
         }
         val projected = state ?: return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id)
@@ -162,7 +182,7 @@ class MedReviewRepository(
             lapseCount = lapses,
             state = MedScheduler.masteryState(
                 projected.stability,
-                justForgot = graded.lastOrNull()?.memoryRating == MemoryRating.Forgot.name,
+                justForgot = lastGradedRating == MemoryRating.Forgot.name,
             ).name,
             memoryModel = MedScheduler.CURRENT_MODEL.id,
             updatedAt = System.currentTimeMillis(),
@@ -347,11 +367,9 @@ class MedReviewRepository(
      * An ARCHIVED (non-deleted) topic with this exact normalized title, if one exists — so re-adding
      * a topic you archived offers "restore it, with its whole history" instead of a duplicate.
      */
-    suspend fun findArchivedDuplicate(title: String): StudyUnitEntity? {
-        fun norm(s: String) = s.trim().lowercase()
-        return studyUnitDao.findByTitleAnyState(title)
-            .firstOrNull { it.archived && it.deletedAt == null && norm(it.title) == norm(title) }
-    }
+    suspend fun findArchivedDuplicate(title: String): StudyUnitEntity? =
+        studyUnitDao.getArchivedOnce()
+            .firstOrNull { it.deletedAt == null && TopicTitle.sameTopic(it.title, title) }
     
     // Progress / Stats
     val totalActiveCount: Flow<Int> = studyUnitDao.getTotalActiveUnitsCount()

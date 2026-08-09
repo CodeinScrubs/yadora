@@ -914,9 +914,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = when (language) {
-                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر انبوهی از مرورهای عقب‌افتاده دارید، از دکمه 'توزیع مجدد مباحث' در صفحه امروز استفاده کنید تا مرورها را در ۳ روز آینده پخش کند."
-                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Wenn du in Rückstand gerätst, verteile ihn mit „Überfällige Themen verteilen“ auf der Heute-Seite gleichmäßig über 3 Tage."
-                                            else -> "Serious learning is a marathon, not a sprint. If you fall behind, use the 'Spread Out Overdue Topics' feature on the Today screen to redistribute your backlog evenly over 3 days."
+                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر عقب افتادی، از دکمه 'توزیع مجدد مباحث' در صفحه امروز استفاده کن؛ عقب‌افتاده‌ها را بر اساس سقف روزانه‌ات پخش می‌کند، نه بیشتر از توانت."
+                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Wenn du in Rückstand gerätst, verteile ihn mit „Überfällige Themen verteilen“ auf der Heute-Seite — nach deinem Tageslimit, nicht mehr, als du schaffst."
+                                            else -> "Serious learning is a marathon, not a sprint. If you fall behind, use the 'Spread Out Overdue Topics' feature on the Today screen — it spreads the backlog across as many days as your daily limit needs, never more than you can do."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant

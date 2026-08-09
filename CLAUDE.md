@@ -234,6 +234,28 @@ These were decided deliberately. Re-suggesting them wastes a session:
   summaries, so averaging them is not a real memory state), and the machinery exists — but the
   averaging behaviour is conservative, tested, and easy to explain. User-confirmed 2026-08;
   revisit only with evidence, not on theory alone.
+- **ONE canonical history reconstructor, two call sites.** `projectWithHistory` (migration/merge)
+  and `editReviewRating`'s replay must reconstruct a history IDENTICALLY. They did not: projection
+  dropped later `FIRST_STUDY` exposures from the list entirely, so the elapsed clock was never
+  re-anchored and the following recall was credited with the time since the previous GRADED review
+  — 20 days against the replay's 10 on a study/recall/re-study/recall history. A topic's state
+  therefore depended on whether it arrived via migration or via a rating correction. `MergeUnitsTest`
+  now pins the two paths against each other; if you touch one, touch both.
+- **Projection FAILS CLOSED.** `advanceUnit` used to fall back to the raw row when
+  `projectOntoCurrentModel` threw — an FSRS-5 stability behind a preview that computes FSRS-6
+  intervals, exactly the mismatch the projection exists to prevent. A topic whose history cannot be
+  replayed is left out of the session and COUNTED, and the count is shown on the session summary; a
+  silently shorter queue is indistinguishable from "nothing was due".
+- **Backlog recovery is capacity-aware** (`OverdueRedistributor`, 3–14 days). The old fixed
+  three-day window turned 100 overdue topics into ~34 a day for a user whose daily limit is 10 — a
+  plan they cannot execute, which teaches them the dates mean nothing. Days are derived from the
+  daily limit and capped at 14; past that the plan overloads rather than pushing memory reviews
+  months out. Keep the Settings copy honest about it.
+- **Duplicate detection normalizes Persian/Arabic** (`TopicTitle`). SQL `lower(trim(title))` is byte
+  equality with an ASCII-only lowercase, so Farsi yeh vs Arabic yeh and keheh vs Arabic kaf —
+  chosen by the keyboard, not the writer, and visually identical — produced two topics with no
+  duplicate warning. That is precisely the "same material added twice, often in two languages" case
+  merge exists for. Comparison only; stored titles stay exactly as typed.
 - **One memory seed per history.** `Fsrs.initialState` may only be re-applied for the
   chronologically FIRST review log of a topic. A merged topic legitimately carries
   several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each
