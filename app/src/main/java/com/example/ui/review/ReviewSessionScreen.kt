@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -541,8 +542,22 @@ fun ReviewSessionScreen(
     // Localized numerals: Persian digits in fa, Latin otherwise.
     val num: (Any) -> String = { if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(it.toString()) else it.toString() }
     
-    var showNotes by remember(currentUnitState) { mutableStateOf(false) }
-    var selectedMemory by remember(currentUnitState) { mutableStateOf<MemoryRating?>(null) }
+    // Survives configuration changes for the same reason: having revealed the source, the learner
+    // should not be silently returned to the pre-reveal screen.
+    var showNotes by rememberSaveable(currentUnitState) { mutableStateOf(false) }
+    // rememberSaveable, not remember: a rotation, a dark-mode toggle, a split-screen resize or a
+    // font-size change destroys composition, and with plain remember the learner was thrown back to
+    // the recall step having already answered it. Stored as the enum NAME because MemoryRating is
+    // not Parcelable; keyed on the unit so moving to the next topic still clears it.
+    var selectedMemory by rememberSaveable(
+        currentUnitState,
+        // Saved as the enum NAME (MemoryRating is not Parcelable); an unknown name restores as null
+        // rather than throwing, so a bundle written by another build cannot crash the review screen.
+        stateSaver = androidx.compose.runtime.saveable.Saver<MemoryRating?, String>(
+            save = { it?.name },
+            restore = { name -> runCatching { MemoryRating.valueOf(name) }.getOrNull() },
+        ),
+    ) { mutableStateOf<MemoryRating?>(null) }
 
     // Back steps BACKWARDS through the rating flow and cancels — nothing is committed to the DB until
     // the understanding rating is tapped. So leaving mid-rating (difficulty chosen, understanding not)

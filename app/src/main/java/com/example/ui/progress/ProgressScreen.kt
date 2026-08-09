@@ -422,11 +422,19 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 val gap = cal.actualPct - cal.predictedPct
+                                // DESCRIPTIVE, never prescriptive. This used to tell the user to
+                                // raise or lower their retention target off a >5-point gap measured
+                                // on as few as ten reviews — a sample far too small and far too
+                                // correlated (one learner, overlapping topics, self-rated, and only
+                                // the reviews they chose to do) to support changing a scheduler
+                                // setting. Reporting the number is honest; acting on it is not.
+                                val enoughToJudge = cal.n >= 50
                                 Text(
                                     text = when {
-                                        Math.abs(gap) <= 5 -> if (isFarsiLanguage) "زمان‌بندی با حافظه‌ات هماهنگ است." else if (strings.languageCode == "de") "Der Plan passt gut zu deinem Gedächtnis." else "The schedule matches your memory well."
-                                        gap > 5 -> if (isFarsiLanguage) "بهتر از پیش‌بینی به‌ خاطر می‌آوری — فاصله‌ها می‌توانند کمی بلندتر باشند (هدف به‌خاطرسپاری را در تنظیمات کمی پایین بیاور)." else if (strings.languageCode == "de") "Du erinnerst dich besser als vorhergesagt — die Abstände könnten etwas länger sein (probiere ein etwas niedrigeres Behaltensziel)." else "You remember better than predicted — intervals could stretch a little (try a slightly lower retention target in Settings)."
-                                        else -> if (isFarsiLanguage) "کمی بیشتر از پیش‌بینی فراموش می‌کنی — صادقانه امتیاز بده و در صورت نیاز هدف به‌خاطرسپاری را بالاتر ببر." else if (strings.languageCode == "de") "Du vergisst etwas mehr als vorhergesagt — bewerte ehrlich und erwäge ein höheres Behaltensziel." else "You forget a bit more than predicted — rate honestly, and consider a higher retention target in Settings."
+                                        !enoughToJudge -> if (isFarsiLanguage) "هنوز برای نتیجه‌گیری خیلی زود است — این فقط چیزی است که تا الان دیده شده." else if (strings.languageCode == "de") "Noch zu wenige Daten für eine Aussage — das ist nur, was bisher beobachtet wurde." else "Still too few reviews to conclude anything — this is simply what has been observed so far."
+                                        Math.abs(gap) <= 5 -> if (isFarsiLanguage) "تا اینجا پیش‌بینی و عملکرد نزدیک بوده‌اند." else if (strings.languageCode == "de") "Bisher liegen Vorhersage und Ergebnis nah beieinander." else "So far, prediction and outcome have stayed close."
+                                        gap > 5 -> if (isFarsiLanguage) "تا اینجا بهتر از پیش‌بینی به یاد آورده‌ای." else if (strings.languageCode == "de") "Bisher erinnerst du dich besser als vorhergesagt." else "So far you have recalled more than the model predicted."
+                                        else -> if (isFarsiLanguage) "تا اینجا کمی بیشتر از پیش‌بینی فراموش کرده‌ای." else if (strings.languageCode == "de") "Bisher vergisst du etwas mehr als vorhergesagt." else "So far you have forgotten a little more than the model predicted."
                                     },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant

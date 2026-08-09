@@ -888,9 +888,14 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = when (language) {
-                                            "fa" -> "• فراموشی: مبحث فوراً فردا یا زودتر تکرار خواهد شد.\n• سخت: مکرراً و با فواصل کوتاه‌تر مرور می‌شود.\n• خوب: حالت ایده‌آل؛ فواصل افزایش می‌یابند.\n• آسان: فواصل بسیار طولانی خواهند شد."
-                                            "de" -> "• Vergessen: Das Thema kommt gleich morgen zum Neulernen zurück.\n• Schwer: Der Abstand wächst langsamer, weil der Abruf viel Mühe gekostet hat.\n• Gut: Der ideale Normalfall; die Abstände wachsen optimal.\n• Leicht: Der Abstand wird deutlich länger."
-                                            else -> "• Forgot: Brings the topic back tomorrow to relearn.\n• Hard: Limits interval growth because retrieval required high effort.\n• Good: The perfect baseline; increases intervals optimally.\n• Easy: Extends interval significantly into the future."
+                                            // Behaviourally anchored: these describe what the ANSWER
+                                            // was like, not how the app reacts. Calling Good "the
+                                            // perfect baseline" biased the very signal FSRS consumes
+                                            // — the rating is the measurement, so the help text must
+                                            // not tell the user which button is the good one.
+                                            "fa" -> "این‌ها پاسخ تو را توصیف می‌کنند، نه خودت را. سخت، خوب و آسان همگی یادآوری موفق‌اند؛ فقط فراموشی شکست است.\n• فراموشی: چارچوب اصلی نیامد یا اساساً غلط بود.\n• سخت: درست یادآوری شد، اما کند و با تلاش زیاد یا مکث محسوس.\n• خوب: هستهٔ مطلب درست بود، با تلاش معمولی و تنها خلأهای جزئی.\n• آسان: کامل، دقیق، سریع و با اطمینان."
+                                            "de" -> "Das beschreibt deine Antwort, nicht dich. Schwer, Gut und Leicht sind alle erfolgreiche Abrufe; nur Vergessen ist ein Fehlschlag.\n• Vergessen: Der Kern fehlte oder war grundlegend falsch.\n• Schwer: Richtig abgerufen, aber langsam, mühsam oder mit deutlichem Zögern.\n• Gut: Der Kern war korrekt, mit normalem Aufwand und nur kleinen Lücken.\n• Leicht: Vollständig, korrekt, schnell und sicher."
+                                            else -> "These describe your answer, not you. Hard, Good and Easy are all successful recalls — only Forgot is a failure.\n• Forgot: the core framework was missing or fundamentally wrong.\n• Hard: recalled correctly, but slowly, effortfully, or with real hesitation.\n• Good: the core was right, with normal effort and only minor gaps.\n• Easy: complete, accurate, fast and confident."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
