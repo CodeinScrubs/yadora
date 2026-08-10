@@ -49,12 +49,33 @@ object AnalyticsExporter {
         // v5: per-topic memoryModel + understandingDueAt, and the model/parameter identity in the
         // policy block. Calibration MUST group by model — pooling FSRS-5 and FSRS-6 outcomes would
         // average two different curves and make the result meaningless.
-        root.put("exportVersion", 5)
+        // v6: the device TIME ZONE (without it nothing in this file can be recomputed — see below),
+        // a self-check block that makes the export say where it disagrees with itself, and honest
+        // provenance on the reconstructed adherence fields.
+        root.put("exportVersion", 6)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
+        root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
         root.put("scheduler", com.example.domain.srs.MedScheduler.CURRENT_MODEL.id)
         root.put("unitCount", units.size)
         root.put("reviewLogCount", logs.size)
+
+        // THE TIME ZONE IS NOT OPTIONAL METADATA. FSRS-6 is fed elapsed time in whole LOCAL calendar
+        // days, so `elapsedDays` on every log is a difference of local dates — it cannot be derived
+        // from the UTC millisecond timestamps in this file without knowing which zone produced it.
+        // An export analysed in the wrong zone will silently disagree with the app by up to a day on
+        // every review. Due dates, by contrast, are elapsed-millisecond arithmetic; the two
+        // conventions are deliberate and are documented in the policy block.
+        val zone = java.util.TimeZone.getDefault()
+        root.put("environment", JSONObject().apply {
+            put("timeZoneId", zone.id)
+            put("utcOffsetMinutesAtExport", zone.getOffset(System.currentTimeMillis()) / 60000)
+            put("observesDaylightSaving", zone.useDaylightTime())
+            put("localDateAtExport", java.time.LocalDate.now().toString())
+            put("locale", java.util.Locale.getDefault().toLanguageTag())
+            put("elapsedDaysConvention", "whole local calendar days (FSRS-6); fractional ms (FSRS-5, frozen)")
+            put("dueDateConvention", "reviewedAt + intervalDays * 86400000 (elapsed ms, not calendar addition)")
+        })
 
         // Device fingerprint: lets a missed-reminder report be correlated with OEM battery-killers
         // (Xiaomi/Huawei/Oppo/Vivo/Samsung) when several friends' exports are compared.
@@ -170,12 +191,41 @@ object AnalyticsExporter {
             }
         }
 
+        // How many times the user moved this topic's date between the previous review and this one.
+        // The event log already records every such action; joining them here means the analysis does
+        // not have to reimplement the join (and get it subtly wrong).
+        val deferralTypes = setOf("PROCRASTINATE", "PROCRASTINATE_ALL", "REDISTRIBUTE")
+        val deferralsByLog = HashMap<Long, Int>(logs.size)
+        for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
+            val ordered = unitLogs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+            var windowStart = unitStudiedAt[unitId] ?: 0L
+            for (l in ordered) {
+                deferralsByLog[l.id] = events.count { e ->
+                    e.type in deferralTypes && e.at in windowStart..l.reviewedAt &&
+                        // PROCRASTINATE_ALL / REDISTRIBUTE are bulk actions with no unit id: they
+                        // moved every due topic, so they count for whatever was due at the time.
+                        (e.unitId == null || e.unitId == unitId)
+                }
+                windowStart = l.reviewedAt
+            }
+        }
+
         val logsArr = JSONArray()
         for (l in logs) {
             logsArr.put(JSONObject().apply {
                 put("id", l.id) // join key: STUDY_ACTION events carry the log id in `detail`
                 val scheduledFor = scheduledForByLog[l.id]
                 put("scheduledForAt", scheduledFor ?: JSONObject.NULL)
+                // HONESTY ABOUT PROVENANCE. scheduledForAt is RECONSTRUCTED (previous review +
+                // the interval it granted), not recorded at the time. That reconstruction is exact
+                // only when nothing moved the date in between. If the user deferred, redistributed
+                // the backlog, or the understanding clock pulled the topic in early, the real
+                // scheduled date was different — and daysLate would then blame the learner (or the
+                // model) for a date neither of them chose. This counts the user-initiated moves that
+                // landed in the window, so an analysis can discard or down-weight those rows instead
+                // of trusting a number that looks precise.
+                put("scheduledForAtSource", "reconstructed")
+                put("deferralsBeforeThisReview", deferralsByLog[l.id] ?: 0)
                 // Negative = answered EARLY (cramming ahead), positive = answered late.
                 put(
                     "daysLate",
@@ -203,6 +253,65 @@ object AnalyticsExporter {
             })
         }
         root.put("reviewLogs", logsArr)
+
+        // SELF-CHECK. The export states where the database disagrees with itself, so a problem is
+        // visible in the file rather than having to be suspected and hunted for. Every one of these
+        // is an invariant the app is supposed to maintain; a non-empty list is a bug report, not a
+        // statistic. Deliberately descriptive — it never repairs anything, because a silent repair
+        // would destroy the evidence of whatever caused it.
+        val issues = JSONArray()
+        fun flag(kind: String, unitId: Long?, detail: String) {
+            issues.put(JSONObject().apply {
+                put("kind", kind); put("unitId", unitId ?: JSONObject.NULL); put("detail", detail)
+            })
+        }
+        val logsByUnit = logs.groupBy { it.studyUnitId }
+        val unitIdSet = units.map { it.id }.toSet()
+        for (l in logs) {
+            if (l.studyUnitId !in unitIdSet) flag("ORPHAN_LOG", l.studyUnitId, "log ${l.id} references a topic not in this export")
+        }
+        for (u in units) {
+            val mine = logsByUnit[u.id].orEmpty().sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+            // A graded review is the first log plus every non-FIRST_STUDY log; later FIRST_STUDY rows
+            // are re-encoding exposures (post-merge) and must not be counted as retrievals.
+            val graded = mine.filterIndexed { i, log -> i == 0 || log.logType != "FIRST_STUDY" }
+            if (graded.isNotEmpty() && u.reviewCount != graded.size) {
+                flag("REVIEW_COUNT_MISMATCH", u.id, "row says ${u.reviewCount}, history has ${graded.size}")
+            }
+            val lapses = graded.count { it.memoryRating == "Forgot" }
+            if (graded.isNotEmpty() && u.lapseCount != lapses) {
+                flag("LAPSE_COUNT_MISMATCH", u.id, "row says ${u.lapseCount}, history has $lapses")
+            }
+            if (!u.stability.isFinite() || u.stability <= 0.0) flag("BAD_STABILITY", u.id, "stability=${u.stability}")
+            if (!u.difficulty.isFinite() || u.difficulty !in 1.0..10.0) flag("BAD_DIFFICULTY", u.id, "difficulty=${u.difficulty}")
+            // nextReviewAt must be the earlier of the two clocks unless the USER moved it.
+            val expectedEffective = listOfNotNull(u.modelDueAt.takeIf { it > 0L }, u.understandingDueAt).minOrNull()
+            if (u.deferredUntil == null && expectedEffective != null && u.nextReviewAt != expectedEffective) {
+                flag("CLOCK_DISAGREEMENT", u.id, "nextReviewAt=${u.nextReviewAt} but min(model,understanding)=$expectedEffective")
+            }
+            if (u.deferredUntil != null && u.nextReviewAt != u.deferredUntil) {
+                flag("DEFERRAL_DISAGREEMENT", u.id, "deferredUntil=${u.deferredUntil} but nextReviewAt=${u.nextReviewAt}")
+            }
+            // A row's model must own its newest log, or a stability is being read on the wrong curve.
+            val newestModel = mine.lastOrNull()?.schedulerVersion?.takeIf { it.isNotBlank() }
+            if (newestModel != null && u.memoryModel == "FSRS-6" && newestModel == "FSRS-5") {
+                flag("MODEL_OWNERSHIP", u.id, "row is FSRS-6 but its newest log was written by FSRS-5")
+            }
+            if (mine.count { it.logType == "FIRST_STUDY" } > 1 && mine.firstOrNull()?.logType != "FIRST_STUDY") {
+                flag("SEED_ORDERING", u.id, "multiple FIRST_STUDY rows and the earliest log is not one of them")
+            }
+        }
+        root.put("consistency", JSONObject().apply {
+            put("checkedUnits", units.size)
+            put("checkedLogs", logs.size)
+            put("issueCount", issues.length())
+            put("issues", issues)
+            put(
+                "note",
+                "Each entry is a violated invariant, i.e. a bug. Empty is the expected result. " +
+                    "Counts are compared against replayable history, never repaired here.",
+            )
+        })
 
         val eventsArr = JSONArray()
         for (e in events) {

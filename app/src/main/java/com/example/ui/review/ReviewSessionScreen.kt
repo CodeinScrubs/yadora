@@ -228,6 +228,16 @@ class ReviewViewModel(
             val projected = runCatching { repository.projectOntoCurrentModel(next) }.getOrElse {
                 android.util.Log.w("Yadora", "skipping topic ${next.id}: projection failed", it)
                 skippedUnprojectable++
+                // Recorded in the event log so it reaches the analytics export. A projection failure
+                // in the field is otherwise invisible: the topic just stops appearing, and neither
+                // the user nor a later log review would ever learn why.
+                runCatching {
+                    repository.logEvent(
+                        "PROJECTION_FAILED",
+                        unitId = next.id,
+                        detail = "model=${next.memoryModel} ${it::class.java.simpleName}: ${it.message?.take(120)}",
+                    )
+                }
                 null
             }
             if (projected != null) { shown = projected; break }
