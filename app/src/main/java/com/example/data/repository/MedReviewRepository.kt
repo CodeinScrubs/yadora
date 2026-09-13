@@ -404,12 +404,27 @@ class MedReviewRepository(
         val logs = reviewLogDao.getRecentRecallLogsOnce(
             MedScheduler.CURRENT_MODEL.id,
             com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
+            com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION,
             com.example.domain.srs.RecallCalibration.WINDOW,
         ).filter { it.retrievabilityAtReview in 0.0..1.0 } // the query already excludes the -1 sentinel; belt and braces
         return com.example.domain.srs.RecallCalibration.scale(
             predicted = logs.map { it.retrievabilityAtReview }.toDoubleArray(),
             recalled = logs.map { it.memoryRating != MemoryRating.Forgot.name }.toBooleanArray(),
         )
+    }
+
+    /**
+     * How long one review actually takes THIS user, in minutes: the median of the last 50 measured
+     * durations, or two minutes until at least ten exist. Feeds only the Today estimate ("about N
+     * min"), which used to assume a flat two minutes per topic for everyone.
+     */
+    suspend fun typicalReviewMinutes(): Double {
+        val ms = reviewLogDao.getRecentReviewDurationsMs(50)
+        if (ms.size < 10) return 2.0
+        val sorted = ms.sorted()
+        val median = if (sorted.size % 2 == 1) sorted[sorted.size / 2].toDouble()
+            else (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2.0
+        return (median / 60_000.0).coerceIn(0.5, 15.0)
     }
 
     /**

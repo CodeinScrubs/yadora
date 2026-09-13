@@ -197,7 +197,10 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
             // reviews at least MIN_ELAPSED_DAYS apart (getLogsSince is ascending, so the tail is the
             // newest), shrunk and clamped. The card's own n/predicted/actual keep every recall row.
             val evidence = recallLogs
-                .filter { it.elapsedDays >= com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS }
+                .filter {
+                    it.elapsedDays >= com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS &&
+                        it.elapsedDays >= com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION * it.previousIntervalDays
+                }
                 .takeLast(com.example.domain.srs.RecallCalibration.WINDOW)
             val scale = com.example.domain.srs.RecallCalibration.scale(
                 evidence.map { it.retrievabilityAtReview }.toDoubleArray(),

@@ -38,15 +38,27 @@ interface ReviewLogDao {
 
     /**
      * The evidence the per-user calibration reads: the most recent real recall reviews under one
-     * memory model, newest first, with a stored prediction and at least [minElapsedDays] elapsed.
-     * First-study rows are self-assessments, not recalls; short-interval rows carry the whole-day
-     * rounding bias RecallCalibration.MIN_ELAPSED_DAYS explains.
+     * memory model, newest first, with a stored prediction, at least [minElapsedDays] elapsed, and
+     * not brought forward by anything but the memory clock (at least [earlyFraction] of the interval
+     * that was scheduled had passed). First-study rows are self-assessments, not recalls;
+     * short-interval rows carry the whole-day rounding bias RecallCalibration.MIN_ELAPSED_DAYS
+     * explains; early rows are repairs and self-tests, which RecallCalibration.EARLY_REVIEW_FRACTION
+     * explains.
      */
     @Query(
         "SELECT * FROM review_logs WHERE logType = 'RECALL' AND schedulerVersion = :model " +
-            "AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays ORDER BY reviewedAt DESC, id DESC LIMIT :limit"
+            "AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays " +
+            "AND elapsedDays >= :earlyFraction * previousIntervalDays ORDER BY reviewedAt DESC, id DESC LIMIT :limit"
     )
-    suspend fun getRecentRecallLogsOnce(model: String, minElapsedDays: Double, limit: Int): List<ReviewLogEntity>
+    suspend fun getRecentRecallLogsOnce(model: String, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
+
+    /**
+     * The most recently measured review durations, newest first, for the Today time estimate. Rows
+     * under five seconds are mis-taps or undo churn, not reviews; the commit path already caps a
+     * duration at 30 minutes.
+     */
+    @Query("SELECT reviewDurationMs FROM review_logs WHERE reviewDurationMs >= 5000 ORDER BY reviewedAt DESC, id DESC LIMIT :limit")
+    suspend fun getRecentReviewDurationsMs(limit: Int): List<Long>
 
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")

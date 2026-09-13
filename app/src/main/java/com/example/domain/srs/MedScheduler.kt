@@ -88,6 +88,16 @@ object MedScheduler {
     /** The schedule never asks for a review sooner than the next day. */
     const val MIN_INTERVAL_DAYS = 1.0
 
+    /**
+     * The one interval ceiling, in days. Both parameter classes default to it (pinned by
+     * `IntervalCeilingTest`) and the fuzz clamps to it. A year is a PRODUCT choice, not FSRS's:
+     * the reference lets intervals run to decades, but the flat FSRS-6 tail is extrapolated far
+     * beyond the data it was fitted on, a topic is bigger than a flashcard, and a learner who wants
+     * to stay exam-ready is better served by one calm yearly touch on mature material than by a
+     * four-year gap the model cannot vouch for. Cost: at most one review per mature topic per year.
+     */
+    const val MAX_INTERVAL_DAYS = 365.0
+
     /** Ceiling on how many lapses [priorityScore] will count, so old history can't outrank importance. */
     const val MAX_SCORED_LAPSES = 5
 
@@ -682,10 +692,10 @@ object MedScheduler {
         if (baseIntervalDays < 3.0) return intervalDays
         val rng = kotlin.random.Random(unitId * 31L + reviewCount)
         val factor = 1.0 + rng.nextDouble(-0.05, 0.05)
-        // Bounds come from the model's own parameters, not a second hardcoded copy of them: fuzz is
-        // the LAST step before a due date is written, so it must not be able to nudge an interval
-        // past the ceiling review() just enforced.
-        val fuzzed = (intervalDays * factor).coerceIn(MIN_INTERVAL_DAYS, FsrsParameters().maximumIntervalDays)
+        // Fuzz is the LAST step before a due date is written, so it must not be able to nudge an
+        // interval past the ceiling review() just enforced — the same MAX_INTERVAL_DAYS both
+        // parameter classes default to.
+        val fuzzed = (intervalDays * factor).coerceIn(MIN_INTERVAL_DAYS, MAX_INTERVAL_DAYS)
         // FIRST_STUDY_MAX_DAYS is a PROMISE ("your first check-in lands within five days"), not a
         // suggestion. review() capped the interval before the understanding multiplier, but fuzz runs
         // afterwards and could add up to +5% on top — turning an advertised 5.0-day ceiling into 5.25.

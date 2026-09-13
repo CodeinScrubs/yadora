@@ -279,7 +279,12 @@ fun TodayScreen(
         awaitDispose { sp.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     val displayDue = minOf(totalDue, dailyLimit)
-    val estimatedTimeMin = displayDue * 2
+    // Minutes a review takes THIS user — the median of their last 50 measured reviews — rather than a
+    // flat two minutes for everyone; two until ten reviews exist. Re-read whenever the due set changes.
+    val minutesPerReview by androidx.compose.runtime.produceState(initialValue = 2.0, key1 = totalDue) {
+        value = runCatching { repository.typicalReviewMinutes() }.getOrDefault(2.0)
+    }
+    val estimatedTimeMin = Math.round(displayDue * minutesPerReview).toInt().let { if (displayDue > 0) maxOf(it, 1) else it }
 
     if (showUpcomingSchedule) {
         UpcomingScheduleDialog(

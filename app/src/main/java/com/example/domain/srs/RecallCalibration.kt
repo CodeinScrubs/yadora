@@ -57,6 +57,16 @@ object RecallCalibration {
      */
     const val MIN_ELAPSED_DAYS = 3.0
 
+    /**
+     * A review that happened before this fraction of its memory interval had passed was not the
+     * memory clock's doing — an understanding repair deadline or an on-demand review from the
+     * Library brought it forward — and it is left out of the evidence. Such reviews sit at a
+     * predicted recall of ~0.97+, where an outcome says almost nothing about the curve, and they
+     * are a selected set (topics the learner was unsure of, or chose to drill), so what little they
+     * say is biased. The estimate is meant to describe the memory model on the reviews it scheduled.
+     */
+    const val EARLY_REVIEW_FRACTION = 0.5
+
     /** Beyond these the model is simply wrong for this learner in a way one scale cannot express. */
     const val MIN_SCALE = 0.5
     const val MAX_SCALE = 2.0

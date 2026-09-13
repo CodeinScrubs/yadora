@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -207,7 +208,14 @@ fun LibraryScreen(
     repository: MedReviewRepository,
     onNavigateToEdit: (Long) -> Unit = {},
     onNavigateToAdd: () -> Unit = {},
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    /**
+     * Review ONE topic now, whether or not it is due. An early review is ordinary FSRS: recall is
+     * predicted high, a success grows stability a little, a lapse is a lapse. The exam date stays
+     * decorative; this is the learner choosing to check a topic before a test, and the calibration
+     * leaves such reviews out of its evidence (RecallCalibration.EARLY_REVIEW_FRACTION).
+     */
+    onNavigateToReview: (Long) -> Unit = {},
 ) {
     val viewModel: LibraryViewModel = viewModel(factory = LibraryViewModelFactory(repository))
     val units by viewModel.filteredUnits.collectAsStateWithLifecycle()
@@ -460,6 +468,21 @@ fun LibraryScreen(
                                 )
                             }
                         } else {
+                            // One topic selected: review it now, due or not (a self-test before an exam).
+                            if (selectedIds.size == 1) {
+                                val reviewId = selectedIds.first()
+                                IconButton(onClick = { selectedIds = emptySet(); onNavigateToReview(reviewId) }) {
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = when (strings.languageCode) {
+                                            "fa" -> "همین حالا مرور کن"
+                                            "de" -> "Jetzt wiederholen"
+                                            else -> "Review now"
+                                        },
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
                             if (selectedIds.size in 2..4) {
                                 IconButton(onClick = { showMergeDialog = true }) {
                                     Icon(

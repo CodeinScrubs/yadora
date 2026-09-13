@@ -273,7 +273,17 @@ These were decided deliberately. Re-suggesting them wastes a session:
   schedule), shrunk toward 1 in log space by `n / (n + 120)` and clamped to 0.5–2. The 3-day
   evidence rule is load-bearing: FSRS-6 is fed whole calendar days, so a 2.5-day gap is predicted at
   t = 3, the stored prediction runs pessimistic at short intervals, and fed those rows the estimator
-  drove a perfectly average simulated learner to 1.58× within three months. It multiplies the memory interval only, before the caps —
+  drove a perfectly average simulated learner to 1.58× within three months. Reviews that came
+  before half of their scheduled memory interval (a repair deadline, an on-demand review) are left
+  out too: they sit at ~0.97 predicted recall, where an outcome says nothing about the curve, and
+  they are a selected set (`EARLY_REVIEW_FRACTION`). `RecallCalibrationEvidenceTest` pins the rule.
+- **On-demand review from the Library is allowed; interval compression by exam date is not.**
+  Long-press a topic → play. It opens the single-topic session whether or not the topic is due; an
+  early review is ordinary FSRS (high predicted recall, a small stability gain, a lapse is a lapse)
+  and the schedule is recomputed from it honestly. This is the learner choosing to check a topic
+  before a test. It does not read the exam date, and the exam date still feeds nothing.
+- **The Today estimate uses the user's own review time**: the median of their last 50 measured
+  durations (≥ 5 s), two minutes until ten exist (`MedReviewRepository.typicalReviewMinutes`). It multiplies the memory interval only, before the caps —
   equivalent to a per-user retention adjustment — and never touches stability or difficulty. It
   is read at app start and at the start of every review session, each log stores the scale it was
   scheduled with (`calibrationScaleAtReview`), and replay uses the stored one for untouched rows.

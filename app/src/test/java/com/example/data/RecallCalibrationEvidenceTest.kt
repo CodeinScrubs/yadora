@@ -46,13 +46,13 @@ class RecallCalibrationEvidenceTest {
 
     private suspend fun log(
         at: Long, recalled: Boolean, predicted: Double = 0.9, elapsed: Double = 10.0,
-        type: String = "RECALL", model: String = MedScheduler.CURRENT_MODEL.id,
+        type: String = "RECALL", model: String = MedScheduler.CURRENT_MODEL.id, previousInterval: Double = 10.0,
     ) {
         db.reviewLogDao().insertLog(
             ReviewLogEntity(
                 studyUnitId = unitId, reviewedAt = at, memoryRating = if (recalled) "Good" else "Forgot",
                 understandingRating = if (recalled) "Clear" else "NotAsked",
-                previousIntervalDays = 1.0, nextIntervalDays = 1.0, previousState = "Learning", nextState = "Learning",
+                previousIntervalDays = previousInterval, nextIntervalDays = 1.0, previousState = "Learning", nextState = "Learning",
                 retrievabilityAtReview = predicted, elapsedDays = elapsed, logType = type, schedulerVersion = model,
             )
         )
@@ -77,10 +77,14 @@ class RecallCalibrationEvidenceTest {
         for (i in 0 until 500) log(at = 20_000L + i, recalled = true, model = "FSRS-5")               // the frozen model's curve
         for (i in 0 until 500) log(at = 30_000L + i, recalled = true, elapsed = RecallCalibration.MIN_ELAPSED_DAYS - 0.5) // too close together
         for (i in 0 until 500) log(at = 40_000L + i, recalled = true, predicted = -1.0)                // no stored prediction (pre-v2)
+        for (i in 0 until 500) log(at = 45_000L + i, recalled = true, elapsed = 3.0, previousInterval = 40.0) // brought forward by a repair or a self-test
         assertEquals("non-evidence rows change nothing", withFailures, repo.recallCalibrationScale(), 0.0)
 
-        // Qualifying successes DO count, and exactly at the threshold counts.
-        for (i in 0 until 200) log(at = 50_000L + i, recalled = true, elapsed = RecallCalibration.MIN_ELAPSED_DAYS)
+        // Qualifying successes DO count, and exactly at both thresholds counts.
+        for (i in 0 until 200) log(
+            at = 50_000L + i, recalled = true, elapsed = RecallCalibration.MIN_ELAPSED_DAYS,
+            previousInterval = RecallCalibration.MIN_ELAPSED_DAYS / RecallCalibration.EARLY_REVIEW_FRACTION,
+        )
         assertTrue("qualifying successes raise it back", repo.recallCalibrationScale() > withFailures)
     }
 

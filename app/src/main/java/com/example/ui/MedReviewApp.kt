@@ -123,7 +123,9 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     repository = repository,
                     onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) { launchSingleTop = true } },
                     onNavigateToAdd = { navController.navigate(Screen.AddUnit) { launchSingleTop = true } },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
+                    onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } },
+                    // On-demand review of one topic, due or not (a self-test before an exam).
+                    onNavigateToReview = { unitId -> navController.navigate(Screen.ReviewSession(unitId)) { launchSingleTop = true } }
                 )
             }
             composable<Screen.Progress> {
