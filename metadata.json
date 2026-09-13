@@ -1,6 +1,6 @@
 {
   "name": "Yadora",
-  "description": "Yadora — a study-review scheduler: log what you studied, and it brings each topic back right before you would forget it (FSRS spaced repetition).",
+  "description": "Yadora — a study-review scheduler: log what you studied, and it estimates when each topic is due for review (FSRS spaced repetition).",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

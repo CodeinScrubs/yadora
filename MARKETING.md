@@ -2,28 +2,29 @@
 
 The honest-claims rule governs everything here: Yadora is an **evidence-informed spaced-review
 planner**, not "scientifically exact." Never promise grades, never claim it knows the exact moment
-of forgetting. Calm confidence sells this app; hype breaks its own brand.
+of forgetting, and never quote a universal forgetting percentage — there isn't one; how fast
+something fades depends on the material and the learner. Calm confidence sells this app; hype
+breaks its own brand.
 
 ---
 
 ## 1. Positioning
 
 **One-liner (EN):**
-> Study once. Yadora tells you when to review — so you remember for months, not days.
+> Study once. Yadora tells you when to review — so what you learn stays with you.
 
 **One-liner (FA):**
-> یک‌بار بخوان؛ یادورا می‌گوید کِی مرور کنی — تا ماه‌ها یادت بماند، نه چند روز.
+> یک‌بار بخوان؛ یادورا می‌گوید کِی مرور کنی — تا آنچه خوانده‌ای در ذهنت بماند.
 
 **One-liner (DE):**
-> Einmal lernen. Yadora sagt dir, wann du wiederholen sollst — damit du es monatelang behältst.
+> Einmal lernen. Yadora sagt dir, wann du wiederholen sollst — damit das Gelernte bleibt.
 
 **Elevator pitch:**
 Every student knows the feeling: you studied it, you knew it, and three weeks later it's gone.
-Yadora fixes the *timing* problem. After you study any topic — from a textbook, lecture, video,
-anywhere — you log it in ten seconds. Yadora's memory model (built on FSRS, the same family of
-algorithms behind the world's most effective flashcard systems) schedules each topic's reviews at
-the moment they do the most good, and reminds you. No flashcards to make. No decks to maintain.
-Your studying stays yours; Yadora just makes sure it sticks.
+Yadora works on the *timing* problem. After you study any topic — from a textbook, lecture, video,
+anywhere — you log it in ten seconds. Yadora's memory model (FSRS, the same family of algorithms
+behind modern spaced-repetition apps) estimates when each topic is due for a review and reminds
+you. No flashcards to make. No decks to maintain. Your studying stays yours; Yadora helps it stick.
 
 **What makes it different (the three hooks):**
 1. **Topic-level, not flashcards** — log "Kidney stones" once, not 40 cards. Works with ANY study
@@ -44,12 +45,12 @@ Your studying stays yours; Yadora just makes sure it sticks.
 
 **Title:** Yadora — Study Review Planner
 **Short description (80 chars):**
-> Remember what you study. Smart spaced review reminders — offline, no flashcards.
+> Remember what you study. Spaced review reminders — offline, no flashcards.
 
 **Full description (key paragraphs):**
 - Open with the pain: "You studied it. Two weeks later it's gone."
-- The mechanism: adaptive spaced review built on the FSRS memory-model family; reviews scheduled
-  when they're most effective.
+- The mechanism: adaptive spaced review built on the FSRS memory-model family; each topic's next
+  review is estimated from how your earlier reviews went.
 - The respect: offline, no account, no ads, no data collection, export any time.
 - The calm: designed to reduce stress, not add it. Your daily plan, a gentle plant that grows with
   real study, honest scheduling you can always override.
@@ -66,17 +67,19 @@ everything that isn't a flashcard).
 
 **Post 1 — the hook (X/Instagram):**
 > You don't have a memory problem. You have a *timing* problem.
-> Review a topic right before you'd forget it and it sticks for months.
-> That timing is exactly what Yadora calculates — for anything you study. 🌱
+> Review a topic around the time you'd start to forget it, and it tends to stick far longer.
+> Estimating that timing is what Yadora does — for anything you study. 🌱
 > Offline. No flashcards. No account. #studytips #medstudent #spacedrepetition
 
 **Post 2 — the story (Instagram carousel / Telegram):**
 > Slide 1: "I studied 6 hours today." — every student
 > Slide 2: "How much will you remember in 30 days?" — nobody asks
-> Slide 3: The forgetting curve: without review, ~70% is gone in a month.
-> Slide 4: With well-timed reviews: the curve flattens. Each review buys you weeks.
-> Slide 5: Yadora schedules those reviews for you. Study anything → log it → get reminded at the
-> right moment. Offline, calm, yours.
+> Slide 3: The forgetting curve: without review, much of what you study fades within weeks — how
+> fast depends on the material and on you.
+> Slide 4: With well-timed reviews, the curve flattens: each successful review tends to buy more
+> time than the last.
+> Slide 5: Yadora schedules those reviews for you. Study anything → log it → get reminded when a
+> review is due. Offline, calm, yours.
 
 **Post 3 — the anti-hype (X/Threads):**
 > Yadora won't gamify your studying. No streaks that shame you. No confetti. No "you lost your
@@ -90,10 +93,10 @@ everything that isn't a flashcard).
 > not re-learning. Log a topic in 10 seconds after you close the book. That's the whole workflow.
 
 **Post 5 — launch post (all platforms):**
-> After months of building (and 40 days of studying for my own exam with it), Yadora is live.
+> After months of building, Yadora is live.
 > A spaced-review planner for people who study real material, not just flashcards:
 > 🌱 Adaptive review scheduling (FSRS-based)
-> 🔔 Reminders that survive reboots and battery savers
+> 🔔 Reminders built to survive reboots and battery savers
 > 🌍 English, فارسی (Jalali calendar), Deutsch
 > 📴 100% offline — no account, no ads, your data is yours
 > Built by a doctor who needed it to exist. Link in bio.
@@ -161,8 +164,8 @@ everything that isn't a flashcard).
 
 ## 6. Pricing & distribution notes
 
-- Launch **free** for the field-test and first public phase — reviews and installs are worth more
-  than early revenue, and the app has zero server costs.
+- Launch **free** for the first public phase — reviews and installs are worth more than early
+  revenue, and the app has zero server costs.
 - Later options: one-time "supporter" unlock (theme colors already exist as a natural premium
   candidate) or simply keep it free and build reputation. Avoid subscriptions for an offline app —
   users resent paying monthly for something with no server.
@@ -174,10 +177,10 @@ everything that isn't a flashcard).
 ## 7. Launch checklist (marketing side)
 
 - [ ] Store listing text in EN + FA + DE (translated listing = ranked in those markets)
-- [ ] 8 phone screenshots per language (see screenshot guide in the chat/PUBLISHING.md)
+- [ ] 8 phone screenshots per language (see the screenshot guide in PUBLISHING.md)
 - [ ] Feature graphic 1024×500 (prompt #1)
 - [ ] A Telegram channel for updates + support (already the contact channel in-app)
 - [ ] Ask the first 10–20 real users (friends) for honest Play reviews after ~2 weeks of use
-- [ ] Post the launch thread AFTER the exam field-test, with the real story: "I built this, then
-      studied for my own board exam with it for 40 days. Here's what happened." — that story is the
-      single most credible marketing asset you will ever have. Save analytics screenshots.
+- [ ] Hold the launch story until it is true. Once you have studied with Yadora for real for a
+      while, "I built this, then used it for my own studying — here's what happened" is the single
+      most credible marketing asset you will have. Until then, don't claim it.
