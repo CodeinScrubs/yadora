@@ -1,0 +1,15 @@
+# Line endings. Yadora is developed on Windows but CI builds on Linux, where a gradlew checked out
+# with CRLF endings fails immediately: "/usr/bin/env: 'sh\r': No such file or directory".
+gradlew     text eol=lf
+*.sh        text eol=lf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Never touch these byte-for-byte.
+*.jar       binary
+*.png       binary
+*.jpg       binary
+*.webp      binary
+*.ttf       binary
+*.aab       binary
+*.apk       binary
