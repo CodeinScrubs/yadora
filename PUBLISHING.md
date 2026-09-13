@@ -21,13 +21,17 @@ This is written for someone who has never published an Android app. Follow it to
 - **applicationId:** `com.yadora.app` — this IS your app's identity on Play forever. Changing it
   later = a different app = every user loses their data. It's already correct; never touch it.
 - **App name shown to users:** Yadora.
-- **Version:** `versionName = "1.0"` (what users see), `versionCode = 3` (the machine counter).
-  **Every upload to Play must have a versionCode strictly higher than the last.** So your first
-  upload can stay 3; the next update becomes 4, then 5, etc. Bump it in `app/build.gradle.kts`.
+- **Version:** `versionName` is what users see; `versionCode` is the machine counter. v1.0 shipped as
+  `versionCode = 3`. The source is now `versionName = "1.1"`, `versionCode = 4`.
+  **Every upload to Play must have a versionCode strictly higher than the last one uploaded.** Bump
+  it in `app/build.gradle.kts` before each upload.
 
 ---
 
 ## 2. Create your upload keystore (THE one thing only you can do)
+
+> **Status:** if you created this key to sign v1.0, you already have it — skip to "Back it up". Every
+> future update must be signed with that same key.
 
 The keystore is a file with a private key that signs your app. **If you lose it, you can never
 update your app again.** Treat it like the deed to a house.
@@ -44,16 +48,17 @@ update your app again.** Treat it like the deed to a house.
    - Validity: 25+ years.
    - Certificate: your name / org (e.g. "Dr. Shayan Salehirad").
 4. Finish creating. Then continue the wizard → select **release** build variant → Finish.
-5. Android Studio produces a **signed .aab** in `app/release/`. That's your upload file.
+5. Android Studio produces a **signed .aab** in `app/release/`. That's your upload file. (That folder
+   is ignored by git on purpose — a committed bundle silently goes stale.)
 
 **Back it up NOW:** copy the `.jks` file AND the two passwords to at least two safe places (a
 password manager + an encrypted cloud file + a USB stick). This is the single most important thing
 in this whole document.
 
 > The project's `build.gradle.kts` is already set up so that release signing engages automatically
-> when the environment variables `KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_PASSWORD` are set — but for
-> a first release, the Android Studio wizard above is the simplest path and you don't need the env
-> vars at all.
+> when the environment variables `KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_PASSWORD` are set — but the
+> Android Studio wizard above is the simplest path and you don't need the env vars at all. The
+> keystore and its passwords must never be committed or given to CI.
 
 **Enroll in Play App Signing** (Play offers this during setup — say yes): Google stores a secure
 copy of your app-signing key so a lost upload key can be reset. Highly recommended.
@@ -62,6 +67,8 @@ copy of your app-signing key so a lost upload key can be reset. Highly recommend
 
 ## 3. Verify the signed bundle before uploading
 
+- Check that the GitHub Actions run for the exact commit you are releasing is **green** (unit tests,
+  lint, and the R8 release build).
 - Install the release build on a real phone first: Android Studio can install the signed APK, or
   run `bundletool` to generate an APK from the AAB. At minimum, install the **release** APK
   (`app/build/outputs/apk/release/`) after signing it, and click through the whole app once —
@@ -80,14 +87,12 @@ copy of your app-signing key so a lost upload key can be reset. Highly recommend
    - **Store listing:** title, short + full description (from MARKETING.md), screenshots (section 6
      below), feature graphic, app icon (already in the project).
    - **Privacy Policy:** REQUIRED. You need a public URL. Simplest: a free GitHub Pages / Google
-     Sites / Telegraph page stating: "Yadora stores all data on your device. It has no account, no
-     ads, and no analytics servers. Optionally, Android's own encrypted backup may store your data
-     in your personal Google account (you control this in your device settings). You can export or
-     delete all your data at any time inside the app. Contact: shayanay80@gmail.com." (A template is
-     in section 7.)
-   - **Data Safety form:** declare honestly. Yadora collects **no** data off-device. You DO enable
-     Android Auto Backup (so tick "app data may be backed up" per the form's backup question) but
-     you collect/transmit nothing to you. No data shared with third parties.
+     Sites / Telegraph page. A template is in section 7.
+   - **Data Safety form:** declare honestly. Yadora collects **no** data off-device and transmits
+     nothing to you or to any third party. Android backup is enabled in a limited way: **cloud
+     backup copies only the app's settings** to the user's own Google account, while a **direct
+     phone-to-phone transfer** (which the user starts) copies the full study database. Answer the
+     form's backup question on that basis.
    - **Content rating:** fill the questionnaire → it'll come out "Everyone / PEGI 3".
    - **Target audience:** 13+ (or 18+ if you prefer to avoid child-privacy rules; a study app for
      "all learners including a German kid" — if you genuinely target under-13, that triggers extra
@@ -108,7 +113,8 @@ copy of your app-signing key so a lost upload key can be reset. Highly recommend
 2. Add your own email (and a few friends) as testers → share the opt-in link.
 3. Install from Play on your real phone via that link. This is the true "does the Play-delivered
    app work" test — including that the reminders fire on your actual device over several days.
-4. Let it run through your 40-day study period on internal testing. Fix anything that surfaces.
+4. Use it for real studying for a while before promoting. Reminders firing correctly over days, on a
+   real phone with its own battery management, is the test that matters. Fix anything that surfaces.
 5. When confident: promote the same build to **Closed testing** (more users), then **Production**.
    Use a **staged rollout** (start at 20%) so you can halt if a crash spikes.
 
@@ -132,7 +138,7 @@ someone scrolling fast. This is the single biggest lever on install rate.
 2. **Adding a topic** (the Add form with the guidance hints visible) — *"Log what you studied in
    10 seconds. Any subject, any source."*
 3. **Review screen** (rating buttons + the interval preview showing "in 11 days") — *"Rate how it
-   went. Yadora picks the perfect next date."*
+   went. Yadora picks the next date."*
 4. **The 'Finished for today' card + upcoming calendar dialog open** — *"Done in minutes. See what's
    coming."*
 5. **Progress: retention chart + growth plant** — *"Watch your memory hold — and your plant grow."*
@@ -157,10 +163,11 @@ screen-record the real add→review→done loop) — Play shows it above the scr
 > Yadora is an offline study-review planner. All your data — topics, notes, review history, settings
 > — is stored only on your device. Yadora has no user accounts, no advertising, and no servers that
 > collect your information; we (the developers) never receive your study data.
-> Optional backups: Android's built-in encrypted backup may copy the app's data to your personal
-> Google account if you have device backup enabled. This is controlled entirely by you in your
-> Android settings, not by Yadora. You can export a full backup file or permanently delete all your
-> data at any time from within the app (Settings → Data).
+> Backups: if device backup is enabled, Android's built-in encrypted cloud backup may copy Yadora's
+> **settings** (not your study topics) to your personal Google account. A direct phone-to-phone
+> transfer that you start yourself copies your full study history to your new phone. Both are
+> controlled by you in your Android settings, not by Yadora. You can export a full backup file or
+> permanently delete all your data at any time from within the app (Settings → Data).
 > Contact: shayanay80@gmail.com (or Telegram @shayan_salehirad).
 > Last updated: [DATE].
 
@@ -181,12 +188,14 @@ screen-record the real add→review→done loop) — Play shows it above the scr
 
 ## 9. Your remaining to-do (the short version)
 
-1. Create + back up the keystore (§2). ← only true blocker
+1. Keep the upload keystore and both passwords backed up (§2).
 2. Write the privacy policy page (§7) and get its URL.
 3. Seed demo data, take + caption screenshots in EN/FA/DE (§6).
 4. Play Console: $25, store listing, Data Safety, content rating (§4).
-5. Upload signed AAB to **internal testing**, run it through your exam field-test (§5).
+5. Upload the signed AAB to **internal testing** and use it for real studying for a while (§5).
 6. Promote to production with a staged rollout when confident.
 
-Everything on the *code* side is done: builds are green, release AAB compiles, 76 tests pass,
-0 lint errors, permissions trimmed, full German/English/Persian support.
+On the code side, every push to GitHub runs the unit tests, lint (0 errors) and an R8 release build
+automatically; the app ships in German, English and Persian. What CI cannot catch is device-only
+behaviour — reminders under battery optimisation, alarms after a reboot — so smoke-test the signed
+build on a real phone before every release (§3).

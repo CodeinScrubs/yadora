@@ -1,5 +1,11 @@
 # Yadora — Product & Technical Design
 
+> **Status (2026-09):** this is the original design write-up and parts of it are now historical. It
+> describes the June–July plan, including an FSRS-5 model and an understanding multiplier that have
+> since been replaced: the live design is FSRS-6, conformance-tested against py-fsrs 6.3.1, with
+> understanding on a separate repair clock. **[CLAUDE.md](CLAUDE.md) is the source of truth for
+> current behaviour and every settled decision** — read this file for product rationale, not specs.
+
 > MedReview is a **study-review scheduler** for medical students, not a flashcard app.
 > The unit of value is *when* to review a studied topic, driven by forgetting-curve science,
 > with reliable reminders and minimal cognitive load. Offline, no backend/login (for now).

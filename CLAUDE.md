@@ -15,7 +15,21 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleD
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:lintDebug            # lint (keep 0 errors)
 ```
 
-(PowerShell: `$env:JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` first.)
+(PowerShell: `$env:JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` first.) The bundled JDK is
+currently JDK 25. Android Studio updates itself, the Gradle wrapper and AGP on its own, so check
+`git status` for uncommitted version bumps at the start of a session and run the gate before
+committing them. `:app:assembleRelease` builds an R8-minified release, unsigned unless the keystore
+environment variables are set.
+
+**CI:** private repo `github.com/CodeinScrubs/yadora`. `.github/workflows/android-ci.yml` runs unit
+tests, lint and debug + R8 release builds on every push and PR to `main` (Temurin 21; markdown-only
+changes skipped). A red CI run is a blocker exactly like a local failure. Inspect with `gh run list` /
+`gh run watch`.
+
+**Device testing:** `adb` is at `%LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe` (not on PATH).
+The user's Samsung Galaxy A52s (Android 14) is a test device and destructive testing of Yadora on it
+is OK'd. Reboot, Doze and clock-change tests belong on the emulator (AVD `Medium_Phone_API_36.1`).
+Unit tests cannot prove reminder or alarm behaviour — only a device can.
 
 ## Identity (permanent — never change)
 
