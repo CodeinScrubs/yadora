@@ -423,7 +423,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     actionLabel = if (language == "fa") "فعال‌سازی" else if (language == "de") "Aktivieren" else "Enable"
                 ) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        runCatching { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)) }
+                        // Shared helper: this call used to omit the package URI, so some devices opened
+                        // the list of every app instead of Yadora's own toggle.
+                        runCatching { context.startActivity(NotificationScheduler.exactAlarmSettingsIntent(context)) }
                     }
                 }
                 PermissionStatusRow(
@@ -506,12 +508,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             TextButton(onClick = {
-                                runCatching {
-                                    context.startActivity(
-                                        android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-                                            .setData(android.net.Uri.parse("package:" + context.packageName))
-                                    )
-                                }
+                                runCatching { context.startActivity(NotificationScheduler.exactAlarmSettingsIntent(context)) }
                             }) {
                                 Text(if (language == "fa") "فعال‌سازی هشدار دقیق" else if (language == "de") "Exakte Alarme aktivieren" else "Enable exact alarms")
                             }

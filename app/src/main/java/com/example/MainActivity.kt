@@ -44,6 +44,12 @@ class MainActivity : ComponentActivity() {
 
       var currentLanguage by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(initialLanguage) }
       var languageSelected by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(initialLanguageSelected) }
+      // Device-local, backup-excluded prefs: permissions don't travel to a new phone, so neither may the
+      // "reminders step done" flag (see RemindersSetupPolicy).
+      val remindersTransientPrefs = androidx.compose.runtime.remember { com.example.notifications.NotificationScheduler.transientPrefs(this) }
+      var remindersSetupDone by androidx.compose.runtime.remember {
+          androidx.compose.runtime.mutableStateOf(remindersTransientPrefs.getBoolean(com.example.ui.onboarding.RemindersSetupPolicy.PREF_DONE, false))
+      }
       var themeMode by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(sharedPrefs.getString("theme_mode", "system") ?: "system") }
       var accentHex by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(sharedPrefs.getString("accent_color", "") ?: "") }
       // Calendar preference, independent of UI language. "auto" follows language (fa→Jalali).
@@ -87,27 +93,27 @@ class MainActivity : ComponentActivity() {
                     languageSelected = true
                 })
             } else {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                    // pre-existing permission logic
-                    val permissionState = androidx.compose.runtime.remember {
-                      androidx.compose.runtime.mutableStateOf(
-                        androidx.core.content.ContextCompat.checkSelfPermission(
-                          this, 
-                          android.Manifest.permission.POST_NOTIFICATIONS
-                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                      )
-                    }
-                    val requestPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-                      androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-                    ) { isGranted ->
-                      permissionState.value = isGranted
-                    }
-                    androidx.compose.runtime.LaunchedEffect(Unit) {
-                      if (!permissionState.value) {
-                        requestPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                      }
-                    }
+                val showRemindersSetup = androidx.compose.runtime.remember(remindersSetupDone) {
+                    com.example.ui.onboarding.RemindersSetupPolicy.shouldShow(
+                        setupDone = remindersSetupDone,
+                        notificationsEnabled = androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled(),
+                        exactAlarmsAllowed = com.example.notifications.NotificationScheduler.canScheduleExact(this),
+                    )
                 }
+                if (showRemindersSetup) {
+                    // Step 2 of first-run onboarding. It replaces a bare POST_NOTIFICATIONS request that
+                    // fired the instant the language was picked, with no explanation — while the
+                    // exact-alarm permission Android 14+ withholds from new installs was never mentioned
+                    // at all, so reminders quietly arrived up to an hour late.
+                    com.example.ui.onboarding.RemindersSetupScreen(onDone = {
+                        remindersTransientPrefs.edit()
+                            .putBoolean(com.example.ui.onboarding.RemindersSetupPolicy.PREF_DONE, true)
+                            .apply()
+                        remindersSetupDone = true
+                        // Whatever was just granted takes effect now, not at the next re-arm.
+                        runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(this) }
+                    })
+                } else {
                 MedReviewApp(
                     repository = app.repository,
                     onLanguageChange = { lang ->
@@ -121,6 +127,7 @@ class MainActivity : ComponentActivity() {
                     },
                     openReviewSignal = openReviewSignal.value
                 )
+                }
             }
         }
       }

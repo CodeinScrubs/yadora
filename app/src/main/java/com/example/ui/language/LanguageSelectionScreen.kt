@@ -19,9 +19,13 @@ fun LanguageSelectionScreen(onLanguageSelected: (String) -> Unit) {
     val context = LocalContext.current
     var selectedLang by remember { mutableStateOf("en") }
 
+    // First-run screens sit outside the app's Scaffolds, so this one paints its own background. The XML
+    // window theme is dark: without this, a phone in light mode showed light cards on a dark window.
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .systemBarsPadding()
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -110,5 +114,6 @@ fun LanguageSelectionScreen(onLanguageSelected: (String) -> Unit) {
             val strings = com.example.ui.i18n.LocalStrings.current
             Text(strings.continueBtn)
         }
+    }
     }
 }

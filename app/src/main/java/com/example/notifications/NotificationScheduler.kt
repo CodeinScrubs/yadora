@@ -14,6 +14,7 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.net.toUri
 import java.util.Calendar
 
 /**
@@ -171,6 +172,23 @@ object NotificationScheduler {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         return am.canScheduleExactAlarms()
+    }
+
+    /**
+     * The system screen where the user grants "Alarms & reminders" to THIS app. The package URI is
+     * not decoration: without it some devices open the list of every installed app instead of
+     * Yadora's own toggle, and the user has to go looking for it. One definition, used by onboarding
+     * and Settings alike, so the two can't drift. Below Android 12 exact alarms need no grant and that
+     * screen does not exist, so the app's own details page is returned rather than an action nothing
+     * handles.
+     */
+    fun exactAlarmSettingsIntent(context: Context): Intent {
+        val appUri = "package:${context.packageName}".toUri()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).setData(appUri)
+        } else {
+            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(appUri)
+        }
     }
 
     /**
