@@ -35,21 +35,24 @@ jobs:
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Locally the build runs on Android Studio's bundled JDK. CI uses the Temurin LTS the Android
       # Gradle Plugin and Robolectric are most widely tested on; the app itself targets Java 11.
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
+      # Pinned to v5 on purpose: gradle/actions v6 moved its caching into a proprietary component, and
+      # upgrading means accepting Gradle's Terms of Use (https://gradle.com/legal/terms-of-use/). That
+      # is the repository owner's decision, not a version bump. v5 is MIT-licensed and runs on Node 24.
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       # Separate steps so a red run says WHICH gate failed without opening the log.
       - name: Unit tests
@@ -63,7 +66,7 @@ jobs:
 
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports
           path: |
@@ -74,7 +77,7 @@ jobs:
 
       - name: Upload lint report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lint-report
           path: app/build/reports/lint-results-debug.*
