@@ -241,7 +241,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                         }
                     }
                 )
-                TabRow(selectedTabIndex = selectedTab) {
+                SecondaryTabRow(selectedTabIndex = selectedTab) {
                     tabTitles.forEachIndexed { index, title ->
                         Tab(
                             selected = selectedTab == index,

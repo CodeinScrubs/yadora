@@ -26,6 +26,23 @@ tests, lint and debug + R8 release builds on every push and PR to `main` (Temuri
 changes skipped). A red CI run is a blocker exactly like a local failure. Inspect with `gh run list` /
 `gh run watch`.
 
+**Dependency baseline** (2026-09): compileSdk 37 (needs SDK platform `android-37.0`) with targetSdk
+still 36 on purpose — raising targetSdk changes runtime behaviour, so it is its own change, made after
+reading Android 17's behaviour changes. Compose BOM 2026.09.00 (Material3 1.4.0), current AndroidX,
+Kotlin 2.2.10. Two pins are deliberate and commented in `gradle/libs.versions.toml`: Vico stays 1.15.0
+(2.x and 3.x are API rewrites) and kotlinx-serialization-json stays 1.9.0 (the last release for Kotlin
+2.2). Vico 1.15 was compiled against Compose 1.6, so after ANY Compose bump open Progress on a device
+and scroll to the "Review Consistency" chart — it always draws, unlike the retention chart, which stays
+empty until real recall reviews exist.
+
+An INTERRUPTED Gradle build (a killed session, a sleeping PC) can leave corrupt state that looks like a
+real failure: a build-cache entry that fails with `invalid stored block lengths`, or a truncated lint
+model (`Could not deserialize ... lint model`, then `Unexpected lint invalid arguments`). Neither is a
+code problem. Delete the entry the error names from `~/.gradle/caches/build-cache-1`, then rebuild with
+`./gradlew --no-build-cache clean ...`. Robolectric tests need `--add-opens` for
+`java.base/jdk.internal.access` on JDK 17+ (set in `app/build.gradle.kts`); without it every Robolectric
+test fails in setup with "Failed to interact with raw FileDescriptor internals".
+
 **Device testing:** `adb` is at `%LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe` (not on PATH).
 The user's Samsung Galaxy A52s (Android 14) is a test device and destructive testing of Yadora on it
 is OK'd. Reboot, Doze and clock-change tests belong on the emulator (AVD `Medium_Phone_API_36.1`).

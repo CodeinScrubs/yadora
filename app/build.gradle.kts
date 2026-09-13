@@ -11,7 +11,7 @@ ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk { version = release(37) }
 
   defaultConfig {
     // The install/store identity. PERMANENT once anyone installs — changing it later = a different app
@@ -75,6 +75,14 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+}
+
+// Robolectric 4.17 sets a FileDescriptor's raw fd through the JDK's internal SharedSecrets while it builds
+// the Android sandbox, and JDK 17+ blocks that unless jdk.internal.access is opened. Without this flag every
+// Robolectric test failed in setup ("Failed to interact with raw FileDescriptor internals") while the
+// pure-JVM tests passed.
+tasks.withType<Test>().configureEach {
+  jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
 }
 
 // (The template's Secrets Gradle Plugin was removed: this app is fully offline and has no API keys.)

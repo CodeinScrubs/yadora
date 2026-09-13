@@ -622,14 +622,7 @@ fun LibraryScreen(
                 items(units, key = { it.id }) { unit ->
                     var showDeleteConfirm by remember { mutableStateOf(false) }
                     
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { dismissValue ->
-                            if (dismissValue == SwipeToDismissBoxValue.EndToStart) {
-                                showDeleteConfirm = true
-                            }
-                            false
-                        }
-                    )
+                    val dismissState = rememberSwipeToDismissBoxState()
                     
                     if (showDeleteConfirm) {
                         AlertDialog(
@@ -694,6 +687,14 @@ fun LibraryScreen(
                         state = dismissState,
                         enableDismissFromStartToEnd = false,
                         enableDismissFromEndToStart = selectedIds.isEmpty(),
+                        // A swipe only ASKS: open the confirmation and put the card straight back, as the
+                        // old veto in confirmValueChange did (deprecated in Material3 1.4, no replacement).
+                        onDismiss = { direction ->
+                            if (direction == SwipeToDismissBoxValue.EndToStart) {
+                                showDeleteConfirm = true
+                                coroutineScope.launch { dismissState.reset() }
+                            }
+                        },
                         backgroundContent = {
                             val color = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart) {
                                 MaterialTheme.colorScheme.error
