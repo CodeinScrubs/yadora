@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.room.withTransaction
 import com.example.MedReviewApplication
 import com.example.data.local.entity.ReviewLogEntity
@@ -394,7 +395,7 @@ object BackupManager {
         // clearing settings alone would leave a stale "already shown today" / snooze behind.
         runCatching {
             com.example.notifications.NotificationScheduler.transientPrefs(context)
-                .edit().clear().apply()
+                .edit { clear() }
         }
         runCatching {
             com.example.domain.srs.MedScheduler.userRetention =

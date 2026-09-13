@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 
 /**
  * Minimal theme customization: appearance mode (System / Light / Dark) + an accent color.
@@ -103,7 +104,7 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
                         selected = mode == value,
                         onClick = {
                             mode = value
-                            sp.edit().putString("theme_mode", value).apply()
+                            sp.edit { putString("theme_mode", value) }
                             onThemeChange(value, accent)
                         },
                         label = { Text(label) }
@@ -142,7 +143,7 @@ fun ThemeSettingsScreen(onBack: () -> Unit, onThemeChange: (String, String) -> U
                                 role = androidx.compose.ui.semantics.Role.RadioButton,
                                 onClick = {
                                     accent = hex
-                                    sp.edit().putString("accent_color", hex).apply()
+                                    sp.edit { putString("accent_color", hex) }
                                     onThemeChange(mode, hex)
                                 },
                             )

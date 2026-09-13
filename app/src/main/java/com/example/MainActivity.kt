@@ -6,6 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.core.content.edit
+import androidx.core.graphics.toColorInt
 import com.example.ui.MedReviewApp
 import com.example.ui.theme.MyApplicationTheme
 
@@ -66,7 +68,7 @@ class MainActivity : ComponentActivity() {
       val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
       val darkTheme = when (themeMode) { "light" -> false; "dark" -> true; else -> systemDark }
       val accent = accentHex.takeIf { it.isNotBlank() }?.let {
-          runCatching { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(it)) }.getOrNull()
+          runCatching { androidx.compose.ui.graphics.Color(it.toColorInt()) }.getOrNull()
       }
 
       MyApplicationTheme(darkTheme = darkTheme, accent = accent, languageCode = currentLanguage) {
@@ -85,10 +87,10 @@ class MainActivity : ComponentActivity() {
         ) {
             if (!languageSelected) {
                 com.example.ui.language.LanguageSelectionScreen(onLanguageSelected = { lang ->
-                    sharedPrefs.edit()
-                        .putString("app_language", lang)
-                        .putBoolean("language_selected", true)
-                        .apply()
+                    sharedPrefs.edit {
+                        putString("app_language", lang)
+                        putBoolean("language_selected", true)
+                    }
                     currentLanguage = lang
                     languageSelected = true
                 })
@@ -106,9 +108,9 @@ class MainActivity : ComponentActivity() {
                     // exact-alarm permission Android 14+ withholds from new installs was never mentioned
                     // at all, so reminders quietly arrived up to an hour late.
                     com.example.ui.onboarding.RemindersSetupScreen(onDone = {
-                        remindersTransientPrefs.edit()
-                            .putBoolean(com.example.ui.onboarding.RemindersSetupPolicy.PREF_DONE, true)
-                            .apply()
+                        remindersTransientPrefs.edit {
+                            putBoolean(com.example.ui.onboarding.RemindersSetupPolicy.PREF_DONE, true)
+                        }
                         remindersSetupDone = true
                         // Whatever was just granted takes effect now, not at the next re-arm.
                         runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(this) }
@@ -117,11 +119,11 @@ class MainActivity : ComponentActivity() {
                 MedReviewApp(
                     repository = app.repository,
                     onLanguageChange = { lang ->
-                        sharedPrefs.edit().putString("app_language", lang).apply()
+                        sharedPrefs.edit { putString("app_language", lang) }
                         currentLanguage = lang
                     },
                     onThemeChange = { mode, hex ->
-                        sharedPrefs.edit().putString("theme_mode", mode).putString("accent_color", hex).apply()
+                        sharedPrefs.edit { putString("theme_mode", mode).putString("accent_color", hex) }
                         themeMode = mode
                         accentHex = hex
                     },

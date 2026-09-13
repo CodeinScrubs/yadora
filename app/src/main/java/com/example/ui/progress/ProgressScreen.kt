@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.core.graphics.toColorInt
 import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -693,7 +694,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                         if (unitSubject != null) {
                                             val badgeColor = unitSubject.colorHex?.let {
                                                 try {
-                                                    Color(android.graphics.Color.parseColor(it))
+                                                    Color(it.toColorInt())
                                                 } catch (e: Exception) {
                                                     MaterialTheme.colorScheme.secondary
                                                 }

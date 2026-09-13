@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import com.example.notifications.NotificationScheduler
 import com.example.domain.srs.MedScheduler
 import kotlinx.coroutines.launch
@@ -92,7 +94,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     // Bumped on every ON_RESUME so the permission-status rows recompute after the user returns from
     // system settings (previously they stayed red until the screen was fully reopened).
     var permissionRefresh by remember { mutableStateOf(0) }
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) permissionRefresh++
@@ -282,7 +284,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                             }
                                         }, onClick = {
                                             reminderHour = h
-                                            sharedPrefs.edit().putInt("reminder_hour", h).apply()
+                                            sharedPrefs.edit { putInt("reminder_hour", h) }
                                             NotificationScheduler.scheduleDailyReminder(context)
                                             expandedTime = false
                                         })
@@ -297,7 +299,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     (0..55 step 5).forEach { m ->
                                         DropdownMenuItem(text = { Text(m.toString().padStart(2, '0').let { if (language == "fa") com.example.ui.i18n.PersianDate.faDigits(it) else it }) }, onClick = {
                                             reminderMinute = m
-                                            sharedPrefs.edit().putInt("reminder_minute", m).apply()
+                                            sharedPrefs.edit { putInt("reminder_minute", m) }
                                             NotificationScheduler.scheduleDailyReminder(context)
                                             expandedMinute = false
                                         })
@@ -309,7 +311,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             checked = dailyReminder,
                             onCheckedChange = { isChecked ->
                                 dailyReminder = isChecked
-                                sharedPrefs.edit().putBoolean("daily_reminder", isChecked).apply()
+                                sharedPrefs.edit { putBoolean("daily_reminder", isChecked) }
                                 if (isChecked) {
                                     NotificationScheduler.scheduleDailyReminder(context)
                                 } else {
@@ -445,7 +447,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             context.startActivity(
                                 android.content.Intent(
                                     android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                                    android.net.Uri.parse("package:" + context.packageName)
+                                    "package:${context.packageName}".toUri()
                                 )
                             )
                         }
@@ -567,19 +569,19 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         DropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
                             DropdownMenuItem(text = { Text(strings.englishLanguage) }, onClick = {
                                 language = "en"
-                                sharedPrefs.edit().putString("app_language", "en").apply()
+                                sharedPrefs.edit { putString("app_language", "en") }
                                 langExpanded = false
                                 onLanguageChange(language)
                             })
                             DropdownMenuItem(text = { Text(strings.persianLanguage) }, onClick = {
                                 language = "fa"
-                                sharedPrefs.edit().putString("app_language", "fa").apply()
+                                sharedPrefs.edit { putString("app_language", "fa") }
                                 langExpanded = false
                                 onLanguageChange(language)
                             })
                             DropdownMenuItem(text = { Text(strings.germanLanguage) }, onClick = {
                                 language = "de"
-                                sharedPrefs.edit().putString("app_language", "de").apply()
+                                sharedPrefs.edit { putString("app_language", "de") }
                                 langExpanded = false
                                 onLanguageChange(language)
                             })
@@ -618,7 +620,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             listOf("auto", "jalali", "gregorian").forEach { v ->
                                 DropdownMenuItem(text = { Text(calLabel(v)) }, onClick = {
                                     calendarFormat = v
-                                    sharedPrefs.edit().putString("calendar_format", v).apply()
+                                    sharedPrefs.edit { putString("calendar_format", v) }
                                     calExpanded = false
                                 })
                             }
@@ -644,7 +646,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         checked = soundEnabled,
                         onCheckedChange = { 
                             soundEnabled = it
-                            sharedPrefs.edit().putBoolean("sound_enabled", it).apply()
+                            sharedPrefs.edit { putBoolean("sound_enabled", it) }
                             // Re-create notification channel if needed
                             NotificationScheduler.createNotificationChannel(context)
                         }
@@ -663,7 +665,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         checked = vibrationEnabled,
                         onCheckedChange = {
                             vibrationEnabled = it
-                            sharedPrefs.edit().putBoolean("vibration_enabled", it).apply()
+                            sharedPrefs.edit { putBoolean("vibration_enabled", it) }
                             NotificationScheduler.createNotificationChannel(context)
                         }
                     )
@@ -688,7 +690,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         checked = alarmEnabled,
                         onCheckedChange = {
                             alarmEnabled = it
-                            sharedPrefs.edit().putBoolean("alarm_enabled", it).apply()
+                            sharedPrefs.edit { putBoolean("alarm_enabled", it) }
                             if (it) NotificationScheduler.createAlarmChannel(context)
                         }
                     )
@@ -729,7 +731,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             checked = alarmSilenced,
                             onCheckedChange = {
                                 alarmSilenced = it
-                                sharedPrefs.edit().putBoolean("alarm_silenced", it).apply()
+                                sharedPrefs.edit { putBoolean("alarm_silenced", it) }
                                 // Stop anything ringing right now, so the switch takes effect instantly.
                                 if (it) runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
                             }
@@ -784,7 +786,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     onValueChange = { value -> limit = value },
                     onValueChangeFinished = {
                         // Persist once when the drag settles, not on every pixel frame.
-                        sharedPrefs.edit().putFloat("daily_review_limit", limit).apply()
+                        sharedPrefs.edit { putFloat("daily_review_limit", limit) }
                     },
                     valueRange = 10f..200f,
                     steps = 18,
@@ -946,7 +948,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         MedScheduler.userRetention = it.toDouble()
                     },
                     onValueChangeFinished = {
-                        sharedPrefs.edit().putFloat("desired_retention", retention).apply()
+                        sharedPrefs.edit { putFloat("desired_retention", retention) }
                     },
                     valueRange = 0.85f..0.95f,
                     steps = 9,
@@ -974,7 +976,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = examName,
-                    onValueChange = { examName = it; sharedPrefs.edit().putString("exam_name", it).apply() },
+                    onValueChange = { examName = it; sharedPrefs.edit { putString("exam_name", it) } },
                     label = { Text(if (language == "fa") "نام آزمون" else if (language == "de") "Name der Prüfung" else "Exam name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -992,7 +994,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         if (examDate > 0L) {
                             TextButton(onClick = {
                                 examName = ""; examDate = 0L
-                                sharedPrefs.edit().remove("exam_name").remove("exam_date").apply()
+                                sharedPrefs.edit { remove("exam_name").remove("exam_date") }
                             }) { Text(if (language == "fa") "پاک کردن" else if (language == "de") "Löschen" else "Clear") }
                         }
                     }
@@ -1103,7 +1105,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     runCatching {
                                         emailContext.startActivity(
                                             android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-                                                data = android.net.Uri.parse("mailto:shayanay80@gmail.com")
+                                                data = "mailto:shayanay80@gmail.com".toUri()
                                                 putExtra(android.content.Intent.EXTRA_SUBJECT, "Yadora")
                                             }
                                         )
@@ -1139,7 +1141,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 onDismiss = { showExamDatePicker = false },
                 onConfirm = { millis ->
                     examDate = millis
-                    sharedPrefs.edit().putLong("exam_date", millis).apply()
+                    sharedPrefs.edit { putLong("exam_date", millis) }
                     showExamDatePicker = false
                 },
             )
@@ -1161,7 +1163,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 set(java.util.Calendar.MINUTE, 0); set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
                             }.timeInMillis
                             examDate = local
-                            sharedPrefs.edit().putLong("exam_date", local).apply()
+                            sharedPrefs.edit { putLong("exam_date", local) }
                         }
                         showExamDatePicker = false
                     }) { Text(if (language == "fa") "تأیید" else "OK") }

@@ -7,6 +7,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.core.content.edit
+import androidx.core.graphics.toColorInt
 import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -16,8 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Undo
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -148,7 +150,7 @@ class ReviewViewModel(
         val unit = _currentUnit.value ?: return
         getApplication<android.app.Application>()
             .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-            .edit().putInt("split_dismiss_${unit.id}", unit.reviewCount).apply()
+            .edit { putInt("split_dismiss_${unit.id}", unit.reviewCount) }
         splitSuggestion = false
     }
 
@@ -700,7 +702,7 @@ fun ReviewSessionScreen(
                     
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (subject?.colorHex != null) {
-                            Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(subject.colorHex)) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
+                            Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { androidx.compose.ui.graphics.Color(subject.colorHex.toColorInt()) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
                             Spacer(modifier = Modifier.width(6.dp))
                         }
                         Text(
@@ -721,7 +723,7 @@ fun ReviewSessionScreen(
                                 selectedMemory = null
                             }) {
                                 Icon(
-                                    imageVector = Icons.Default.Undo,
+                                    imageVector = Icons.AutoMirrored.Filled.Undo,
                                     contentDescription = when (strings.languageCode) { "fa" -> "واگرد آخرین ارزیابی"; "de" -> "Letzte Bewertung zurücknehmen"; else -> "Undo last rating" },
                                     tint = MaterialTheme.colorScheme.primary
                                 )
@@ -1111,7 +1113,6 @@ fun ReviewSessionScreen(
                                             UnderstandingRating.Confused -> strings.urConfused
                                             UnderstandingRating.Partial -> strings.urPartial
                                             UnderstandingRating.Clear -> strings.urClear
-                                            else -> rating.name
                                         }
                                     }\n$intervalStr",
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,

@@ -7,10 +7,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -458,7 +458,7 @@ fun LibraryScreen(
                             if (selectedIds.size in 2..4) {
                                 IconButton(onClick = { showMergeDialog = true }) {
                                     Icon(
-                                        imageVector = Icons.Default.MergeType,
+                                        imageVector = Icons.AutoMirrored.Filled.MergeType,
                                         contentDescription = when (strings.languageCode) {
                                             "fa" -> "ادغام موارد انتخاب‌شده"
                                             "de" -> "Ausgewählte zusammenführen"

@@ -148,11 +148,7 @@ class AlarmRingActivity : ComponentActivity() {
                 @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
             }
             val pattern = longArrayOf(0, 600, 800)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-            } else {
-                @Suppress("DEPRECATION") vibrator?.vibrate(pattern, 0)
-            }
+            vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0)) // minSdk 26: always available
         }
     }
 
@@ -167,10 +163,8 @@ class AlarmRingActivity : ComponentActivity() {
 
     private fun openReview() {
         stopRinging()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            runCatching {
-                (getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager).requestDismissKeyguard(this, null)
-            }
+        runCatching {
+            (getSystemService(KEYGUARD_SERVICE) as android.app.KeyguardManager).requestDismissKeyguard(this, null)
         }
         runCatching {
             startActivity(

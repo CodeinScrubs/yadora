@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Yadora</string>
+    <!-- Shown by the home-screen widget until its first update fills in the due count. -->
+    <string name="widget_count_placeholder" translatable="false">—</string>
 </resources>

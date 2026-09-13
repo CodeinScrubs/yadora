@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
+import androidx.core.graphics.toColorInt
 import com.example.ui.i18n.autoDirection
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -800,7 +801,7 @@ fun StudyUnitCard(
                 val subject = subjects.find { it.id == unit.subjectId }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (subject?.colorHex != null) {
-                        Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { Color(android.graphics.Color.parseColor(subject.colorHex)) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
+                        Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { Color(subject.colorHex.toColorInt()) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
                         Spacer(modifier = Modifier.width(6.dp))
                     }
                     Text(

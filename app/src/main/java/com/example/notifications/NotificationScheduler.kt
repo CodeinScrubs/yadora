@@ -14,6 +14,7 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 import androidx.core.net.toUri
 import java.util.Calendar
 
@@ -109,7 +110,7 @@ object NotificationScheduler {
      * Reminder Health screen would otherwise show green while nothing can appear.
      */
     fun isReminderChannelEnabled(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        // minSdk is 26, so notification channels always exist here.
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = nm.getNotificationChannel(channelId(context)) ?: return true // not created yet
         return channel.importance != NotificationManager.IMPORTANCE_NONE
@@ -128,43 +129,39 @@ object NotificationScheduler {
     }
 
     fun createNotificationChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            val soundEnabled = sp.getBoolean("sound_enabled", true)
-            val vibrationEnabled = sp.getBoolean("vibration_enabled", true)
-            val importance =
-                if (soundEnabled || vibrationEnabled) NotificationManager.IMPORTANCE_DEFAULT else NotificationManager.IMPORTANCE_LOW
-            val channel = NotificationChannel(channelId(context), "Daily Reminders", importance).apply {
-                description = "Reminders for due study units"
-                if (!soundEnabled) setSound(null, null)
-                enableVibration(vibrationEnabled)
-            }
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
-            // Prune stale reminder channels left over from previous sound/vibration combos, so the
-            // app's channel list in system settings doesn't accumulate one dead entry per toggle.
-            val current = channelId(context)
-            nm.notificationChannels
-                .filter { it.id.startsWith("medreview_reminder") && it.id != current }
-                .forEach { nm.deleteNotificationChannel(it.id) }
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        val soundEnabled = sp.getBoolean("sound_enabled", true)
+        val vibrationEnabled = sp.getBoolean("vibration_enabled", true)
+        val importance =
+            if (soundEnabled || vibrationEnabled) NotificationManager.IMPORTANCE_DEFAULT else NotificationManager.IMPORTANCE_LOW
+        val channel = NotificationChannel(channelId(context), "Daily Reminders", importance).apply {
+            description = "Reminders for due study units"
+            if (!soundEnabled) setSound(null, null)
+            enableVibration(vibrationEnabled)
         }
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(channel)
+        // Prune stale reminder channels left over from previous sound/vibration combos, so the
+        // app's channel list in system settings doesn't accumulate one dead entry per toggle.
+        val current = channelId(context)
+        nm.notificationChannels
+            .filter { it.id.startsWith("medreview_reminder") && it.id != current }
+            .forEach { nm.deleteNotificationChannel(it.id) }
     }
 
     /** High-importance channel for the optional "ring like an alarm clock" full-screen reminder. */
     fun createAlarmChannel(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(ALARM_CHANNEL_ID, "Alarm Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Rings like an alarm clock when reviews are due"
-                // The full-screen AlarmRingActivity owns the looping alarm tone; keep the channel itself
-                // silent so the alarm sound doesn't play twice (channel + activity).
-                setSound(null, null)
-                // AlarmRingActivity owns vibration too; the channel must stay silent/haptic-free to
-                // avoid a second overlapping pattern and to respect the user's vibration toggle.
-                enableVibration(false)
-            }
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
+        val channel = NotificationChannel(ALARM_CHANNEL_ID, "Alarm Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Rings like an alarm clock when reviews are due"
+            // The full-screen AlarmRingActivity owns the looping alarm tone; keep the channel itself
+            // silent so the alarm sound doesn't play twice (channel + activity).
+            setSound(null, null)
+            // AlarmRingActivity owns vibration too; the channel must stay silent/haptic-free to
+            // avoid a second overlapping pattern and to respect the user's vibration toggle.
+            enableVibration(false)
         }
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(channel)
     }
 
     /** True if the OS will honor exact alarms for this app (always true below Android 12). */
@@ -226,7 +223,7 @@ object NotificationScheduler {
             armAlarm(context, snoozedUntil, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
             return
         } else if (snoozedUntil != 0L) {
-            transientPrefs(context).edit().remove(PREF_SNOOZED_UNTIL).apply()
+            transientPrefs(context).edit { remove(PREF_SNOOZED_UNTIL) }
         }
 
         val primary = nextNudgeTime(context)
@@ -297,7 +294,7 @@ object NotificationScheduler {
         am.cancel(firePendingIntent(context, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE))
         // Drop the armed-nudge bookmark too: nothing is scheduled any more, so a stale future value
         // must not be honoured the next time reminders are turned back on.
-        transientPrefs(context).edit().remove(PREF_SNOOZED_UNTIL).remove(PREF_NEXT_NUDGE_AT).apply()
+        transientPrefs(context).edit { remove(PREF_SNOOZED_UNTIL).remove(PREF_NEXT_NUDGE_AT) }
     }
 
     /**
@@ -329,7 +326,7 @@ object NotificationScheduler {
     fun scheduleSnooze(context: Context) {
         // Clamp into waking hours so an edge case never rings in the middle of the night.
         val target = clampToWakingWindow(snoozeTargetMillis(context))
-        transientPrefs(context).edit().putLong(PREF_SNOOZED_UNTIL, target).apply()
+        transientPrefs(context).edit { putLong(PREF_SNOOZED_UNTIL, target) }
         cancelAlarm(context, REQ_DAILY, ACTION_FIRE)
         cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
         armAlarm(context, target, REQ_SNOOZE_FIRE, ACTION_SNOOZE_FIRE)
@@ -345,7 +342,7 @@ object NotificationScheduler {
 
     /** Consume persisted snooze state when its dedicated alarm fires. */
     fun clearSnooze(context: Context) {
-        transientPrefs(context).edit().remove(PREF_SNOOZED_UNTIL).apply()
+        transientPrefs(context).edit { remove(PREF_SNOOZED_UNTIL) }
     }
 
     /**
@@ -431,11 +428,11 @@ object NotificationScheduler {
         val candidate = now.timeInMillis + REPEAT_INTERVAL_MS
         val candHour = Calendar.getInstance().apply { timeInMillis = candidate }.get(Calendar.HOUR_OF_DAY)
         if (candHour in WAKING_START_HOUR until WAKING_END_HOUR) {
-            transientPrefs(context).edit().putLong(PREF_NEXT_NUDGE_AT, candidate).apply()
+            transientPrefs(context).edit { putLong(PREF_NEXT_NUDGE_AT, candidate) }
             return candidate
         }
 
-        transientPrefs(context).edit().remove(PREF_NEXT_NUDGE_AT).apply()
+        transientPrefs(context).edit { remove(PREF_NEXT_NUDGE_AT) }
         return Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
@@ -594,7 +591,7 @@ object NotificationScheduler {
             // Dedup marker: the WorkManager safety net skips today once this is set. Test notifications
             // pass markShown=false so trying the pipeline never suppresses that evening's real safety net.
             if (markShown) {
-                transientPrefs(context).edit().putLong(PREF_LAST_SHOWN_AT, System.currentTimeMillis()).apply()
+                transientPrefs(context).edit { putLong(PREF_LAST_SHOWN_AT, System.currentTimeMillis()) }
                 // Adherence + reliability research data: WHEN each real reminder fired and how many
                 // topics were waiting. Joined with STUDY_ACTION timestamps this answers "did the
                 // reminder lead to a review?" and "did reminders fire at all on this device?" —

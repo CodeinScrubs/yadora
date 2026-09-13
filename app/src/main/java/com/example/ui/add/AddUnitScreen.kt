@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.*
+import androidx.core.graphics.toColorInt
 import com.example.ui.i18n.autoDirection
 import com.example.ui.i18n.stateLabel
 import androidx.compose.runtime.*
@@ -586,7 +587,7 @@ fun AddUnitScreen(
                             val presets = listOf("#E57373", "#81C784", "#64B5F6", "#FFD54F", "#BA68C8", "#4DB6AC")
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(presets) { colorHex ->
-                                    val parsedColor = androidx.compose.ui.graphics.Color(android.graphics.Color.parseColor(colorHex))
+                                    val parsedColor = androidx.compose.ui.graphics.Color(colorHex.toColorInt())
                                     Card(
                                         onClick = { newSubjectColor = colorHex },
                                         colors = CardDefaults.cardColors(containerColor = parsedColor),
