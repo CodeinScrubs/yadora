@@ -31,6 +31,28 @@ The user's Samsung Galaxy A52s (Android 14) is a test device and destructive tes
 is OK'd. Reboot, Doze and clock-change tests belong on the emulator (AVD `Medium_Phone_API_36.1`).
 Unit tests cannot prove reminder or alarm behaviour — only a device can.
 
+Verified on hardware 2026-09-13 (build 1.1 / 4, AGP 9.4.0): on the Samsung (Android 14) an in-place
+upgrade install, launch with no crash/ANR, both daily reminders armed as EXACT alarms
+(`exactAllowReason=permission`, allowed in Doze), both notification channels, the WorkManager safety
+job, and a test reminder that actually posts (private on the lock screen, two actions). On the
+emulator (Android 16): a fresh install arms both reminders before onboarding finishes but as INEXACT
+alarms with a one-hour window, because Android 14+ denies `SCHEDULE_EXACT_ALARM` to new installs by
+default — so a new user's reminder can land up to an hour late until they grant it; `BootReceiver`
+re-arms both after a reboot; `connectedDebugAndroidTest` runs. Still unverified: Doze delivery over
+real time, clock/time-zone changes, Samsung battery management over days, the full-screen alarm.
+
+Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
+path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
+nothing. After a reboot wait at least ~60 s past `sys.boot_completed` before judging whether reminders
+were re-armed: under load the boot broadcast reached Yadora ~40 s late, and a 25 s check reported a
+re-arm bug that did not exist. Drive the UI with `uiautomator dump` + `input tap` on the node bounds.
+
+Both checks are scripted — run them (Git Bash, repo root) instead of rebuilding them by hand:
+`tools/device/smoke.sh <serial> [apk]` installs, launches, and reports crashes/ANRs, armed reminders
+(exact vs inexact), channels and jobs; `tools/device/test_reminder.sh <serial>` fires Settings → "Send a
+test reminder" through the real UI and prints the notification Android actually posted. Run both on a
+real phone before every release.
+
 ## Identity (permanent — never change)
 
 - `applicationId = "com.yadora.app"` — permanent once on Play; do NOT rename.
