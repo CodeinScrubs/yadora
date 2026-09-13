@@ -950,8 +950,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     onValueChangeFinished = {
                         sharedPrefs.edit { putFloat("desired_retention", retention) }
                     },
-                    valueRange = 0.85f..0.95f,
-                    steps = 9,
+                    // 0.97 is the ceiling the Important bump already uses; past it the workload roughly
+                    // doubles again for a point of recall, which no longer buys readiness.
+                    valueRange = 0.85f..0.97f,
+                    steps = 11,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(

@@ -36,6 +36,18 @@ interface ReviewLogDao {
     @Query("SELECT * FROM review_logs WHERE studyUnitId = :unitId ORDER BY reviewedAt ASC, id ASC")
     suspend fun getLogsForUnitOnce(unitId: Long): List<ReviewLogEntity>
 
+    /**
+     * The evidence the per-user calibration reads: the most recent real recall reviews under one
+     * memory model, newest first, with a stored prediction and at least [minElapsedDays] elapsed.
+     * First-study rows are self-assessments, not recalls; short-interval rows carry the whole-day
+     * rounding bias RecallCalibration.MIN_ELAPSED_DAYS explains.
+     */
+    @Query(
+        "SELECT * FROM review_logs WHERE logType = 'RECALL' AND schedulerVersion = :model " +
+            "AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays ORDER BY reviewedAt DESC, id DESC LIMIT :limit"
+    )
+    suspend fun getRecentRecallLogsOnce(model: String, minElapsedDays: Double, limit: Int): List<ReviewLogEntity>
+
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")
     suspend fun deleteLogsForUnits(unitIds: List<Long>)

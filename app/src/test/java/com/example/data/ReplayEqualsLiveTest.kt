@@ -58,10 +58,13 @@ class ReplayEqualsLiveTest {
         // milliseconds: the two only agree when the timestamps sit a whole number of days apart.
         val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
         val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
+        // The repair-clock backoff reads the topic's history, exactly as rateCurrentUnit does.
+        val unrepairedStreak = repo.unrepairedStreak(unit.id)
         val outcome = MedScheduler.review(
             stability = unit.stability, difficulty = unit.difficulty, elapsedDays = elapsedDays,
             memoryRating = memory, understanding = understanding, highYield = unit.highYield,
             reviewNumber = reviewNumber, model = MedScheduler.CURRENT_MODEL,
+            unrepairedStreak = unrepairedStreak,
         )
         val nextInterval = MedScheduler.fuzzedInterval(
             outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount,
@@ -94,8 +97,89 @@ class ReplayEqualsLiveTest {
             logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
             schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
             understandingFactorAtReview = MedScheduler.understandingFactor(understanding),
+            calibrationScaleAtReview = MedScheduler.calibrationScale,
         )
         repo.commitReview(updated, log)
+    }
+
+    /**
+     * POLICY YADORA-6: the repair clock doubles per consecutive unrepaired answer. The streak is read
+     * from the logs by both paths, so a no-op correction must reproduce every deadline exactly, and
+     * the deadlines themselves must be the doubled ones, not the flat table.
+     */
+    @Test
+    fun `consecutive unrepaired answers back off the repair clock identically live and replayed`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val studiedAt = now - 40 * day
+        val unitId = repo.insertUnit(newUnit("Pancreatitis", studiedAt))
+        liveReview(unitId, studiedAt, MemoryRating.Good, UnderstandingRating.Partial)                  // first check-in: streak 0
+        liveReview(unitId, studiedAt + 3 * day, MemoryRating.Good, UnderstandingRating.Partial)        // streak 1 -> 6 days
+        val logId = liveReview(unitId, studiedAt + 9 * day, MemoryRating.Good, UnderstandingRating.Partial) // streak 2 -> 12 days
+        liveReview(unitId, studiedAt + 21 * day, MemoryRating.Good, UnderstandingRating.Partial)       // streak 3 -> 24 days
+        val live = repo.getUnitById(unitId)!!
+
+        assertEquals("streak of four unrepaired answers on the logs", 4, repo.unrepairedStreak(unitId))
+        assertTrue("the memory date is far enough out for the deadline to matter",
+            live.modelDueAt - live.lastReviewedAt!! > 24 * day)
+        assertEquals("the fourth Partial repairs in 24 days, not 3",
+            24 * day, live.understandingDueAt!! - live.lastReviewedAt!!)
+        assertEquals("and that is the date the topic returns on", live.understandingDueAt, live.nextReviewAt)
+
+        repo.editReviewRating(unitId, logId, MemoryRating.Good, UnderstandingRating.Partial) // no-op correction
+        val replayed = repo.getUnitById(unitId)!!
+        assertEquals("stability", live.stability, replayed.stability, 1e-9)
+        assertEquals("interval", live.currentIntervalDays, replayed.currentIntervalDays, 1e-9)
+        assertEquals("modelDueAt", live.modelDueAt, replayed.modelDueAt)
+        assertEquals("understandingDueAt", live.understandingDueAt, replayed.understandingDueAt)
+        assertEquals("nextReviewAt", live.nextReviewAt, replayed.nextReviewAt)
+
+        // Repairing the understanding on the corrected review resets the streak for everything after it:
+        // the fourth answer becomes the FIRST unrepaired one again and gets the flat 3 days.
+        repo.editReviewRating(unitId, logId, MemoryRating.Good, UnderstandingRating.Clear)
+        val reset = repo.getUnitById(unitId)!!
+        assertEquals("the last Partial is now the first of a new streak: 3 days", 3 * day, reset.understandingDueAt!! - reset.lastReviewedAt!!)
+        assertEquals("the streak on the logs agrees", 1, repo.unrepairedStreak(unitId))
+    }
+
+    /**
+     * DB v7: every log records the calibration scale it was scheduled with. When the scale later
+     * moves, a replay must reproduce each untouched review's interval from ITS scale, and only the
+     * row being corrected — a new decision — takes today's.
+     */
+    @Test
+    fun `a moved calibration scale never rewrites the intervals of untouched reviews`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val studiedAt = now - 60 * day
+        val before = MedScheduler.calibrationScale
+        try {
+            MedScheduler.calibrationScale = 0.8
+            val unitId = repo.insertUnit(newUnit("Cirrhosis", studiedAt))
+            val firstLogId = liveReview(unitId, studiedAt, MemoryRating.Good, UnderstandingRating.Clear)
+            liveReview(unitId, studiedAt + 2 * day, MemoryRating.Good, UnderstandingRating.Clear)
+            liveReview(unitId, studiedAt + 14 * day, MemoryRating.Good, UnderstandingRating.Clear)
+            val live = repo.getUnitById(unitId)!!
+            val liveLogs = db.reviewLogDao().getLogsForUnitOnce(unitId)
+            assertTrue("every live log recorded the scale", liveLogs.all { it.calibrationScaleAtReview == 0.8 })
+
+            MedScheduler.calibrationScale = 1.25
+            repo.editReviewRating(unitId, firstLogId, MemoryRating.Good, UnderstandingRating.Clear) // no-op rating, new scale
+            val replayed = repo.getUnitById(unitId)!!
+            val replayedLogs = db.reviewLogDao().getLogsForUnitOnce(unitId)
+
+            assertEquals("the corrected row took today's scale", 1.25, replayedLogs[0].calibrationScaleAtReview, 0.0)
+            assertTrue("and its interval moved with it",
+                Math.abs(replayedLogs[0].nextIntervalDays - liveLogs[0].nextIntervalDays) > 1e-6)
+            for (i in 1 until liveLogs.size) {
+                assertEquals("untouched row $i keeps its scale", 0.8, replayedLogs[i].calibrationScaleAtReview, 0.0)
+                assertEquals("untouched row $i keeps its interval", liveLogs[i].nextIntervalDays, replayedLogs[i].nextIntervalDays, 1e-9)
+            }
+            assertEquals("the schedule the last review set is untouched", live.nextReviewAt, replayed.nextReviewAt)
+            assertEquals("stability never depended on the scale", live.stability, replayed.stability, 1e-9)
+        } finally {
+            MedScheduler.calibrationScale = before
+        }
     }
 
     /**

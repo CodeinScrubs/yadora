@@ -93,10 +93,7 @@ class MigrationV4ToV5Test {
         // Opening AppDatabase (version 5) against the v4 file forces MIGRATION_4_5 to run. If Room
         // rejects the migrated schema, .build()+first query throws and the test fails.
         val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(
-                AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3,
-                AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6,
-            )
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .build()
 
         val unit = db.studyUnitDao().getUnitById(7)!!

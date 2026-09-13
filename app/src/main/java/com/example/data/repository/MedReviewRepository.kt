@@ -395,6 +395,32 @@ class MedReviewRepository(
         return reviewLogDao.getLogsSince(sinceTime)
     }
 
+    /**
+     * The per-user interval correction ([com.example.domain.srs.RecallCalibration]) from this user's
+     * most recent real recall reviews under the live model. 1.0 with no evidence. Read at app start
+     * and at the start of every review session into `MedScheduler.calibrationScale`.
+     */
+    suspend fun recallCalibrationScale(): Double {
+        val logs = reviewLogDao.getRecentRecallLogsOnce(
+            MedScheduler.CURRENT_MODEL.id,
+            com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
+            com.example.domain.srs.RecallCalibration.WINDOW,
+        ).filter { it.retrievabilityAtReview in 0.0..1.0 } // the query already excludes the -1 sentinel; belt and braces
+        return com.example.domain.srs.RecallCalibration.scale(
+            predicted = logs.map { it.retrievabilityAtReview }.toDoubleArray(),
+            recalled = logs.map { it.memoryRating != MemoryRating.Forgot.name }.toBooleanArray(),
+        )
+    }
+
+    /**
+     * How many answers in a row, counting back from the topic's latest log, left understanding
+     * unrepaired — the input the repair-clock backoff needs (`MedScheduler.unrepairedStreak`). Read
+     * from the logs, the single source of truth, so the preview, the commit and the replay agree.
+     */
+    suspend fun unrepairedStreak(unitId: Long): Int = MedScheduler.unrepairedStreak(
+        reviewLogDao.getLogsForUnitOnce(unitId).map { it.memoryRating to it.understandingRating },
+    )
+
     suspend fun deleteLogById(logId: Long) {
         reviewLogDao.deleteLogById(logId)
     }
@@ -501,6 +527,9 @@ class MedReviewRepository(
         var lastStateName = unit.state
         val replayModel = MedScheduler.MemoryModel.of(unit.memoryModel)
         var lastRemediationDays: Double? = null
+        // The unrepaired-understanding streak in force before each log, rebuilt from the same rule
+        // the live path applies to the same rows (MedScheduler.continuesUnrepairedStreak).
+        var unrepairedStreak = 0
         val updatedLogs = ArrayList<ReviewLogEntity>(logs.size)
 
         for (log in logs) {
@@ -571,6 +600,9 @@ class MedReviewRepository(
                 )
                 prevTime = log.reviewedAt
                 lastReviewedAt = log.reviewedAt
+                // An exposure carries an understanding answer like any other row, and the live path
+                // counts it from the logs, so the replay must count it identically.
+                unrepairedStreak = if (MedScheduler.continuesUnrepairedStreak(mem.name, undStored)) unrepairedStreak + 1 else 0
                 continue
             }
 
@@ -593,6 +625,9 @@ class MedReviewRepository(
             // untouched row keeps the one it was stamped with. Same rule the stamping below uses.
             val policyForThisLog = if (log.id == logId) MedScheduler.POLICY_VERSION
                 else log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION }
+            // The calibration scale this row was scheduled with (v7). An untouched row keeps it; the
+            // edited row is a new decision under today's estimate; a pre-v7 row was scaled by nothing.
+            val histScale = if (log.id != logId) (log.calibrationScaleAtReview.takeIf { it > 0.0 } ?: 1.0) else null
             val outcome = MedScheduler.review(
                 stability = stability,
                 difficulty = difficulty,
@@ -612,6 +647,11 @@ class MedReviewRepository(
                 // same history the same way. A topic still on FSRS-5 replays under FSRS-5, so a
                 // rating correction there still reproduces the schedule the user actually had.
                 model = replayModel,
+                unrepairedStreak = unrepairedStreak,
+                calibrationScaleOverride = histScale,
+                // YADORA-6 backs off the repair clock; a row stamped with an older policy keeps the
+                // flat deadline it was actually given.
+                backOffRepairClock = MedScheduler.backsOffRepairClock(policyForThisLog),
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.
@@ -649,9 +689,13 @@ class MedReviewRepository(
                     understandingFactorAtReview =
                         if (undStored == "NotAsked") -1.0
                         else histFactor ?: MedScheduler.understandingFactor(und),
+                    // The edited row records today's scale, the one it was just scheduled with; an
+                    // untouched row keeps whatever it recorded (copy() preserves the sentinel too).
+                    calibrationScaleAtReview = if (log.id == logId) MedScheduler.calibrationScale else log.calibrationScaleAtReview,
                 )
             )
 
+            unrepairedStreak = if (MedScheduler.continuesUnrepairedStreak(mem.name, undStored)) unrepairedStreak + 1 else 0
             lastRemediationDays = outcome.remediationDays
             stability = outcome.state.stability
             difficulty = outcome.state.difficulty

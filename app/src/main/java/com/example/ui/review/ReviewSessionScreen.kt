@@ -158,6 +158,14 @@ class ReviewViewModel(
     // reversals), which usually means it bundles parts developing at different rates. Advisory only —
     // Yadora never splits automatically, and a dismissal suppresses it for 5 more reviews (via prefs).
     var splitSuggestion by androidx.compose.runtime.mutableStateOf(false)
+
+    /**
+     * How many answers in a row before this one left the CURRENT topic's understanding unrepaired
+     * (Partial/Confused on a successful recall). The repair clock doubles per such answer, so the
+     * understanding buttons must preview with the same value the commit will read from the logs.
+     * Refreshed whenever the displayed topic changes, including after an undo.
+     */
+    var currentUnrepairedStreak by androidx.compose.runtime.mutableIntStateOf(0)
         private set
 
     fun dismissSplitSuggestion() {
@@ -194,6 +202,10 @@ class ReviewViewModel(
     fun loadNext(cutoffTime: Long, unitId: Long = -1L) {
         viewModelScope.launch {
             if (dueUnits.isEmpty() && _currentUnit.value == null) {
+                // The per-user interval correction, refreshed once per session from the logs. Read
+                // here and not per review so a value cannot move between a button's preview and its
+                // commit; both read MedScheduler.calibrationScale as it stands for the session.
+                runCatching { MedScheduler.calibrationScale = repository.recallCalibrationScale() }
                 if (unitId != -1L) {
                     val unit = repository.getUnitById(unitId)
                     if (unit != null) {
@@ -258,6 +270,7 @@ class ReviewViewModel(
             }
             if (projected != null) { shown = projected; break }
         }
+        currentUnrepairedStreak = shown?.let { repository.unrepairedStreak(it.id) } ?: 0
         _currentUnit.value = shown
         unitShownAt = System.currentTimeMillis()
         _currentUnit.value?.let { checkSplitSuggestion(it) } ?: run { splitSuggestion = false }
@@ -279,6 +292,9 @@ class ReviewViewModel(
         intervalDays: Double,
         effectiveIntervalDays: Double,
         firstStudy: Boolean,
+        // Whether a repair deadline was actually written. With the backoff, Partial or Confused can
+        // leave the memory date standing alone; the sentence must then not claim anything moved.
+        repairPending: Boolean,
     ): String {
         val lang = getApplication<android.app.Application>()
             .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
@@ -302,19 +318,18 @@ class ReviewViewModel(
         // "a bit", and the user is entitled to see that their memory is fine and comprehension isn't.
         val memoryEstimate = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(memoryDays)} روز"
             else if (de) "$memoryDays Tage" else "$memoryDays days"
-        val note = if (memory != MemoryRating.Forgot && !firstStudy) when {
-            understanding == UnderstandingRating.Confused && repairWon ->
+        // Only a repair deadline that actually won the date gets a sentence. A deadline that was
+        // backed off past the memory date, or that rounds to the same day, changed nothing the user
+        // can see, and saying "sooner" about it would be false.
+        val note = if (memory != MemoryRating.Forgot && !firstStudy && repairPending && repairWon) when (understanding) {
+            UnderstandingRating.Confused ->
                 if (fa) " حافظه‌ات $memoryEstimate دوام می‌آورد، اما چون گیج‌کننده بود زودتر برمی‌گردد."
                 else if (de) " Dein Gedächtnis hält $memoryEstimate, aber es kommt früher zurück, weil es verwirrend war."
                 else " Your memory should hold for $memoryEstimate, but it returns sooner because it was confusing."
-            understanding == UnderstandingRating.Partial && repairWon ->
+            UnderstandingRating.Partial ->
                 if (fa) " حافظه‌ات $memoryEstimate دوام می‌آورد، اما فهم ناقص زودتر برش می‌گرداند."
                 else if (de) " Dein Gedächtnis hält $memoryEstimate, aber teilweises Verständnis holt es früher zurück."
                 else " Your memory should hold for $memoryEstimate, but partial understanding brings it back sooner."
-            understanding == UnderstandingRating.Confused ->
-                if (fa) " چون گیج‌کننده بود، کمی زودتر." else if (de) " Etwas früher, weil es verwirrend war." else " A bit sooner because it was confusing."
-            understanding == UnderstandingRating.Partial ->
-                if (fa) " چون فهم ناقص بود، کمی زودتر." else if (de) " Etwas früher wegen teilweisem Verständnis." else " Slightly sooner for partial understanding."
             else -> ""
         } else ""
         val yield = if (highYield && memory != MemoryRating.Forgot) (if (fa) " (فشرده‌تر چون مهم است.)" else if (de) " (Enger getaktet — es ist wichtig.)" else " (Kept tighter — it's important.)") else ""
@@ -345,6 +360,8 @@ class ReviewViewModel(
                 if (current != null) {
                     dueUnits.add(0, current)
                 }
+                // The undone log is gone, so the streak the buttons preview with must be re-read.
+                currentUnrepairedStreak = repository.unrepairedStreak(historyItem.unitBeforeRating.id)
                 _currentUnit.value = historyItem.unitBeforeRating
             } catch (t: Throwable) {
                 ratedStack.add(historyItem) // undo failed: keep the history item so Undo stays possible
@@ -383,6 +400,9 @@ class ReviewViewModel(
             // first-study window) no matter how late it happens. Same rule as the replay path.
             val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
 
+            // From the logs, the same source the preview read it from (advanceUnit).
+            val unrepairedStreak = repository.unrepairedStreak(unit.id)
+
             // Single source of truth: the same MedScheduler.review() that powers the button preview.
             val outcome = MedScheduler.review(
                 stability = unit.stability,
@@ -393,6 +413,7 @@ class ReviewViewModel(
                 highYield = unit.highYield,
                 reviewNumber = reviewNumber,
                 model = MedScheduler.CURRENT_MODEL,
+                unrepairedStreak = unrepairedStreak,
             )
 
             // Deterministic ±5% fuzz (seeded by unit + prior review count) de-clumps cohorts; same
@@ -465,6 +486,8 @@ class ReviewViewModel(
                 // research export that the user never actually selected.
                 understandingFactorAtReview =
                     if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
+                // v7: the per-user interval correction this review was scheduled with.
+                calibrationScaleAtReview = MedScheduler.calibrationScale,
             )
             // Update the unit's schedule AND insert its log atomically (one Room transaction), then
             // remember the exact log id so Undo deletes precisely this log.
@@ -490,6 +513,7 @@ class ReviewViewModel(
                 intervalDays = nextInterval,
                 effectiveIntervalDays = effectiveIntervalDays,
                 firstStudy = reviewNumber == 0,
+                repairPending = outcome.remediationDays != null,
             )
 
             advanceUnit()
@@ -1099,6 +1123,8 @@ fun ReviewSessionScreen(
                                 highYield = currentUnit.highYield,
                                 reviewNumber = previewReviewNumber,
                                 model = MedScheduler.CURRENT_MODEL,
+                                // The repair clock doubles per unrepaired answer; same value the commit reads.
+                                unrepairedStreak = viewModel.currentUnrepairedStreak,
                             )
                             val finalInterval = MedScheduler.fuzzedInterval(
                                 previewOutcome.intervalDays,

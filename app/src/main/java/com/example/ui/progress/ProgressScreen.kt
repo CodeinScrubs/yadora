@@ -167,7 +167,14 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** Scheduler calibration: mean predicted recall (FSRS R at review time) vs the actual recall rate. */
-    data class CalibrationStats(val n: Int, val predictedPct: Int, val actualPct: Int, val model: String)
+    data class CalibrationStats(
+        val n: Int,
+        val predictedPct: Int,
+        val actualPct: Int,
+        val model: String,
+        /** The interval correction learned from these reviews (RecallCalibration); 1.0 = none. */
+        val scale: Double,
+    )
 
     // Only real recall events count: first-study rows (elapsed < 1 day with R≈1) and pre-v2 rows
     // (sentinel -1) are excluded so the comparison is honest — predicted R vs "did it come back?".
@@ -186,13 +193,28 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
                     com.example.domain.srs.MedScheduler.CURRENT_MODEL
             }
             if (recallLogs.size < 10) return@map null // too little data to be meaningful
-            val predicted = recallLogs.sumOf { it.retrievabilityAtReview } / recallLogs.size
+            // The same estimate the scheduler runs on: the last RecallCalibration.WINDOW recall
+            // reviews at least MIN_ELAPSED_DAYS apart (getLogsSince is ascending, so the tail is the
+            // newest), shrunk and clamped. The card's own n/predicted/actual keep every recall row.
+            val evidence = recallLogs
+                .filter { it.elapsedDays >= com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS }
+                .takeLast(com.example.domain.srs.RecallCalibration.WINDOW)
+            val scale = com.example.domain.srs.RecallCalibration.scale(
+                evidence.map { it.retrievabilityAtReview }.toDoubleArray(),
+                evidence.map { it.memoryRating != "Forgot" }.toBooleanArray(),
+            )
+            // "Predicted" is what the model says AFTER its per-user correction — the prediction the
+            // schedule actually acts on — so the card keeps describing the scheduler in force.
+            val predicted = recallLogs.sumOf {
+                com.example.domain.srs.RecallCalibration.recalibrated(it.retrievabilityAtReview, scale)
+            } / recallLogs.size
             val actual = recallLogs.count { it.memoryRating != "Forgot" }.toDouble() / recallLogs.size
             CalibrationStats(
                 n = recallLogs.size,
                 predictedPct = Math.round(predicted * 100).toInt(),
                 actualPct = Math.round(actual * 100).toInt(),
                 model = com.example.domain.srs.MedScheduler.CURRENT_MODEL.id,
+                scale = scale,
             )
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -443,8 +465,11 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
+                                // The correction in force, stated as a plain factor on the intervals.
+                                val scaleText = String.format(java.util.Locale.US, "%.2f", cal.scale)
+                                    .let { if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(it) else it }
                                 Text(
-                                    text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی · ${cal.model}" else if (strings.languageCode == "de") "Basierend auf ${cal.n} echten Wiederholungen · ${cal.model}" else "Based on ${cal.n} real recall reviews · ${cal.model}",
+                                    text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی · ${cal.model} · ضریب فاصله‌ها ×$scaleText" else if (strings.languageCode == "de") "Basierend auf ${cal.n} echten Wiederholungen · ${cal.model} · Intervallfaktor ×$scaleText" else "Based on ${cal.n} real recall reviews · ${cal.model} · interval factor ×$scaleText",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

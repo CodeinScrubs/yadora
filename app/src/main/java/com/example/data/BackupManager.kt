@@ -106,6 +106,7 @@ object BackupManager {
                 put("desiredRetentionAtReview", l.desiredRetentionAtReview); put("schedulerVersion", l.schedulerVersion)
                 put("schedulerPolicyVersion", l.schedulerPolicyVersion)
                 put("understandingFactorAtReview", l.understandingFactorAtReview)
+                put("calibrationScaleAtReview", l.calibrationScaleAtReview)
             })
         })
         root.put("eventLogs", JSONArray().apply {
@@ -265,6 +266,7 @@ object BackupManager {
                 schedulerVersion = o.optString("schedulerVersion", ""),
                 schedulerPolicyVersion = o.optString("schedulerPolicyVersion", ""),
                 understandingFactorAtReview = o.optDouble("understandingFactorAtReview", -1.0),
+                calibrationScaleAtReview = o.optDouble("calibrationScaleAtReview", -1.0),
             )
         }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.

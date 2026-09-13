@@ -86,7 +86,7 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 7, json.getInt("exportVersion"))
+        assertEquals("export version", 8, json.getInt("exportVersion"))
 
         // THE TIME ZONE. FSRS-6 elapsed time is a difference of LOCAL calendar dates, so without the
         // zone that produced the file nothing in it can be recomputed from its own timestamps — an
@@ -147,6 +147,7 @@ class AnalyticsExportConsistencyTest {
             assertTrue("log ${log.getLong("id")} references exported topic", log.getLong("studyUnitId") in unitIds)
             assertTrue("log carries policy version", log.has("schedulerPolicyVersion"))
             assertTrue("log carries applied factor", log.has("understandingFactorAtReview"))
+            assertTrue("log carries the calibration scale it was scheduled with", log.has("calibrationScaleAtReview"))
             // v4 adherence: without these, analysis cannot tell a bad interval apart from a late user.
             assertTrue("log carries the date it was answering", log.has("scheduledForAt"))
             assertTrue("log carries lateness", log.has("daysLate"))

@@ -155,10 +155,13 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                     // what was already scheduled. A subsequent history edit recomputes from the logs
                     // (which store per-review importance), so this is a one-time convenience reschedule.
                     if (highYield && !current.highYield && current.reviewCount > 0 && !manualDateChange && current.lastReviewedAt != null) {
+                        // The per-user interval correction, refreshed from the logs on this same
+                        // coroutine right before it is used — the review session does the same.
+                        runCatching { MedScheduler.calibrationScale = repository.recallCalibrationScale() }
                         // Through the topic's OWN model: a stored stability only means something
                         // together with the model that produced it, and re-deriving the interval on
                         // the wrong curve would set a date the next real review then disagrees with.
-                        val tighter = MedScheduler.intervalDays(
+                        val tighter = MedScheduler.scheduledIntervalDays(
                             current.stability,
                             MedScheduler.effectiveRetention(true),
                             MedScheduler.MemoryModel.of(current.memoryModel),

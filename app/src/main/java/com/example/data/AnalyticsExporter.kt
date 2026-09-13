@@ -55,7 +55,9 @@ object AnalyticsExporter {
         // v7: per-topic hasRecallPrompt — whether a topic defines what recall means. Only the flag:
         // the prompt text is the user's own content and stays out, exactly like titles and notes. It is
         // what lets calibration later be compared between topics that do and don't define "remembered".
-        root.put("exportVersion", 7)
+        // v8: per-log calibrationScaleAtReview — the per-user interval correction each review was
+        // scheduled with, so an interval in the data can still be recomputed from its inputs.
+        root.put("exportVersion", 8)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
@@ -254,6 +256,7 @@ object AnalyticsExporter {
                 put("schedulerVersion", l.schedulerVersion)
                 put("schedulerPolicyVersion", l.schedulerPolicyVersion)
                 put("understandingFactorAtReview", l.understandingFactorAtReview)
+                put("calibrationScaleAtReview", l.calibrationScaleAtReview)
             })
         }
         root.put("reviewLogs", logsArr)

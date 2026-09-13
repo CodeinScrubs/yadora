@@ -50,4 +50,9 @@ data class ReviewLogEntity(
     // rewriting history. -1/'' = recorded before v5 (replay falls back to current constants).
     val schedulerPolicyVersion: String = "",
     val understandingFactorAtReview: Double = -1.0,
+    // The per-user calibration scale the memory interval was multiplied by (added in DB v7; see
+    // RecallCalibration). Stored for the same reason as the retention target: the scale moves as
+    // evidence accumulates, and a replay must reproduce the interval this review was actually given,
+    // not re-decide it under today's estimate. -1.0 = recorded before v7 (replay treats it as 1.0).
+    val calibrationScaleAtReview: Double = -1.0,
 )

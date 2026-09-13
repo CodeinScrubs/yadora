@@ -131,6 +131,7 @@ class BackupRoundTripTest {
                 retrievabilityAtReview = 0.93, elapsedDays = 1.0, logType = "RECALL",
                 initialDifficulty = null, reviewDurationMs = 4200, wasImportantAtReview = 1,
                 desiredRetentionAtReview = 0.93, schedulerVersion = "FSRS-5",
+                calibrationScaleAtReview = 0.83,
             )
         )
         db.eventLogDao().insert(EventLogEntity(type = "SNOOZE", detail = "test"))
@@ -166,6 +167,7 @@ class BackupRoundTripTest {
         assertEquals(1, log.wasImportantAtReview)
         assertEquals(0.93, log.desiredRetentionAtReview, 1e-9)
         assertEquals("FSRS-5", log.schedulerVersion)
+        assertEquals("v7 calibration scale survives the round trip", 0.83, log.calibrationScaleAtReview, 1e-9)
 
         assertEquals("SNOOZE", db.eventLogDao().getAll().single().type)
         assertEquals("Physics", db.categoryDao().getAllSubjects().first().single().name)

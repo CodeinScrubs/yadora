@@ -22,7 +22,7 @@ import com.example.data.local.entity.SystemEntity
         ReviewLogEntity::class,
         EventLogEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -121,5 +121,22 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE study_units ADD COLUMN memoryModel TEXT NOT NULL DEFAULT 'FSRS-5'")
             }
         }
+
+        /**
+         * v6 → v7 (additive, like every migration here): review_logs.calibrationScaleAtReview, the
+         * per-user interval correction in force at each review, so replay reproduces the interval a
+         * review was given rather than re-deciding it under a later estimate. Existing rows get the
+         * "not recorded" sentinel (-1.0), which replay reads as 1.0 — exactly what they were scheduled
+         * with. No schedule moves.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN calibrationScaleAtReview REAL NOT NULL DEFAULT -1.0")
+            }
+        }
+
+        /** Every migration, in order — one list so no builder can forget the newest one. */
+        val ALL_MIGRATIONS: Array<Migration>
+            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
     }
 }

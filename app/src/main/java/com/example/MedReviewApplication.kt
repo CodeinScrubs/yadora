@@ -40,7 +40,7 @@ class MedReviewApplication : Application() {
             AppDatabase::class.java,
             "medreview_db"
         )
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .build()
 
         repository = MedReviewRepository(
@@ -57,6 +57,9 @@ class MedReviewApplication : Application() {
         Thread {
             runCatching { kotlinx.coroutines.runBlocking { repository.purgeExpiredDeleted() } }
         }.start()
+        // The per-user interval correction (MedScheduler.calibrationScale) is NOT read here: the
+        // review session and the Important toggle each refresh it from the logs right before they
+        // schedule, on the same coroutine that uses it. Setting it from a startup thread raced them.
 
         // Initialize notification channel and schedule reminders based on saved settings
         NotificationScheduler.createNotificationChannel(this)

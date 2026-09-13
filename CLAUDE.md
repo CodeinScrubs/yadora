@@ -140,8 +140,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/…/5_6`, currently DB v6,
-  `exportSchema=true`, schemas 2–6 committed). Never `fallbackToDestructiveMigration`.
+- **Room migrations are additive only** (`MIGRATION_1_2/…/6_7`, currently DB v7,
+  `exportSchema=true`, schemas 2–7 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
+  Never `fallbackToDestructiveMigration`.
 - **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
   query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
   only by user deferrals (Not today / redistribute / manual edit) and cleared by
@@ -253,6 +254,34 @@ These were decided deliberately. Re-suggesting them wastes a session:
   two. The old ×0.8/×0.9 was incoherent at long intervals — a topic the user said they did NOT
   understand still vanished for 80 days after a 100-day prediction. FSRS-5 keeps the multiplier
   so legacy replay reproduces what users actually experienced.
+- **The repair clock BACKS OFF** (POLICY `YADORA-6`, user-chosen 2026-09-14). Each consecutive
+  answer that leaves understanding unrepaired (Partial/Confused on a successful recall — a lapse or
+  a Clear ends the streak) doubles the deadline (3 → 6 → 12 → 24 d), and a deadline that would not
+  beat the memory date is dropped (`remediationDays` returns null). A two-year simulation showed
+  the flat clock looping a topic every three days forever while its memory date sat months out; a
+  repair asked for and not done is evidence that re-quizzing is not fixing it. The streak is
+  derived from the logs (`MedScheduler.unrepairedStreak`) by the preview, the commit AND the replay
+  — never stored — and rows stamped YADORA-5 or older replay their flat deadline
+  (`backsOffRepairClock`). `RepairClockBackoffTest` pins the table, the streak rule and the
+  ordering; `ReplayEqualsLiveTest` pins live == replay with a streak in play.
+- **Intervals are CALIBRATED to the user's own recall** (`RecallCalibration`, DB v7). The default
+  FSRS-6 weights describe an average Anki flashcard user; a Yadora topic is bigger and a given
+  learner forgets faster or slower. `MedScheduler.calibrationScale` is ONE number learned from the
+  last 600 real recall reviews on the live model that came at least 3 calendar days after the
+  previous review: the stability scale at which the model's predicted recall count equals the
+  observed count (method of moments on the RAW stored predictions, so it never chases the corrected
+  schedule), shrunk toward 1 in log space by `n / (n + 120)` and clamped to 0.5–2. The 3-day
+  evidence rule is load-bearing: FSRS-6 is fed whole calendar days, so a 2.5-day gap is predicted at
+  t = 3, the stored prediction runs pessimistic at short intervals, and fed those rows the estimator
+  drove a perfectly average simulated learner to 1.58× within three months. It multiplies the memory interval only, before the caps —
+  equivalent to a per-user retention adjustment — and never touches stability or difficulty. It
+  is read at app start and at the start of every review session, each log stores the scale it was
+  scheduled with (`calibrationScaleAtReview`), and replay uses the stored one for untouched rows.
+  The shrinkage is deliberately strong: the FSRS-6 curve is so flat that a one-point recall gap
+  is a ~15 % stability change, so 100 reviews alone would swing the scale by ~1.5× on noise. This
+  is the honest first-order correction until an FSRS optimizer (all 21 weights, ~1,000+ reviews)
+  exists; do not present it as one. Constants are POLICY. `RecallCalibrationTest` pins recovery
+  of a planted scale, shrinkage, bounds and reach.
 - **YADORA-3 damping is superseded on the live path.** FSRS-6's own refit puts S₀(Easy) at 8.30
   versus FSRS-5's 15.69, so the hand-chosen shrink is no longer needed — a fitted value replaced
   it. The damping code stays for FSRS-5 replay only; applying both would double-count.
@@ -272,7 +301,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **The scientific basis of the product-layer choices** (do not "simplify" these away):
   power-law forgetting `R = (1 + FACTOR·t/S)^-0.5` is FSRS-4.5+/5's deliberate replacement for
   the exponential curve because it fits real review data better; scheduling at ~0.90 retention
-  (slider 0.85–0.95) sits in the workload-optimal band from FSRS's own retention simulations
+  (slider 0.85–0.97; 0.90 is the workload optimum, 0.95–0.97 buys exam-readiness at roughly
+  1.4–2× the reviews) sits in the workload-optimal band from FSRS's own retention simulations
   and matches Bjork's desirable-difficulty argument that retrieval should be effortful but
   successful; and `FIRST_STUDY_MAX_DAYS` exists because a self-rating taken immediately after
   studying measures *current fluency*, not delayed retention (the well-documented
@@ -394,8 +424,15 @@ These were decided deliberately. Re-suggesting them wastes a session:
   otherwise travel to a new phone and silence its first reminders.
 - **Policy versioning**: bump `MedScheduler.POLICY_VERSION` whenever any
   product-layer number changes (understanding factors, relearn step, caps,
-  fuzz, high-yield retention). Logs store the version + applied factor;
-  replay honors the stored factor for untouched rows.
+  fuzz, high-yield retention, repair backoff, calibration constants). Logs store the version,
+  the applied understanding factor and the calibration scale; replay honors the stored values
+  and the stamped policy's rules for untouched rows. Currently `YADORA-6`.
+- **Behaviour changes are simulated before they are argued.** A two-year simulated student
+  (honest ratings drawn from a true memory that may forget faster or slower than the defaults,
+  a daily limit, a holiday, the Spread-Out button) found the Partial loop and the leech spiral
+  that code reading missed. The simulator lives with the independent Python reference used for
+  the differential test; rebuild it from `MedScheduler`'s rules rather than reasoning from one
+  worked example when a policy number is on the table.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

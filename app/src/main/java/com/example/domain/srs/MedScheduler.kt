@@ -18,9 +18,15 @@ import com.example.domain.model.UnderstandingRating
  *     - The memory model sees ONLY the memory rating: stability and difficulty never depend on
  *       understanding.
  *     - Understanding runs on a SECOND CLOCK ([remediationDays]): Partial or Confused sets a short
- *       repair deadline and the topic returns at whichever date is earlier. Legacy FSRS-5 replay still
- *       applies the old ×0.9/×0.8 multiplier, because that is the schedule those users received.
+ *       repair deadline and the topic returns at whichever date is earlier. Each consecutive answer
+ *       that leaves understanding unrepaired doubles that deadline, and a repair that would land on
+ *       or after the memory date is dropped, so the clock can never loop a topic forever. Legacy
+ *       FSRS-5 replay still applies the old ×0.9/×0.8 multiplier, because that is the schedule those
+ *       users received.
  *  3. Important (high-yield) topics schedule for a higher retention target: see [effectiveRetention].
+ *  4. The memory interval is multiplied by [calibrationScale], learned from the user's OWN recall
+ *     outcomes ([RecallCalibration]): the default weights describe an average Anki user, and a
+ *     learner who forgets faster than that gets shorter intervals without touching a setting.
  *
  * Preview, commit and replay all go through the SAME [review] call, so the interval is consistent.
  * The exam date never feeds this scheduler; it is decorative by design.
@@ -46,12 +52,12 @@ object MedScheduler {
     const val MIN_RETENTION = 0.70
     const val MAX_RETENTION = 0.99
 
-    /** User-chosen desired retention (0.85..0.95), set from Settings at startup; defaults to BASE. */
+    /** User-chosen desired retention (0.85..0.97), set from Settings at startup; defaults to BASE. */
     @Volatile
     var userRetention: Double = BASE_RETENTION
 
     /**
-     * Last line of defence for the retention target. The Settings slider is bounded to 0.85..0.95,
+     * Last line of defence for the retention target. The Settings slider is bounded to 0.85..0.97,
      * but a RESTORED BACKUP writes `desired_retention` straight into [userRetention] with no UI in
      * the way, and `MedReviewApplication` re-reads it on every cold start. Before this clamp, one
      * hand-edited or corrupt backup made `FsrsParameters`' `require()` throw on every single review,
@@ -60,6 +66,24 @@ object MedScheduler {
      */
     private fun safeRetention(value: Double): Double =
         if (value.isFinite()) value.coerceIn(MIN_RETENTION, MAX_RETENTION) else BASE_RETENTION
+
+    /**
+     * Multiplier on every FSRS-6 memory interval, learned from this user's own recall outcomes.
+     *
+     * The default weights were fitted on millions of Anki flashcard reviews; a Yadora topic is a
+     * bigger unit than a flashcard and a given learner may forget faster or slower than that
+     * average. [RecallCalibration] estimates ONE number from the last few hundred real recall
+     * reviews — the stability scale that makes the model's predicted recall rate match the rate
+     * actually observed — shrinks it toward 1 while evidence is thin, and clamps it to 0.5..2.
+     *
+     * It scales the INTERVAL only, never the stored state: the memory model keeps its own
+     * arithmetic, and the correction is equivalent to a per-user retention adjustment. Each review
+     * log records the scale in force, so replay reproduces the interval a past review was given.
+     * Recomputed at app start and at the start of every review session; 1.0 until enough reviews
+     * exist to say anything.
+     */
+    @Volatile
+    var calibrationScale: Double = 1.0
 
     /** The schedule never asks for a review sooner than the next day. */
     const val MIN_INTERVAL_DAYS = 1.0
@@ -118,17 +142,71 @@ object MedScheduler {
      *
      * A Forgot already relearns tomorrow, so its entry is consistent rather than additive.
      * These day counts are POLICY, not fitted constants (see the note in CLAUDE.md).
+     *
+     * BACKOFF (POLICY YADORA-6). [unrepairedStreak] is how many answers in a row, immediately before
+     * this one, left understanding unrepaired (see [continuesUnrepairedStreak]). Each one doubles the
+     * repair deadline: Good + Partial repairs in 3 days, then 6, 12, 24… A repair that is asked for
+     * and not done has told the scheduler something — re-quizzing every three days was not fixing
+     * it — so the clock backs off instead of looping a topic forever while its memory date sits
+     * months away. [review] additionally drops a deadline that would land on or after the memory
+     * date, because such a "repair" repairs nothing sooner. A lapse never backs off: relearning
+     * tomorrow is the memory clock's promise, not the understanding clock's.
      */
-    fun remediationDays(memoryRating: MemoryRating, understanding: UnderstandingRating): Double? = when {
-        memoryRating == MemoryRating.Forgot -> 1.0
-        understanding == UnderstandingRating.Confused -> 1.0
-        understanding == UnderstandingRating.Partial -> when (memoryRating) {
-            MemoryRating.Hard -> 2.0
-            MemoryRating.Good -> 3.0
-            MemoryRating.Easy -> 4.0
-            MemoryRating.Forgot -> 1.0 // unreachable: handled above
+    fun remediationDays(
+        memoryRating: MemoryRating,
+        understanding: UnderstandingRating,
+        unrepairedStreak: Int = 0,
+    ): Double? {
+        val base = when {
+            memoryRating == MemoryRating.Forgot -> return 1.0
+            understanding == UnderstandingRating.Confused -> 1.0
+            understanding == UnderstandingRating.Partial -> when (memoryRating) {
+                MemoryRating.Hard -> 2.0
+                MemoryRating.Good -> 3.0
+                MemoryRating.Easy -> 4.0
+                MemoryRating.Forgot -> 1.0 // unreachable: handled above
+            }
+            else -> return null // Clear: memory schedule stands on its own
         }
-        else -> null // Clear: memory schedule stands on its own
+        // Bounded exponent: 2^30 days is already far past any interval this scheduler can issue, and
+        // the cap keeps a corrupt or synthetic history from overflowing to infinity.
+        return base * Math.pow(REPAIR_BACKOFF_FACTOR, unrepairedStreak.coerceIn(0, 30).toDouble())
+    }
+
+    /** How much each consecutive unrepaired answer lengthens the repair deadline. POLICY (YADORA-6). */
+    const val REPAIR_BACKOFF_FACTOR = 2.0
+
+    /**
+     * Does this answer extend an unrepaired-understanding streak? Partial or Confused on a successful
+     * recall does; Clear ends it (understanding was repaired); a lapse ends it too, because the
+     * material is about to be relearned and the next repair cycle starts fresh. Takes the strings a
+     * review log stores, so the live path and the history replay apply one rule to one source.
+     */
+    fun continuesUnrepairedStreak(memoryRating: String, understandingRating: String): Boolean =
+        memoryRating != MemoryRating.Forgot.name &&
+            (understandingRating == UnderstandingRating.Partial.name || understandingRating == UnderstandingRating.Confused.name)
+
+    /**
+     * The streak in force BEFORE the next answer, from a topic's history in chronological order as
+     * (memoryRating, understandingRating) pairs: how many of the most recent answers, counted back
+     * from the last one, all left understanding unrepaired.
+     */
+    fun unrepairedStreak(history: List<Pair<String, String>>): Int {
+        var streak = 0
+        for (i in history.indices.reversed()) {
+            if (continuesUnrepairedStreak(history[i].first, history[i].second)) streak++ else break
+        }
+        return streak
+    }
+
+    /**
+     * Did the policy that produced a log back off the repair clock? Only YADORA-6 onward does; a
+     * row stamped with an older policy replays its repair deadline the way it was actually given.
+     * Blank means a pre-v5 row, which replays under the current policy like the rest of the code.
+     */
+    fun backsOffRepairClock(policyVersion: String): Boolean = when (policyVersion) {
+        "YADORA-1", "YADORA-2", "YADORA-3", "YADORA-4", "YADORA-5" -> false
+        else -> true
     }
 
     /** Everything the UI/persistence needs after a scheduling decision. */
@@ -214,7 +292,10 @@ object MedScheduler {
     // YADORA-5: three FSRS-6 equations were corrected to match py-fsrs 6.3.1 exactly (unclamped
     // D0(Easy) in mean reversion, lapse bounded by the short-term branch, same-day Good/Easy cannot
     // shrink stability) plus the reference stability floor. Live intervals move, so the stamp moves.
-    const val POLICY_VERSION = "YADORA-5"
+    // YADORA-6: the understanding repair clock backs off (doubles per consecutive unrepaired answer
+    // and is dropped once it would not beat the memory date), and the memory interval is multiplied
+    // by the per-user calibration scale, which every log now records.
+    const val POLICY_VERSION = "YADORA-6"
 
     /**
      * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.
@@ -329,11 +410,24 @@ object MedScheduler {
         // compile, run and look right. The caller always knows which model owns the state it hands in,
         // so it must say so.
         model: MemoryModel,
+        // How many answers in a row before this one left understanding unrepaired (see
+        // [unrepairedStreak]). Zero is exactly right for a topic with no such history, which is what
+        // every test constructs; the live path and the replay derive it from the topic's logs.
+        unrepairedStreak: Int = 0,
+        // Replay passes the calibration scale that was IN FORCE at the original review (stored per-log
+        // since DB v7), so a scale that has since moved never rewrites an untouched interval. Live
+        // reviews leave this null and use [calibrationScale].
+        calibrationScaleOverride: Double? = null,
+        // Replay passes whether the policy that produced the log backed off the repair clock; a row
+        // stamped YADORA-5 or older keeps the flat deadline it was actually given.
+        backOffRepairClock: Boolean = true,
     ): Outcome {
         if (model == MemoryModel.FSRS_6) {
             return reviewFsrs6(
                 stability, difficulty, elapsedDays, memoryRating, understanding,
                 highYield, reviewNumber, desiredRetentionOverride,
+                unrepairedStreak = if (backOffRepairClock) unrepairedStreak else 0,
+                calibrationScale = calibrationScaleOverride ?: calibrationScale,
             )
         }
         val p = params(highYield, desiredRetentionOverride)
@@ -387,6 +481,10 @@ object MedScheduler {
      *
      * The calm first-study ceiling still applies: a first rating is a self-assessment, not a
      * measured retrieval, whichever model is doing the arithmetic.
+     *
+     * The memory interval is multiplied by [calibrationScale] BEFORE the caps: the scale is a
+     * per-user correction to the model's stability estimate (see [RecallCalibration]), so it
+     * belongs where the stability is turned into days, and the caps keep their promises after it.
      */
     private fun reviewFsrs6(
         stability: Double,
@@ -397,6 +495,8 @@ object MedScheduler {
         highYield: Boolean,
         reviewNumber: Int,
         desiredRetentionOverride: Double?,
+        unrepairedStreak: Int,
+        calibrationScale: Double,
     ): Outcome {
         val p = params6(highYield, desiredRetentionOverride)
         val before = MemoryState(stability = stability, difficulty = difficulty)
@@ -416,11 +516,17 @@ object MedScheduler {
             baseInterval = RELEARN_STEP_DAYS
             interval = RELEARN_STEP_DAYS
         } else {
-            var fsrsInterval = Fsrs6.intervalDays(newState.stability, p.requestRetention, p)
+            var fsrsInterval = Fsrs6.intervalDays(newState.stability, p.requestRetention, p) *
+                RecallCalibration.safeScale(calibrationScale)
             if (reviewNumber <= 0) fsrsInterval = fsrsInterval.coerceAtMost(FIRST_STUDY_MAX_DAYS)
             baseInterval = fsrsInterval
             interval = fsrsInterval.coerceIn(MIN_INTERVAL_DAYS, p.maximumIntervalDays)
         }
+
+        // A repair deadline that would not beat the memory date repairs nothing sooner, so it is not
+        // a deadline at all; only a genuinely earlier one is kept. A lapse keeps its relearn step.
+        val repair = remediationDays(memoryRating, understanding, unrepairedStreak)
+            ?.takeIf { memoryRating == MemoryRating.Forgot || it < interval }
 
         return Outcome(
             state = newState,
@@ -428,7 +534,7 @@ object MedScheduler {
             retrievabilityAtReview = rAtReview,
             reason = ReviewReason(memoryRating, understanding, highYield, interval),
             baseIntervalDays = baseInterval,
-            remediationDays = remediationDays(memoryRating, understanding),
+            remediationDays = repair,
         )
     }
 
@@ -459,6 +565,16 @@ object MedScheduler {
         MemoryModel.FSRS_5 -> Fsrs.intervalDays(stability, requestRetention)
         MemoryModel.FSRS_6 -> Fsrs6.intervalDays(stability, requestRetention)
     }
+
+    /**
+     * [intervalDays] as the SCHEDULE would issue it: with the per-user [calibrationScale] applied on
+     * the live model. Anything that writes a due date from a stored stability outside [review] (the
+     * Important toggle's immediate reschedule) must use this, or it sets a date the next real review
+     * disagrees with. FSRS-5 is frozen and never scaled.
+     */
+    fun scheduledIntervalDays(stability: Double, requestRetention: Double, model: MemoryModel): Double =
+        intervalDays(stability, requestRetention, model) *
+            (if (model == MemoryModel.FSRS_6) RecallCalibration.safeScale(calibrationScale) else 1.0)
 
     /**
      * One step of a history projection: rebuild a memory state under the CURRENT model from a past
