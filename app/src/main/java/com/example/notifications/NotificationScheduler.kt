@@ -460,7 +460,11 @@ object NotificationScheduler {
         val text = when {
             hy > 0 -> if (isFa) "${n(hy)} مبحث مهم" else if (isDe) "$hy wichtig" else "$hy important"
             count > 0 -> if (isFa) "برای مرور آماده‌اند." else if (isDe) "Bereit, wenn du es bist." else "Ready when you are."
-            else -> if (isFa) "مباحثی برای مرور آماده‌اند." else if (isDe) "Themen sind bereit zur Wiederholung." else "You have study topics ready to review."
+            // Only a TEST fire can reach this branch: a real reminder with nothing due returns early
+            // above. It used to say "You have study topics ready to review" — on a device with zero
+            // topics, the very first reminder a new user tries told them something untrue (seen on a
+            // real Samsung during device testing). Say what is actually happening instead.
+            else -> if (isFa) "الان مبحثی برای مرور نیست — یادآورهایت این‌طور نمایش داده می‌شوند." else if (isDe) "Gerade ist nichts fällig — so sehen deine Erinnerungen aus." else "Nothing is due right now — this is how your reminders will look."
         }
         val reviewNowLabel = if (isFa) "مرور" else if (isDe) "Jetzt wiederholen" else "Review now"
         // Human snooze: the label says WHEN it will come back (evening before ~17:00, else tomorrow).
