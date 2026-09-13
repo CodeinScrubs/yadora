@@ -86,7 +86,7 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 6, json.getInt("exportVersion"))
+        assertEquals("export version", 7, json.getInt("exportVersion"))
 
         // THE TIME ZONE. FSRS-6 elapsed time is a difference of LOCAL calendar dates, so without the
         // zone that produced the file nothing in it can be recomputed from its own timestamps — an
@@ -183,6 +183,8 @@ class AnalyticsExportConsistencyTest {
         for (i in 0 until unitsArr.length()) {
             val u = unitsArr.getJSONObject(i)
             assertTrue("unit carries modelDueAt", u.has("modelDueAt"))
+            assertTrue("unit says whether it has a recall prompt", u.has("hasRecallPrompt"))
+            assertTrue("but never the prompt text itself", !u.has("recallPrompt"))
             if (u.getLong("id") == id3) {
                 assertEquals("deferredUntil visible in export", now + day, u.getLong("deferredUntil"))
                 assertEquals("model's date untouched by deferral", now, u.getLong("modelDueAt"))

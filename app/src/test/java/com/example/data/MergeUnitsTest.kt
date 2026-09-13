@@ -319,6 +319,33 @@ class MergeUnitsTest {
         assertEquals("the exposure is not a retrieval", 3, projected.reviewCount)
     }
 
+    /**
+     * A recall prompt defines what "remembering" a topic means, so a merge must never silently drop
+     * one. The same material often arrives twice — once with a prompt, once without — and the user may
+     * well choose to keep the copy that has none.
+     */
+    @Test
+    fun `merging keeps a recall prompt from whichever copy has one`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val bare = addUnit("Appendicitis", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        val prompted = addUnit("آپاندیسیت", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.updateUnit(repo.getUnitById(prompted)!!.copy(recallPrompt = "presentation, scores, management"))
+
+        val merged = repo.mergeUnits(bare, listOf(prompted))!!
+        assertEquals(
+            "the survivor had no prompt, so it inherits the absorbed copy's",
+            "presentation, scores, management", merged.recallPrompt,
+        )
+
+        // And a survivor's own prompt is never overwritten by an absorbed copy's.
+        val own = addUnit("Cholecystitis", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        val other = addUnit("کوله‌سیستیت", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.updateUnit(repo.getUnitById(own)!!.copy(recallPrompt = "Murphy's sign, ultrasound findings"))
+        repo.updateUnit(repo.getUnitById(other)!!.copy(recallPrompt = "something else"))
+        val kept = repo.mergeUnits(own, listOf(other))!!
+        assertEquals("the survivor's own prompt wins", "Murphy's sign, ultrasound findings", kept.recallPrompt)
+    }
+
     @Test
     fun `merging three copies at once combines all of them`() = runBlocking {
         val now = System.currentTimeMillis()

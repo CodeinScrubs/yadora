@@ -139,7 +139,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                         subjectId = subjectId,
                         systemId = systemId,
                         studyType = studyType,
-                        recallPrompt = prompt,
+                        recallPrompt = prompt.ifBlank { null },
                         notes = notes,
                         source = source,
                         highYield = highYield,
@@ -201,7 +201,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             subjectId = subjectId,
                             systemId = systemId,
                             studyType = studyType,
-                            recallPrompt = prompt,
+                            recallPrompt = prompt.ifBlank { null },
                             notes = notes,
                             source = source,
                             highYield = highYield,
@@ -309,6 +309,7 @@ fun AddUnitScreen(
     // notes to a screen rotation is unacceptable data loss for a capture flow.
     var title by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var notes by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var recallPrompt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var highYield by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var selectedSubjectId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var studiedAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
@@ -334,6 +335,7 @@ fun AddUnitScreen(
         viewModel.existingUnit?.let {
             title = it.title
             notes = it.notes ?: ""
+            recallPrompt = it.recallPrompt ?: ""
             sourceLink = it.source ?: ""
             highYield = it.highYield
             selectedSubjectId = it.subjectId
@@ -371,9 +373,9 @@ fun AddUnitScreen(
                         onClick = {
                             if (!saving) {
                                 saving = true
-                                // System/study-type/recall-prompt were removed as v1 bloat — persist
-                                // neutral values (columns kept to avoid a migration; simply dormant).
-                                viewModel.saveUnit(title, selectedSubjectId, null, "Topic", "", notes, sourceLink, highYield, studiedAt, nextReviewAt,
+                                // System and study type were removed as v1 bloat (columns kept, dormant).
+                                // The recall prompt was too, until it returned as an optional field.
+                                viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), notes, sourceLink, highYield, studiedAt, nextReviewAt,
                                     onSaved = {
                                         com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                                         com.example.widget.DueWidgetProvider.updateAll(reminderContext) // new topic changes today's count
@@ -436,7 +438,7 @@ fun AddUnitScreen(
                         TextButton(onClick = {
                             archivedDuplicate = null
                             saving = true
-                            viewModel.saveUnit(title, selectedSubjectId, null, "Topic", "", notes, sourceLink, highYield, studiedAt, nextReviewAt,
+                            viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), notes, sourceLink, highYield, studiedAt, nextReviewAt,
                                 onSaved = {
                                     com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                                     com.example.widget.DueWidgetProvider.updateAll(reminderContext)
@@ -469,6 +471,48 @@ fun AddUnitScreen(
                 // A topic title can be in any language; lay it out by its own first strong character.
                 textStyle = LocalTextStyle.current.autoDirection(),
                 singleLine = true,
+                shape = RoundedCornerShape(12.dp)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            // OPTIONAL recall prompt — what "remembering this topic" should mean. A bare title such as
+            // "Appendicitis" leaves Good vs Forgot undefined (the presentation? the whole framework?),
+            // and that ambiguity sits under every interval the scheduler computes. Cut as v1 bloat,
+            // restored in 2026-09 at the user's request; the review screen already shows it under the
+            // title, before the notes.
+            OutlinedTextField(
+                value = recallPrompt,
+                onValueChange = { recallPrompt = it },
+                label = {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "چه چیزی را باید بتوانی به یاد بیاوری؟ (اختیاری)"
+                            "de" -> "Was solltest du abrufen können? (optional)"
+                            else -> "What should you be able to recall? (optional)"
+                        }
+                    )
+                },
+                placeholder = {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "مثلاً: علت‌ها، نشانه‌های کلیدی، درمان خط اول"
+                            "de" -> "z. B.: Ursachen, Leitsymptome, Erstlinientherapie"
+                            else -> "e.g. main causes, key signs, first-line treatment"
+                        }
+                    )
+                },
+                supportingText = {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "هنگام مرور، پیش از یادداشت‌هایت نشان داده می‌شود."
+                            "de" -> "Wird beim Wiederholen vor deinen Notizen angezeigt."
+                            else -> "Shown when you review, before your notes."
+                        }
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = LocalTextStyle.current.autoDirection(),
+                minLines = 1,
+                maxLines = 3,
                 shape = RoundedCornerShape(12.dp)
             )
             

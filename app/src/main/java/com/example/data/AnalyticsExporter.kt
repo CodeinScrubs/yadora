@@ -52,7 +52,10 @@ object AnalyticsExporter {
         // v6: the device TIME ZONE (without it nothing in this file can be recomputed — see below),
         // a self-check block that makes the export say where it disagrees with itself, and honest
         // provenance on the reconstructed adherence fields.
-        root.put("exportVersion", 6)
+        // v7: per-topic hasRecallPrompt — whether a topic defines what recall means. Only the flag:
+        // the prompt text is the user's own content and stays out, exactly like titles and notes. It is
+        // what lets calibration later be compared between topics that do and don't define "remembered".
+        root.put("exportVersion", 7)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
@@ -171,6 +174,7 @@ object AnalyticsExporter {
                 put("deletedAt", u.deletedAt ?: JSONObject.NULL)
                 put("understandingDueAt", u.understandingDueAt ?: JSONObject.NULL)
                 put("memoryModel", u.memoryModel)
+                put("hasRecallPrompt", !u.recallPrompt.isNullOrBlank())
             })
         }
         root.put("studyUnits", unitsArr)

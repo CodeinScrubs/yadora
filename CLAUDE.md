@@ -35,17 +35,25 @@ Verified on hardware 2026-09-13 (build 1.1 / 4, AGP 9.4.0): on the Samsung (Andr
 upgrade install, launch with no crash/ANR, both daily reminders armed as EXACT alarms
 (`exactAllowReason=permission`, allowed in Doze), both notification channels, the WorkManager safety
 job, and a test reminder that actually posts (private on the lock screen, two actions). On the
-emulator (Android 16): a fresh install arms both reminders before onboarding finishes but as INEXACT
-alarms with a one-hour window, because Android 14+ denies `SCHEDULE_EXACT_ALARM` to new installs by
-default — so a new user's reminder can land up to an hour late until they grant it; `BootReceiver`
-re-arms both after a reboot; `connectedDebugAndroidTest` runs. Still unverified: Doze delivery over
-real time, clock/time-zone changes, Samsung battery management over days, the full-screen alarm.
+emulator (Android 16): a fresh install arms both reminders as INEXACT alarms with a one-hour window,
+because Android 14+ denies `SCHEDULE_EXACT_ALARM` to new installs by default. The onboarding REMINDERS
+step exists for exactly that: granting there re-armed both as exact (`window=0`,
+`exactAllowReason=permission`), and the step itself was checked in English and Persian, light and dark.
+`BootReceiver` re-arms both after a reboot; `connectedDebugAndroidTest` runs. Still unverified: Doze
+delivery over real time, clock/time-zone changes, Samsung battery management over days, the
+full-screen alarm.
 
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
 nothing. After a reboot wait at least ~60 s past `sys.boot_completed` before judging whether reminders
 were re-armed: under load the boot broadcast reached Yadora ~40 s late, and a 25 s check reported a
-re-arm bug that did not exist. Drive the UI with `uiautomator dump` + `input tap` on the node bounds.
+re-arm bug that did not exist. Drive the UI with `uiautomator dump` + `input tap` on the node bounds,
+found with `tools/device/ui_find.py`. It tests text and content-description SEPARATELY, so anchor
+patterns: `^Allow$` is the button, while `^Allow` also hits the dialog title "Allow Yadora to send you
+notifications?". To revoke exact alarms for a test use `appops set --uid com.yadora.app
+SCHEDULE_EXACT_ALARM deny`: once granted in system settings the grant is a UID mode, and the plain
+package form reports nothing and changes nothing. Windows Python prints cp1252, so set
+`PYTHONIOENCODING=utf-8` for any ad-hoc script that prints Persian UI text.
 
 Both checks are scripted — run them (Git Bash, repo root) instead of rebuilding them by hand:
 `tools/device/smoke.sh <serial> [apk]` installs, launches, and reports crashes/ANRs, armed reminders
@@ -90,6 +98,24 @@ These were decided deliberately. Re-suggesting them wastes a session:
   moment each ran. The cost, measured and pinned by `DueDateDstTest`, is that a review between 23:00
   and midnight on a DST spring-forward night slips one day. Accepted; do NOT "fix" it by switching
   to calendar addition.
+- **The recall prompt is an OPTIONAL per-topic field** (restored 2026-09 by user decision, after
+  being cut as v1 bloat). A bare title like "Appendicitis" leaves Good vs Forgot undefined, and that
+  noise sits under every interval FSRS computes; one optional line fixes most of it without turning
+  Yadora into a flashcard app. It shows on the review screen under the title, before the notes. A
+  merge keeps a prompt (survivor's, else the first absorbed copy's). Analytics exports only
+  `hasRecallPrompt`, never the text — it is user content, like titles and notes.
+- **First-run onboarding has a REMINDERS step** after language selection
+  (`ui/onboarding/RemindersSetupScreen` + pure `RemindersSetupPolicy`). Android 14+ denies
+  `SCHEDULE_EXACT_ALARM` to new installs, so without it every reminder silently fell back to an
+  inexact alarm up to an hour late; and notification permission used to be requested the instant the
+  language was chosen, with no explanation. The step explains both, both are optional, it is shown
+  once and only if something is missing, and its "done" flag lives in the backup-excluded transient
+  prefs so a restore onto a new phone shows it again. Settings keeps the same controls; both use
+  `NotificationScheduler.exactAlarmSettingsIntent`, which carries the package URI.
+  Anything drawn OUTSIDE `MedReviewApp` (both first-run screens) must paint its own background
+  (`Surface(color = colorScheme.background)`) and pad for the system bars: the XML window theme is
+  `Theme.DeviceDefault.NoActionBar`, which is dark, and the activity is edge-to-edge, so an unpainted
+  screen showed light-scheme cards and grey text on a dark window whenever the phone was in light mode.
 - **"Forgot" is not red.** Ratings use a calm palette; red = destructive actions
   only. No emoji, confetti, or "Great job!" language (mature tone).
 - **FSRS mean-reversion targets D0(Easy)** — this is canonical FSRS. "Revert to

@@ -268,6 +268,9 @@ class MedReviewRepository(
                 reviewCount = all.sumOf { it.reviewCount },
                 lapseCount = all.sumOf { it.lapseCount },
                 highYield = all.any { it.highYield }, // importance is a union: if either mattered, it matters
+                // The recall prompt defines what "remembering" this topic means, so a merge must not drop
+                // one: keep the survivor's if it has one, otherwise the first absorbed copy's.
+                recallPrompt = all.firstNotNullOfOrNull { it.recallPrompt?.takeIf { p -> p.isNotBlank() } },
                 // A relearn in progress is a union too: if ANY copy was just forgotten, the merged
                 // topic is still relearning. masteryState() can only ever return NeedsRelearn when
                 // told a lapse just happened, so deriving state purely from stability would quietly
