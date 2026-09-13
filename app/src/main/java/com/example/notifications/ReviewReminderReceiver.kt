@@ -13,7 +13,8 @@ import java.util.Calendar
  *
  * - ACTION_FIRE: show the reminder if something is due today, then re-arm the next nudge (the ~3h
  *   repeat cycle in [NotificationScheduler]). This is what makes the reminder keep nagging.
- * - ACTION_SNOOZE ("Snooze"): dismiss and re-remind ~3h later, without changing any topic's schedule.
+ * - ACTION_SNOOZE ("This evening" / "Tomorrow"): dismiss, then re-remind at 18:00 today (when snoozed
+ *   before 17:00) or at the reminder time tomorrow, without changing any topic's schedule.
  * - ACTION_TEST: always show, so the pipeline can be verified.
  */
 class ReviewReminderReceiver : BroadcastReceiver() {

@@ -381,9 +381,6 @@ class MedReviewRepository(
         return studyUnitDao.getCountByState(state)
     }
     
-    fun getReviewsCountSince(time: Long): Flow<Int> {
-        return reviewLogDao.getReviewsCountSince(time)
-    }
     
     // Logs
     suspend fun insertReviewLog(log: ReviewLogEntity) {
@@ -396,10 +393,6 @@ class MedReviewRepository(
 
     fun getLogsSince(sinceTime: Long): Flow<List<ReviewLogEntity>> {
         return reviewLogDao.getLogsSince(sinceTime)
-    }
-
-    suspend fun deleteLastLogForUnit(unitId: Long) {
-        reviewLogDao.deleteLastLogForUnit(unitId)
     }
 
     suspend fun deleteLogById(logId: Long) {

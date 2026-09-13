@@ -799,7 +799,12 @@ fun AddUnitScreen(
                                 ) {
                                     Text(
                                         text = if (log.logType == "FIRST_STUDY") {
-                                            val d = log.initialDifficulty ?: com.example.domain.srs.MedScheduler.difficultyLabelFor(logRating)
+                                            val d = when (log.initialDifficulty ?: com.example.domain.srs.MedScheduler.difficultyLabelFor(logRating)) {
+                                                // Stored in English (Easy/Medium/Hard); shown in the user's language.
+                                                "Easy" -> strings.ratingEasy
+                                                "Hard" -> strings.ratingHard
+                                                else -> when (strings.languageCode) { "fa" -> "متوسط"; "de" -> "Mittel"; else -> "Medium" }
+                                            }
                                             if (strings.languageCode == "fa") "مطالعهٔ اول · $d" else if (strings.languageCode == "de") "Erstes Lernen · $d" else "First study · $d"
                                         } else when (logRating) {
                                             com.example.domain.model.MemoryRating.Easy -> strings.ratingEasy
@@ -864,10 +869,10 @@ fun AddUnitScreen(
         val understandingRequired = mem != MemoryRating.Forgot
         AlertDialog(
             onDismissRequest = { editingLog = null },
-            title = { Text(if (fa) "اصلاح ارزیابی" else if (isFirstStudy) "Correct first-study rating" else "Correct this rating") },
+            title = { Text(if (fa) "اصلاح ارزیابی" else if (strings.languageCode == "de") (if (isFirstStudy) "Erste Bewertung korrigieren" else "Bewertung korrigieren") else if (isFirstStudy) "Correct first-study rating" else "Correct this rating") },
             text = {
                 Column {
-                    Text(if (isFirstStudy) (if (fa) "سختی اولیه" else "Initial difficulty") else strings.memoryRating, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(if (isFirstStudy) (if (fa) "سختی اولیه" else if (strings.languageCode == "de") "Anfängliche Schwierigkeit" else "Initial difficulty") else strings.memoryRating, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         ratingOptions.forEach { r ->
@@ -877,7 +882,11 @@ fun AddUnitScreen(
                                 label = { Text(when (r) {
                                     MemoryRating.Forgot -> strings.ratingFail
                                     MemoryRating.Hard -> strings.ratingHard
-                                    MemoryRating.Good -> strings.ratingGood
+                                    // A first study asked "how difficult was this topic?", where this grade
+                                    // is called Medium, so correcting it must use the same word.
+                                    MemoryRating.Good -> if (isFirstStudy) {
+                                        when (strings.languageCode) { "fa" -> "متوسط"; "de" -> "Mittel"; else -> "Medium" }
+                                    } else strings.ratingGood
                                     MemoryRating.Easy -> strings.ratingEasy
                                 }) }
                             )
@@ -902,14 +911,14 @@ fun AddUnitScreen(
                     if (und == null) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = if (fa) "در ارزیابی اصلی، درک پرسیده نشد. اگر امتیاز دیگر فراموشی نیست، یک گزینه انتخاب کن." else "Understanding was not asked originally. Choose one if the rating is no longer Forgot.",
+                            text = if (fa) "در ارزیابی اصلی، درک پرسیده نشد. اگر امتیاز دیگر فراموشی نیست، یک گزینه انتخاب کن." else if (strings.languageCode == "de") "Das Verständnis wurde ursprünglich nicht abgefragt. Wähle eine Option, wenn die Bewertung nicht mehr „Vergessen“ ist." else "Understanding was not asked originally. Choose one if the rating is no longer Forgot.",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (editingLogError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = if (fa) "کل زمان‌بندی این مبحث بر اساس ارزیابی اصلاح‌شده بازمحاسبه می‌شود." else "This topic's whole schedule is recalculated from the corrected rating.",
+                        text = if (fa) "کل زمان‌بندی این مبحث بر اساس ارزیابی اصلاح‌شده بازمحاسبه می‌شود." else if (strings.languageCode == "de") "Der gesamte Zeitplan dieses Themas wird aus der korrigierten Bewertung neu berechnet." else "This topic's whole schedule is recalculated from the corrected rating.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

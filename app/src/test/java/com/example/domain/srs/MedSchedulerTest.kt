@@ -119,11 +119,4 @@ class MedSchedulerTest {
         assertTrue("hard($hard) < good($good) < easy($easy)", hard < good && good < easy)
         assertTrue("Easy first study stays within the calm window", easy <= MedScheduler.FIRST_STUDY_MAX_DAYS + 1e-9)
     }
-
-    @Test fun reason_text_is_present_and_flags_high_yield() {
-        val o = MedScheduler.review(10.0, 5.0, 10.0, MemoryRating.Good, UnderstandingRating.Clear, highYield = true, model = MedScheduler.CURRENT_MODEL)
-        val text = o.reason.defaultText()
-        assertTrue(text.isNotBlank())
-        assertTrue(text.contains("important")) // user-facing wording: "important", never "high-yield"
-    }
 }

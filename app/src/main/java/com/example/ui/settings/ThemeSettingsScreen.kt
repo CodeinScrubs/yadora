@@ -43,7 +43,7 @@ import androidx.core.content.edit
 /**
  * Minimal theme customization: appearance mode (System / Light / Dark) + an accent color.
  * Saves to the shared prefs and calls [onThemeChange] so the whole app recolors instantly.
- * Accent "" means the default Quiet-Mastery indigo; any other value is a parseable #RRGGBB hex.
+ * Accent "" means the default sage primary; any other value is a parseable #RRGGBB hex.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

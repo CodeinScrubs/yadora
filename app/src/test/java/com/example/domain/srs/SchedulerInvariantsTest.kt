@@ -117,16 +117,34 @@ class SchedulerInvariantsTest {
         }
     }
 
+    /**
+     * Swept across every retention target the scheduler can be handed, not just the default. The +0.03
+     * bump is capped at 0.97, so above a 0.97 target (reachable only through a restored backup; the
+     * slider stops at 0.95) it used to land BELOW the normal target, and important topics were then
+     * scheduled further out than ordinary ones.
+     */
     @Test
     fun `high-yield topics are always reviewed at least as often, never less`() {
-        sweep { s, d, t, m, u, _, rn ->
-            val normal = MedScheduler.review(s, d, t, m, u, highYield = false, reviewNumber = rn, model = MedScheduler.CURRENT_MODEL)
-            val important = MedScheduler.review(s, d, t, m, u, highYield = true, reviewNumber = rn, model = MedScheduler.CURRENT_MODEL)
-            assertTrue(
-                "marking a topic important must never push it FURTHER away (S=$s t=$t $m rn=$rn): " +
-                    "${normal.intervalDays} -> ${important.intervalDays}",
-                important.intervalDays <= normal.intervalDays + 1e-9,
-            )
+        val original = MedScheduler.userRetention
+        try {
+            for (target in listOf(0.70, 0.85, 0.90, 0.95, 0.97, 0.975, 0.98, 0.99)) {
+                MedScheduler.userRetention = target
+                assertTrue(
+                    "important retention must never sit below normal (target $target)",
+                    MedScheduler.effectiveRetention(true) >= MedScheduler.effectiveRetention(false),
+                )
+                sweep { s, d, t, m, u, _, rn ->
+                    val normal = MedScheduler.review(s, d, t, m, u, highYield = false, reviewNumber = rn, model = MedScheduler.CURRENT_MODEL)
+                    val important = MedScheduler.review(s, d, t, m, u, highYield = true, reviewNumber = rn, model = MedScheduler.CURRENT_MODEL)
+                    assertTrue(
+                        "marking a topic important must never push it FURTHER away (target=$target S=$s t=$t $m rn=$rn): " +
+                            "${normal.intervalDays} -> ${important.intervalDays}",
+                        important.intervalDays <= normal.intervalDays + 1e-9,
+                    )
+                }
+            }
+        } finally {
+            MedScheduler.userRetention = original
         }
     }
 

@@ -416,6 +416,8 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 Text(
                                     text = if (isFarsiLanguage)
                                         "پیش‌بینی مدل: ٪${fmt(cal.predictedPct)} · عملکرد واقعی: ٪${fmt(cal.actualPct)}"
+                                    else if (strings.languageCode == "de")
+                                        "Modell sagte ${cal.predictedPct}% voraus · tatsächlich erinnert: ${cal.actualPct}%"
                                     else
                                         "Model predicted ${cal.predictedPct}% recall · you actually recalled ${cal.actualPct}%",
                                     style = MaterialTheme.typography.bodyLarge,
@@ -648,6 +650,8 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 Text(
                                     text = if (isFarsiLanguage) {
                                         "این روز از حد تعیین‌شده‌ی شما (${com.example.ui.i18n.PersianDate.faDigits(limitValue)} مرور) بیشتر است. برای سبک‌تر شدن، چند مبحث را زودتر یا دیرتر تنظیم کنید."
+                                    } else if (strings.languageCode == "de") {
+                                        "Dieser Tag liegt über deinem Limit von $limitValue Wiederholungen. Verschiebe ein paar Themen nach vorn oder hinten, um ihn zu entlasten."
                                     } else {
                                         "This day is above your set limit of $limitValue reviews. To lighten it, move a few topics earlier or later."
                                     },

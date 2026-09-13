@@ -356,6 +356,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
   term to zero, so a user who tapped it daily kept their backlog permanently quiet while a user who
   simply ignored the notification watched theirs climb. Deferring is a scheduling choice, not
   evidence about memory. `PriorityScoreTest` pins that the two users get identical urgency.
+  The understanding repair deadline counts too: lateness runs from the EARLIER of `modelDueAt` and
+  `understandingDueAt`. The repair date is the scheduler's own, not a deferral, and reading only
+  `modelDueAt` let a 3-day repair wait for weeks with zero urgency while Today listed it as overdue.
+- **Important never means less retention.** `effectiveRetention(true)` is the user's target + 0.03,
+  capped at 0.97 and never below the normal target. Above a 0.97 target (reachable only through a
+  restored backup) the cap used to put important topics BELOW normal, scheduling them later.
+  `SchedulerInvariantsTest` sweeps targets up to 0.99.
 - **An IGNORED topic is never written to.** Nothing in the app mutates an overdue row: every
   `UPDATE` is user-initiated, and app start only purges already-deleted rows. Displaying one
   projects it onto the current model for the preview, but that copy is never persisted — the row

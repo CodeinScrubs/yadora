@@ -34,14 +34,6 @@ interface StudyUnitDao {
     @Query("SELECT * FROM study_units WHERE id = :id")
     suspend fun getUnitById(id: Long): StudyUnitEntity?
 
-    /** Active units sharing a title (case/space-insensitive) — used for duplicate detection. */
-    @Query("SELECT * FROM study_units WHERE archived = 0 AND lower(trim(title)) = lower(trim(:title))")
-    suspend fun findActiveByTitle(title: String): List<StudyUnitEntity>
-
-    /** Same-title lookup across active AND archived — for the archived-duplicate restore offer. */
-    @Query("SELECT * FROM study_units WHERE lower(trim(title)) = lower(trim(:title))")
-    suspend fun findByTitleAnyState(title: String): List<StudyUnitEntity>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUnit(unit: StudyUnitEntity): Long
 

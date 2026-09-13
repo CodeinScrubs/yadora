@@ -54,6 +54,20 @@ private fun ordinalEn(n: Int): String {
     }
 }
 
+/**
+ * The interval printed on an understanding button, e.g. "30.8d". Rounded to the nearest tenth. It used to
+ * truncate, which printed a 4.98-day first check-in as "4.9d" while the message for the same review said
+ * "in 5 days", and made every label under-report.
+ */
+internal fun intervalButtonLabel(days: Double): String {
+    if (days < 1.0) {
+        val hours = (days * 24).toInt()
+        return if (hours < 1) "<1h" else "${hours}h"
+    }
+    val tenths = Math.round(days * 10) / 10.0
+    return if (tenths % 1.0 == 0.0) "${tenths.toLong()}d" else "${tenths}d"
+}
+
 /** True if [earlier] falls on an earlier local calendar day than [later]. */
 private fun isEarlierLocalDay(earlier: Long, later: Long): Boolean {
     val c = java.util.Calendar.getInstance()
@@ -197,7 +211,7 @@ class ReviewViewModel(
                     // earliest-due ones: high-yield, weak/relearn, lapses, and how overdue they are.
                     val prioritized = units.sortedByDescending { u ->
                         com.example.domain.srs.MedScheduler.priorityScore(
-                            u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt,
+                            u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
                         )
                     }
                     dueUnits.addAll(prioritized.take(limit))
@@ -485,7 +499,11 @@ class ReviewViewModel(
             lastReason = if (getApplication<android.app.Application>()
                     .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
                     .getString("app_language", "en") == "fa"
-            ) "ذخیرهٔ این مرور ناموفق بود — مبحث تغییری نکرد. دوباره تلاش کن." else "This review couldn't be saved — the topic is unchanged. Please try again."
+            ) "ذخیرهٔ این مرور ناموفق بود — مبحث تغییری نکرد. دوباره تلاش کن." else if (getApplication<android.app.Application>()
+                    .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                    .getString("app_language", "en") == "de"
+            ) "Diese Wiederholung konnte nicht gespeichert werden — das Thema ist unverändert. Bitte versuche es erneut."
+            else "This review couldn't be saved — the topic is unchanged. Please try again."
           } finally {
             isProcessing = false
           }
@@ -520,7 +538,11 @@ class ReviewViewModel(
                 lastReason = if (getApplication<android.app.Application>()
                         .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
                         .getString("app_language", "en") == "fa"
-                ) "انجام نشد — مبحث تغییری نکرد. دوباره تلاش کن." else "That didn't save — the topic is unchanged. Please try again."
+                ) "انجام نشد — مبحث تغییری نکرد. دوباره تلاش کن." else if (getApplication<android.app.Application>()
+                        .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                        .getString("app_language", "en") == "de"
+                ) "Das wurde nicht gespeichert — das Thema ist unverändert. Bitte versuche es erneut."
+                else "That didn't save — the topic is unchanged. Please try again."
             } finally {
                 isProcessing = false
             }
@@ -1092,12 +1114,7 @@ fun ReviewSessionScreen(
                             // and then contradict itself by resurfacing the topic days earlier.
                             val effectiveInterval =
                                 minOf(finalInterval, previewOutcome.remediationDays ?: Double.MAX_VALUE)
-                            val intervalStr = if (effectiveInterval < 1.0) {
-                                val hrs = (effectiveInterval * 24).toInt()
-                                if (hrs < 1) "<1h" else "${hrs}h"
-                            } else {
-                                "${(effectiveInterval * 10).toInt() / 10.0}d".replace(".0d", "d")
-                            }
+                            val intervalStr = intervalButtonLabel(effectiveInterval)
                             Button(
                                 onClick = {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)

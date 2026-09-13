@@ -16,7 +16,9 @@ import androidx.room.PrimaryKey
 data class EventLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val at: Long = System.currentTimeMillis(),
-    val type: String,          // PROCRASTINATE | PROCRASTINATE_ALL | REDISTRIBUTE | SNOOZE
+    // STUDY_ACTION | PROCRASTINATE | PROCRASTINATE_ALL | REDISTRIBUTE | SNOOZE | MERGE | NOTIF_SHOWN |
+    // PROJECTION_FAILED | MISSED_REMINDER_REPORT
+    val type: String,
     val unitId: Long? = null,
     val detail: String? = null,
 )

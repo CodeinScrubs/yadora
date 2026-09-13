@@ -15,22 +15,16 @@ data class AppStrings(
     // Bottom Nav
     val navToday: String = "Today",
     val navLibrary: String = "Library",
-    val navAdd: String = "Add",
     val navProgress: String = "Progress",
-    val navSettings: String = "Settings",
 
     // Today Screen
     val todayDateTitle: String = "Today's Review",
     val overdue: String = "OVERDUE",
     val priorityFocus: String = "PRIORITY FOCUS",
     val upcoming: String = "UPCOMING",
-    val noDueItems: String = "No due items. Great job!",
-    val noUpcomingItems: String = "No upcoming items.",
-    val todayEstTime: String = "Est. %d min",
     val startReview: String = "Start Review Session",
     val nextReview: String = "Next: %s",
     val sessionComplete: String = "Session Complete!",
-    val timeLabel: String = "Time",
     
     // Understanding Ratings
     val urConfused: String = "Confused",
@@ -48,17 +42,12 @@ data class AppStrings(
     val newSubjectTitle: String = "New Subject",
     val add: String = "Add",
     val highYieldTopic: String = "Important Topic",
-    val activeRecallPrompt: String = "Active Recall Prompt",
-    val activeRecallPlaceholder: String = "What is the primary mechanism...?",
     val notesExplanation: String = "Notes / Explanation",
-    val notesPlaceholder: String = "Key details to remember...",
     val reviewLogs: String = "Review Logs",
-    val neverReviewed: String = "Never reviewed",
     val scheduling: String = "Scheduling",
     val lastStudiedAdded: String = "Last Studied / Added",
     val today: String = "Today",
     val nextReviewDate: String = "Next Review Date",
-    val defaultTomorrow: String = "Default (Tomorrow)",
     val okBtn: String = "OK",
     val appName: String = "Yadora",
     
@@ -66,8 +55,6 @@ data class AppStrings(
     val library: String = "Library",
     val searchUnits: String = "Search units...",
     val itemsCount: String = "%d items",
-    val deleteTopic: String = "Delete Topic?",
-    val deleteTopicConfirm: String = "Are you sure you want to delete '%s'? This action cannot be undone.",
     // Archive is RECOVERABLE — its copy must never claim irreversibility (the old "delete" wording did).
     val archiveTopicConfirm: String = "Archive '%s'? You can restore it from the archive at any time.",
     val restoreTopicConfirm: String = "Restore '%s' back into your active library?",
@@ -75,7 +62,6 @@ data class AppStrings(
     // Progress Screen
     val progress: String = "Progress",
     val overview: String = "Overview",
-    val activeTopics: String = "Active Topics",
     val highYield: String = "Important",
     val needsRelearn: String = "Needs Relearn",
     val knowledgeState: String = "Knowledge State",
@@ -88,7 +74,6 @@ data class AppStrings(
     val settings: String = "Settings",
     val notifications: String = "Notifications",
     val dailyReviewReminder: String = "Daily Review Reminder",
-    val dailyReviewReminderTime: String = "8:00 PM everyday",
     val appearanceRegion: String = "Appearance & Region",
     val language: String = "Language",
     val persianLanguage: String = "فارسی (Persian)",
@@ -102,10 +87,8 @@ data class AppStrings(
     val algorithmDesc: String = "Yadora uses %s to optimize your memory retention. Your items are scheduled based on active recall difficulty ratings.",
     val limitsConstraints: String = "Limits & Constraints",
     val dailyReviewLimit: String = "Daily Review Limit",
-    val appSubtitle: String = "Built for serious learners.",
     
     // Language Selection Screen
-    val selectLanguage: String = "Select Language / انتخاب زبان",
     val continueBtn: String = "Continue / ادامه",
     
     // Review Session Screen
@@ -138,22 +121,16 @@ val PersianStrings = AppStrings(
     // Bottom Nav
     navToday = "امروز",
     navLibrary = "کتابخانه",
-    navAdd = "افزودن",
     navProgress = "پیشرفت",
-    navSettings = "تنظیمات",
 
     // Today Screen
     todayDateTitle = "مرور امروز",
     overdue = "عقب افتاده",
     priorityFocus = "تمرکز با اولویت",
     upcoming = "آینده",
-    noDueItems = "هیچ آیتمی برای مرور نیست. عالیه!",
-    noUpcomingItems = "هیچ آیتم آینده‌ای وجود ندارد.",
-    todayEstTime = "حدود %d دقیقه",
     startReview = "شروع جلسه مرور",
     nextReview = "بعدی: %s",
     sessionComplete = "جلسه مرور تمام شد!",
-    timeLabel = "زمان",
     
     // Understanding Ratings
     urConfused = "مبهم",
@@ -171,17 +148,12 @@ val PersianStrings = AppStrings(
     newSubjectTitle = "موضوع جدید",
     add = "افزودن",
     highYieldTopic = "مبحث مهم",
-    activeRecallPrompt = "پرسش یادآوری فعال",
-    activeRecallPlaceholder = "مکانیسم اصلی چیست...؟",
     notesExplanation = "یادداشت‌ها / توضیحات",
-    notesPlaceholder = "نکات کلیدی برای یادآوری...",
     reviewLogs = "تاریخچه مرور",
-    neverReviewed = "هرگز مرور نشده",
     scheduling = "زمان‌بندی",
     lastStudiedAdded = "آخرین مطالعه / زمان ذخیره",
     today = "امروز",
     nextReviewDate = "تاریخ مرور بعدی",
-    defaultTomorrow = "پیش‌فرض (فردا)",
     okBtn = "تایید",
     appName = "یادورا",
     
@@ -189,15 +161,12 @@ val PersianStrings = AppStrings(
     library = "کتابخانه",
     searchUnits = "جستجوی مباحث...",
     itemsCount = "%d مورد",
-    deleteTopic = "حذف مبحث؟",
-    deleteTopicConfirm = "آیا مطمئن هستید که می‌خواهید '%s' را حذف کنید؟ این عمل غیرقابل بازگشت است.",
     archiveTopicConfirm = "«%s» بایگانی شود؟ هر زمان می‌توانی آن را از بایگانی بازگردانی.",
     restoreTopicConfirm = "«%s» به کتابخانهٔ فعال بازگردانده شود؟",
     
     // Progress Screen
     progress = "پیشرفت",
     overview = "نمای کلی",
-    activeTopics = "مباحث فعال",
     highYield = "مهم",
     needsRelearn = "نیاز به یادگیری مجدد",
     knowledgeState = "وضعیت دانش",
@@ -210,7 +179,6 @@ val PersianStrings = AppStrings(
     settings = "تنظیمات",
     notifications = "اعلان‌ها",
     dailyReviewReminder = "یادآوری مرور روزانه",
-    dailyReviewReminderTime = "۸:۰۰ شب هر روز",
     appearanceRegion = "ظاهر و منطقه",
     language = "زبان",
     persianLanguage = "فارسی (Persian)",
@@ -223,10 +191,8 @@ val PersianStrings = AppStrings(
     algorithmDesc = "برنامه از %s برای بهینه‌سازی حفظ حافظه شما استفاده می‌کند. آیتم‌های شما بر اساس درجه‌بندی دشواری یادآوری فعال زمان‌بندی می‌شوند.",
     limitsConstraints = "محدودیت‌ها",
     dailyReviewLimit = "محدودیت مرور روزانه",
-    appSubtitle = "ساخته شده برای یادگیرندگان جدی.",
     
     // Language Selection Screen
-    selectLanguage = "Select Language / انتخاب زبان",
     continueBtn = "Continue / ادامه",
     
     // Review Session Screen
@@ -257,22 +223,16 @@ val GermanStrings = AppStrings(
     // Bottom Nav
     navToday = "Heute",
     navLibrary = "Bibliothek",
-    navAdd = "Hinzufügen",
     navProgress = "Fortschritt",
-    navSettings = "Einstellungen",
 
     // Today Screen
     todayDateTitle = "Heutige Wiederholung",
     overdue = "ÜBERFÄLLIG",
     priorityFocus = "PRIORITÄT",
     upcoming = "ANSTEHEND",
-    noDueItems = "Keine fälligen Themen.",
-    noUpcomingItems = "Keine anstehenden Themen.",
-    todayEstTime = "ca. %d Min.",
     startReview = "Wiederholung starten",
     nextReview = "Nächste: %s",
     sessionComplete = "Sitzung abgeschlossen",
-    timeLabel = "Zeit",
 
     // Understanding Ratings
     urConfused = "Unklar",
@@ -290,17 +250,12 @@ val GermanStrings = AppStrings(
     newSubjectTitle = "Neues Fach",
     add = "Hinzufügen",
     highYieldTopic = "Wichtiges Thema",
-    activeRecallPrompt = "Aktive Abruffrage",
-    activeRecallPlaceholder = "Was ist der grundlegende Mechanismus …?",
     notesExplanation = "Notizen / Erklärung",
-    notesPlaceholder = "Wichtige Details zum Merken …",
     reviewLogs = "Wiederholungsverlauf",
-    neverReviewed = "Noch nie wiederholt",
     scheduling = "Zeitplanung",
     lastStudiedAdded = "Zuletzt gelernt / hinzugefügt",
     today = "Heute",
     nextReviewDate = "Nächster Wiederholungstermin",
-    defaultTomorrow = "Standard (morgen)",
     okBtn = "OK",
     appName = "Yadora",
 
@@ -308,15 +263,12 @@ val GermanStrings = AppStrings(
     library = "Bibliothek",
     searchUnits = "Themen durchsuchen …",
     itemsCount = "%d Einträge",
-    deleteTopic = "Thema löschen?",
-    deleteTopicConfirm = "„%s“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
     archiveTopicConfirm = "„%s“ archivieren? Du kannst es jederzeit aus dem Archiv wiederherstellen.",
     restoreTopicConfirm = "„%s“ zurück in deine aktive Bibliothek holen?",
 
     // Progress Screen
     progress = "Fortschritt",
     overview = "Überblick",
-    activeTopics = "Aktive Themen",
     highYield = "Wichtig",
     needsRelearn = "Neu lernen",
     knowledgeState = "Wissensstand",
@@ -329,7 +281,6 @@ val GermanStrings = AppStrings(
     settings = "Einstellungen",
     notifications = "Benachrichtigungen",
     dailyReviewReminder = "Tägliche Erinnerung",
-    dailyReviewReminderTime = "täglich 20:00 Uhr",
     appearanceRegion = "Darstellung & Region",
     language = "Sprache",
     persianLanguage = "فارسی (Persisch)",
@@ -343,10 +294,8 @@ val GermanStrings = AppStrings(
     algorithmDesc = "Yadora nutzt %s, um dein Behalten zu optimieren. Deine Themen werden anhand deiner Abruf-Bewertungen geplant.",
     limitsConstraints = "Limits",
     dailyReviewLimit = "Tägliches Wiederholungslimit",
-    appSubtitle = "Für ernsthafte Lernende.",
 
     // Language Selection Screen
-    selectLanguage = "Select Language / انتخاب زبان",
     continueBtn = "Weiter",
 
     // Review Session Screen

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.toColorInt
 import com.example.ui.theme.MyApplicationTheme
 
 /**
@@ -79,13 +80,25 @@ class AlarmRingActivity : ComponentActivity() {
         // Don't ring forever — auto-stop after a few minutes like a real alarm clock.
         autoStopHandler.postDelayed(autoStopRunnable, 5 * 60 * 1000L)
 
-        val lang = getSharedPreferences("medreview_settings", MODE_PRIVATE)
-            .getString("app_language", "en") ?: "en"
+        val prefs = getSharedPreferences("medreview_settings", MODE_PRIVATE)
+        val lang = prefs.getString("app_language", "en") ?: "en"
         val isFa = lang == "fa"
         val isDe = lang == "de"
+        // This screen is its own activity, outside MainActivity's theming, so it applies the user's
+        // appearance itself. It used to take the theme defaults: it ignored an in-app light/dark choice
+        // and the accent, and set Persian text in Manrope, which has no Arabic-script glyphs.
+        val themeMode = prefs.getString("theme_mode", "system") ?: "system"
+        val accent = (prefs.getString("accent_color", "") ?: "").takeIf { it.isNotBlank() }?.let {
+            runCatching { androidx.compose.ui.graphics.Color(it.toColorInt()) }.getOrNull()
+        }
 
         setContent {
-            MyApplicationTheme {
+            val dark = when (themeMode) {
+                "light" -> false
+                "dark" -> true
+                else -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            MyApplicationTheme(darkTheme = dark, accent = accent, languageCode = lang) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column(
                         modifier = Modifier.fillMaxSize().padding(32.dp),

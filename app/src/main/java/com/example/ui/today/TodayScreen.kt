@@ -133,7 +133,7 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             // (high-yield, needs-relearn, recent forgot, most overdue) instead of a blind round-robin.
             val prioritized = overdueList.sortedByDescending { u ->
                 com.example.domain.srs.MedScheduler.priorityScore(
-                    u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt,
+                    u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
                 )
             }
             val total = prioritized.size
@@ -250,12 +250,14 @@ fun TodayScreen(
 
     // Disambiguation: if two active topics share a title, surface whatever differs (a note/source
     // snippet, else subject) so the user can tell them apart on the card.
+    // Titles are compared through TopicTitle, like the duplicate warning on save: a plain lowercase()
+    // cannot see that the same Persian word was typed on two different keyboards.
     val dupTitles = remember(overdue, dueToday, upcoming) {
-        (overdue + dueToday + upcoming).groupingBy { it.title.trim().lowercase() }.eachCount()
+        (overdue + dueToday + upcoming).groupingBy { com.example.data.text.TopicTitle.normalize(it.title) }.eachCount()
             .filterValues { it > 1 }.keys
     }
     val disambOf: (StudyUnitEntity) -> String? = { u ->
-        if (u.title.trim().lowercase() !in dupTitles) null
+        if (com.example.data.text.TopicTitle.normalize(u.title) !in dupTitles) null
         else u.notes?.trim()?.take(40)?.takeIf { it.isNotBlank() }
             ?: u.source?.trim()?.take(40)?.takeIf { it.isNotBlank() }
             ?: subjects.find { it.id == u.subjectId }?.name
@@ -513,6 +515,9 @@ fun TodayScreen(
                             val isFarsi = strings.languageCode == "fa"
                             val over = com.example.ui.theme.overdueTone()
                             val nOver = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(overdue.size) else overdue.size.toString()
+                            // The same plan the button below builds: sized from the daily limit, 3–14 days.
+                            // This card used to promise "3 days" whatever the backlog was.
+                            val recoveryDays = OverdueRedistributor.recoveryDays(overdue.size, dailyLimit)
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -542,11 +547,13 @@ fun TodayScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = if (isFarsi) {
-                                            "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ۳ روز پخش کنی."
+                                            "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز پخش کنی."
                                         } else if (strings.languageCode == "de") {
-                                            "${overdue.size} Wiederholungen warten. Holen wir zuerst die wichtigsten nach — du kannst sie auf 3 Tage verteilen."
+                                            (if (overdue.size == 1) "1 Wiederholung wartet." else "${overdue.size} Wiederholungen warten.") +
+                                                " Holen wir zuerst die wichtigsten nach — du kannst sie auf $recoveryDays Tage verteilen."
                                         } else {
-                                            "${overdue.size} reviews are waiting. Let's recover the important ones first — you can spread them over 3 days."
+                                            (if (overdue.size == 1) "1 review is waiting." else "${overdue.size} reviews are waiting.") +
+                                                " Let's recover the important ones first — you can spread them over $recoveryDays days."
                                         },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant

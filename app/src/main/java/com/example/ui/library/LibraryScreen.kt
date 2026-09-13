@@ -117,7 +117,12 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         result = when (sort) {
             LibrarySort.DUE -> result.sortedBy { it.nextReviewAt }
             LibrarySort.TITLE -> result.sortedBy { it.title.lowercase() }
-            LibrarySort.WEAKNESS -> result.sortedByDescending { it.lapseCount * 10 + (when (it.state) { "NeedsRelearn" -> 50; "Learning" -> 20; else -> 0 }) }
+            // Lapses count only up to the same cap priorityScore uses: lapseCount never decays, so an
+            // uncapped term let one bad stretch years ago outrank a topic that is weak right now.
+            LibrarySort.WEAKNESS -> result.sortedByDescending {
+                minOf(it.lapseCount, com.example.domain.srs.MedScheduler.MAX_SCORED_LAPSES) * 10 +
+                    (when (it.state) { "NeedsRelearn" -> 50; "Learning" -> 20; else -> 0 })
+            }
         }
         result
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -614,7 +619,7 @@ fun LibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Titles shared by 2+ topics → show the differing detail so they're distinguishable.
-                val dupTitles = units.groupingBy { it.title.trim().lowercase() }.eachCount().filterValues { it > 1 }.keys
+                val dupTitles = units.groupingBy { com.example.data.text.TopicTitle.normalize(it.title) }.eachCount().filterValues { it > 1 }.keys
                 item {
                     Text(strings.itemsCount.format(units.size).let { if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(it) else it }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(8.dp))
@@ -739,7 +744,7 @@ fun LibraryScreen(
                             },
                             selected = isSelected,
                             selectable = inSelectionMode,
-                            disambiguator = if (unit.title.trim().lowercase() in dupTitles)
+                            disambiguator = if (com.example.data.text.TopicTitle.normalize(unit.title) in dupTitles)
                                 (unit.notes?.trim()?.take(40)?.takeIf { it.isNotBlank() }
                                     ?: unit.source?.trim()?.take(40)?.takeIf { it.isNotBlank() }
                                     ?: subjects.find { it.id == unit.subjectId }?.name)

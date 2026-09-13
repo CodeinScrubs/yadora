@@ -110,4 +110,37 @@ class PriorityScoreTest {
         )
         assertEquals("epoch-0 must not be read as 1970", direct, fallback, 1e-9)
     }
+
+    /**
+     * An understanding repair left waiting must build urgency like an overdue memory review.
+     *
+     * The repair deadline is the scheduler's own date, not a user deferral, yet ranking used to read only
+     * the memory model's date. A topic rated Good + Partial (memory 50 days, repair 3 days) and then left
+     * for 20 days scored no lateness at all, because its memory date was still a month away, while Today
+     * listed it as 17 days overdue.
+     */
+    @Test
+    fun `an unanswered understanding repair counts as overdue, and a deferral still buys nothing`() {
+        val reviewedAt = now - 20 * day
+        val memoryDue = reviewedAt + 50 * day
+        val repairDue = reviewedAt + 3 * day
+        val memoryOnly = MedScheduler.priorityScore(false, "Building", 0, modelDueAt = memoryDue, now = now)
+        val withRepair = MedScheduler.priorityScore(
+            false, "Building", 0, modelDueAt = memoryDue, now = now,
+            effectiveDueAt = repairDue, understandingDueAt = repairDue,
+        )
+        assertEquals("17 days of unanswered repair add 85 points", 85.0, withRepair - memoryOnly, 1e-6)
+
+        val deferredToTomorrow = MedScheduler.priorityScore(
+            false, "Building", 0, modelDueAt = memoryDue, now = now,
+            effectiveDueAt = now + day, understandingDueAt = repairDue,
+        )
+        assertEquals("tapping Not today must not hide the owed repair", withRepair, deferredToTomorrow, 1e-9)
+
+        val repairNotYetDue = MedScheduler.priorityScore(
+            false, "Building", 0, modelDueAt = memoryDue, now = now,
+            effectiveDueAt = now + 2 * day, understandingDueAt = now + 2 * day,
+        )
+        assertEquals("a repair that is not due yet adds nothing", memoryOnly, repairNotYetDue, 1e-9)
+    }
 }

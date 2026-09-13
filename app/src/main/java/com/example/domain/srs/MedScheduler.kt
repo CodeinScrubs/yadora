@@ -5,25 +5,25 @@ import com.example.domain.model.StudyState
 import com.example.domain.model.UnderstandingRating
 
 /**
- * MedReview's scheduling layer on top of [Fsrs].
+ * Yadora's scheduling layer on top of the memory models: [Fsrs6] is live, [Fsrs] (FSRS-5) is frozen
+ * for replaying old history.
  *
- * Adapts FSRS (designed for Q/A flashcards) to MedReview's study-review model:
+ * Adapts FSRS (designed for Q/A flashcards) to Yadora's study-review model:
  *
- *  1. The FIRST event is "I just studied this topic". PRODUCT TRUTH: AddUnit seeds a neutral
- *     placeholder state via [firstStudy] and makes the topic due ON its study date — the user's first
- *     difficulty+understanding rating happens in the review screen (reviewNumber 0), which re-seeds
- *     the real FSRS state and schedules the first future review (capped by [FIRST_STUDY_MAX_DAYS]).
- *     [firstStudy]'s own 1..3-day interval is only used as the placeholder's pre-rating window.
- *  2. Each [review] supplies a memory rating (Forgot/Hard/Good/Easy) AND an understanding rating.
- *     - FSRS models MEMORY only: stability/difficulty come purely from the memory grade.
- *     - UNDERSTANDING is a transparent product-layer multiplier applied ON TOP of the FSRS interval
- *       (Clear keeps it, Partial ~90%, Confused ~80%). You remembered it, but if you didn't really
- *       understand it, it comes back sooner. This never contaminates the FSRS memory state.
- *  3. High-yield items schedule for a higher desired retention (~30% shorter intervals — see
- *     [HIGH_YIELD_RETENTION] for the honest math).
+ *  1. The FIRST event is "I just studied this topic". AddUnit seeds a neutral placeholder state via
+ *     [firstStudy] and makes the topic due ON its study date. The first rating happens on the review
+ *     screen (review #0): it seeds the real memory state from the rating and schedules the first
+ *     check-in, capped by [FIRST_STUDY_MAX_DAYS].
+ *  2. Every later [review] takes a memory rating (Forgot/Hard/Good/Easy) AND an understanding rating.
+ *     - The memory model sees ONLY the memory rating: stability and difficulty never depend on
+ *       understanding.
+ *     - Understanding runs on a SECOND CLOCK ([remediationDays]): Partial or Confused sets a short
+ *       repair deadline and the topic returns at whichever date is earlier. Legacy FSRS-5 replay still
+ *       applies the old ×0.9/×0.8 multiplier, because that is the schedule those users received.
+ *  3. Important (high-yield) topics schedule for a higher retention target: see [effectiveRetention].
  *
- * Preview and commit go through the SAME [review] call, so the interval is consistent.
- * Exam-deadline compression is a Phase 3 feature.
+ * Preview, commit and replay all go through the SAME [review] call, so the interval is consistent.
+ * The exam date never feeds this scheduler; it is decorative by design.
  */
 object MedScheduler {
 
@@ -31,10 +31,11 @@ object MedScheduler {
     const val BASE_RETENTION = 0.90
 
     /**
-     * Tighter target for high-yield items. Deliberate and NOT subtle: on the FSRS forgetting curve,
-     * 0.93 vs 0.90 shortens intervals by roughly a third (ln 0.93 / ln 0.90 ≈ 0.69), i.e. important
-     * topics come back ~30% sooner and cost ~40–50% more reviews. That extra workload IS the feature —
-     * "important" should mean "seen more often" — but keep the trade-off in mind before widening it.
+     * LEGACY: the fixed high-yield target from before retention became a user setting. Nothing schedules
+     * with it any more; the live rule is [effectiveRetention] (the user's target + 0.03, capped at 0.97
+     * and never below the normal target). Kept because older notes and exports refer to it. For scale:
+     * under FSRS-6 a 0.93 target buys ~0.61x the interval that 0.90 buys for the same stability, and the
+     * gap compounds, because earlier reviews happen at higher recall and grow stability less.
      */
     const val HIGH_YIELD_RETENTION = 0.93
 
@@ -152,42 +153,17 @@ object MedScheduler {
         val remediationDays: Double? = null,
     )
 
-    /** Structured rationale so the "why was this scheduled again?" sentence can be localized later. */
+    /**
+     * Structured rationale for a scheduling decision. The sentence the user reads is built by the review
+     * screen (ReviewViewModel.buildReasonText), which knows both clocks; this only carries the inputs.
+     */
     data class ReviewReason(
         val memoryRating: MemoryRating?,
         val understanding: UnderstandingRating?,
         val highYield: Boolean,
         val intervalDays: Double,
         val firstStudy: Boolean = false,
-    ) {
-        /** Plain-English cause -> effect -> principle sentence (FA localization is Phase 3). */
-        fun defaultText(): String {
-            if (firstStudy) {
-                return "Logged as studied today — first check-in in ${days(intervalDays)} while it's still fresh."
-            }
-            val core = when (memoryRating) {
-                MemoryRating.Forgot -> "You forgot it, so it's back in ${days(intervalDays)} to relearn."
-                MemoryRating.Hard -> "It felt hard, so the gap stayed short (${days(intervalDays)})."
-                MemoryRating.Good -> "You recalled it well, so the next review is in ${days(intervalDays)}."
-                MemoryRating.Easy -> "You found it easy, so it's pushed out to ${days(intervalDays)}."
-                null -> "Next review in ${days(intervalDays)}."
-            }
-            val understandingNote = if (memoryRating != MemoryRating.Forgot) {
-                when (understanding) {
-                    UnderstandingRating.Confused -> " You marked it Confused, so it's sooner than memory alone would suggest."
-                    UnderstandingRating.Partial -> " You marked it Partial, so it's a little sooner."
-                    else -> ""
-                }
-            } else ""
-            val yieldNote = if (highYield) " (Kept tighter because it's important.)" else ""
-            return core + understandingNote + yieldNote
-        }
-
-        private fun days(d: Double): String {
-            val rounded = Math.round(d).toInt()
-            return if (rounded <= 1) "1 day" else "$rounded days"
-        }
-    }
+    )
 
     fun MemoryRating.toGrade(): Grade = when (this) {
         MemoryRating.Forgot -> Grade.Again
@@ -200,7 +176,6 @@ object MedScheduler {
         requestRetention = retentionOverride?.let { safeRetention(it) } ?: effectiveRetention(highYield),
     )
 
-    /** The retention target actually in force for an item — logged per review for later tuning. */
     /**
      * Daily review cap, clamped on READ.
      *
@@ -210,9 +185,17 @@ object MedScheduler {
      */
     fun safeDailyLimit(raw: Int): Int = raw.coerceIn(1, 500)
 
+    /**
+     * The retention target actually in force for an item, logged per review for later tuning.
+     *
+     * Important topics get the user's target + 0.03, capped at 0.97 and never BELOW the normal target.
+     * Without that floor, a target above 0.97 (reachable only through a restored backup; the slider
+     * stops at 0.95) clipped the bump under the normal target, so important topics came back LATER than
+     * ordinary ones.
+     */
     fun effectiveRetention(highYield: Boolean): Double {
         val base = safeRetention(userRetention)
-        return if (highYield) (base + 0.03).coerceAtMost(0.97) else base
+        return if (highYield) maxOf(base, (base + 0.03).coerceAtMost(0.97)) else base
     }
 
     /**
@@ -341,11 +324,10 @@ object MedScheduler {
         // Replay passes the damping rule of the policy that ORIGINALLY produced the log, so editing a
         // rating never silently re-decides old history under today's policy. Live reviews use current.
         dampFirstStudyPrior: Boolean = true,
-        // Which memory model computes this transition. Defaults to FSRS-5 so legacy replay and every
-        // pre-existing caller keep byte-identical behaviour; the live path passes FSRS-6 explicitly.
-        // REQUIRED, deliberately. A default here is a trap: any new call site that forgets the
-        // parameter silently schedules on the retired model, compiles, runs, and looks right. The
-        // caller always knows which model owns the state it is handing in -- make it say so.
+        // Which memory model computes this transition. REQUIRED, deliberately: a default here would be
+        // a trap. A new call site that forgot the parameter would silently schedule on the retired model,
+        // compile, run and look right. The caller always knows which model owns the state it hands in,
+        // so it must say so.
         model: MemoryModel,
     ): Outcome {
         if (model == MemoryModel.FSRS_6) {
@@ -634,6 +616,13 @@ object MedScheduler {
         now: Long,
         /** Fallback for a row that predates modelDueAt and was never backfilled. */
         effectiveDueAt: Long = modelDueAt,
+        /**
+         * The UNDERSTANDING repair deadline, when one is pending. It is the scheduler's own date, not a
+         * user deferral, so a repair left unanswered builds urgency exactly like an overdue memory
+         * review. Ranking used to read only [modelDueAt], so a topic whose 3-day repair had waited for
+         * weeks scored no lateness at all while its memory date was still far away.
+         */
+        understandingDueAt: Long? = null,
     ): Double {
         var score = 0.0
         if (highYield) score += 100.0
@@ -651,7 +640,8 @@ object MedScheduler {
         // below importance, while the still-uncapped overdue term below keeps anything neglected
         // rising until it is actually seen.
         score += minOf(lapseCount, MAX_SCORED_LAPSES) * 10.0
-        val dueReference = if (modelDueAt > 0L) modelDueAt else effectiveDueAt
+        val modelReference = if (modelDueAt > 0L) modelDueAt else effectiveDueAt
+        val dueReference = understandingDueAt?.takeIf { it > 0L }?.let { minOf(modelReference, it) } ?: modelReference
         val overdueDays = (now - dueReference) / 86400000.0
         if (overdueDays > 0) score += overdueDays * 5.0
         return score

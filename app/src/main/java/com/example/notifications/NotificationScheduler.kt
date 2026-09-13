@@ -36,7 +36,6 @@ import java.util.Calendar
  */
 object NotificationScheduler {
 
-    const val CHANNEL_ID = "medreview_daily_reminder_v2"
     const val ALARM_CHANNEL_ID = "medreview_alarm_v1"
     const val NOTIFICATION_ID = 1
 

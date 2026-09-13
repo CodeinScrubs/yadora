@@ -54,7 +54,9 @@ class ReplayEqualsLiveTest {
         // selecting it explicitly. Without this the test would compare an FSRS-5 "live" review with an
         // FSRS-6 replay (or vice versa) and pass while production disagreed with itself.
         val unit = repo.projectOntoCurrentModel(repo.getUnitById(unitId)!!)
-        val elapsedDays = (now - (unit.lastReviewedAt ?: unit.studiedAt)) / 86400000.0
+        // Counted exactly as the app counts it (whole local calendar days for FSRS-6), not as elapsed
+        // milliseconds: the two only agree when the timestamps sit a whole number of days apart.
+        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
         val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
         val outcome = MedScheduler.review(
             stability = unit.stability, difficulty = unit.difficulty, elapsedDays = elapsedDays,
@@ -344,6 +346,40 @@ class ReplayEqualsLiveTest {
         val replayed2 = repo.getUnitById(unitId)!!
         assertEquals("stability after no-op first-rating edit", live.stability, replayed2.stability, 1e-9)
         assertEquals("nextReviewAt after no-op first-rating edit", live.nextReviewAt, replayed2.nextReviewAt)
+    }
+
+    /**
+     * Live and replay must count time the same way at ANY hour, not only at whole-day offsets.
+     *
+     * The helper above used to measure elapsed time in milliseconds while the app counts whole local
+     * calendar days. Every other test here reviews at exact multiples of 24 hours, where the two
+     * conventions agree, so they passed while mirroring the wrong rule. Evening and morning reviews are
+     * where they differ: 20:00 to 09:00 three days later is 2 days in milliseconds but 3 calendar days.
+     */
+    @Test
+    fun `replay equals live when reviews happen at different hours of the day`() = runBlocking {
+        val zone = java.time.ZoneId.systemDefault()
+        val studyDay = java.time.LocalDate.now(zone).minusDays(30)
+        fun at(daysAfter: Long, hour: Int): Long =
+            studyDay.plusDays(daysAfter).atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
+
+        val unitId = repo.insertUnit(newUnit("Nephrotic syndrome", at(0, 19)))
+        liveReview(unitId, at(0, 20), MemoryRating.Good, UnderstandingRating.Clear)                 // evening first check-in
+        liveReview(unitId, at(3, 9), MemoryRating.Good, UnderstandingRating.Clear)                  // 61 hours later
+        val logId = liveReview(unitId, at(4, 22), MemoryRating.Hard, UnderstandingRating.Partial)  // 37 hours later
+        liveReview(unitId, at(5, 7), MemoryRating.Easy, UnderstandingRating.Clear)                  // 9 hours later
+        val live = repo.getUnitById(unitId)!!
+
+        repo.editReviewRating(unitId, logId, MemoryRating.Hard, UnderstandingRating.Partial) // a no-op correction
+        val replayed = repo.getUnitById(unitId)!!
+
+        assertEquals("stability", live.stability, replayed.stability, 1e-9)
+        assertEquals("difficulty", live.difficulty, replayed.difficulty, 1e-9)
+        assertEquals("interval", live.currentIntervalDays, replayed.currentIntervalDays, 1e-9)
+        assertEquals("nextReviewAt", live.nextReviewAt, replayed.nextReviewAt)
+        assertEquals("modelDueAt", live.modelDueAt, replayed.modelDueAt)
+        assertEquals("understandingDueAt", live.understandingDueAt, replayed.understandingDueAt)
+        assertEquals("reviewCount", live.reviewCount, replayed.reviewCount)
     }
 
     @Test
