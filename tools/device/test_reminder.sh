@@ -20,6 +20,9 @@ HERE="$(cd "$(dirname "$0")" && (pwd -W 2>/dev/null || pwd))"
 PKG=com.yadora.app
 mkdir -p "$OUT"
 a() { "$ADB" -s "$SERIAL" "$@"; }
+# Fail fast if the device is not attached: some adb subcommands, logcat among them, otherwise wait for
+# it forever.
+a get-state >/dev/null 2>&1 || { echo "device $SERIAL is not connected (see: adb devices)"; exit 2; }
 dump() { a shell uiautomator dump /sdcard/yadora_ui.xml >/dev/null 2>&1; a pull /sdcard/yadora_ui.xml "$OUT/ui.xml" >/dev/null 2>&1; }
 find_node() { python "$HERE/ui_find.py" "$OUT/ui.xml" "$1"; }
 tap() { a shell input tap $(echo "$1" | cut -d' ' -f1-2); }

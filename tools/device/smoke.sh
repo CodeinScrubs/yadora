@@ -21,6 +21,9 @@ OUT="${OUT:-build/device-smoke}"
 PKG=com.yadora.app
 mkdir -p "$OUT"
 a() { "$ADB" -s "$SERIAL" "$@"; }
+# Fail fast if the device is not attached: some adb subcommands, logcat among them, otherwise wait for
+# it forever — a phone unplugged mid-session left this script hanging with nothing installed.
+a get-state >/dev/null 2>&1 || { echo "device $SERIAL is not connected (see: adb devices)"; exit 2; }
 
 echo "=== device ==="
 echo "$(a shell getprop ro.product.manufacturer | tr -d '\r') $(a shell getprop ro.product.model | tr -d '\r'), Android $(a shell getprop ro.build.version.release | tr -d '\r')"
