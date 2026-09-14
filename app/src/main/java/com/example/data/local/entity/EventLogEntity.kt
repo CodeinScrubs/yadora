@@ -17,7 +17,7 @@ data class EventLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val at: Long = System.currentTimeMillis(),
     // STUDY_ACTION | PROCRASTINATE | PROCRASTINATE_ALL | REDISTRIBUTE | SNOOZE | MERGE | NOTIF_SHOWN |
-    // PROJECTION_FAILED | MISSED_REMINDER_REPORT
+    // PROJECTION_FAILED | MISSED_REMINDER_REPORT | PERSONAL_MODEL | PERSONAL_MODEL_FAILED | PERSONAL_MODEL_OFF
     val type: String,
     val unitId: Long? = null,
     val detail: String? = null,

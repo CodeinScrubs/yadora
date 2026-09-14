@@ -90,11 +90,13 @@ real phone before every release.
 ## Architecture
 
 - `domain/srs/` — `Fsrs6.kt` (the LIVE model), `Fsrs.kt` (FSRS-5, frozen for
-  replay) and `MedScheduler.kt` (product layer: the understanding clock,
-  high-yield retention, first-study window, interval fuzz, queue priority score).
-  This is the tested core — keep it pure and covered.
+  replay), `MedScheduler.kt` (product layer: the understanding clock,
+  high-yield retention, first-study window, interval fuzz, queue priority score),
+  `Fsrs6Optimizer.kt` (fits and judges the personal weight set) and `KeyPoints.kt`
+  (the rating ceiling). This is the tested core — keep it pure and covered.
 - `data/` — Room (`AppDatabase`, DAOs, entities), `MedReviewRepository`,
-  `BackupManager` (versioned JSON export/import).
+  `BackupManager` (versioned JSON export/import), `AnalyticsExporter`,
+  `PersonalModelWorker` (the daily refit).
 - `ui/<screen>/` — each screen file holds its ViewModel + factory + composables.
 - `notifications/` — exact-alarm reminder stack + boot catch-up + WorkManager
   safety net.
@@ -158,8 +160,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/…/6_7`, currently DB v7,
-  `exportSchema=true`, schemas 2–7 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
+- **Room migrations are additive only** (`MIGRATION_1_2/…/8_9`, currently DB v9,
+  `exportSchema=true`, schemas 2–9 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
   Never `fallbackToDestructiveMigration`.
 - **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
   query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
