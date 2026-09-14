@@ -119,6 +119,7 @@ class BackupRoundTripTest {
             StudyUnitEntity(
                 title = "Photosynthesis", studyType = "Topic", subjectId = subjId,
                 notes = "Light reactions vs Calvin cycle", source = "textbook p.41", highYield = true,
+                keyPoints = "Light reactions make ATP\nCalvin cycle fixes CO2",
                 state = "Learning", stability = 2.5, difficulty = 5.5, retrievability = 0.93,
                 studiedAt = now - day, lastReviewedAt = now, nextReviewAt = now + 2 * day,
                 currentIntervalDays = 2.0, reviewCount = 1, lapseCount = 0,
@@ -132,6 +133,7 @@ class BackupRoundTripTest {
                 initialDifficulty = null, reviewDurationMs = 4200, wasImportantAtReview = 1,
                 desiredRetentionAtReview = 0.93, schedulerVersion = "FSRS-5",
                 calibrationScaleAtReview = 0.83,
+                keyPointsTotal = 2, keyPointsRecalled = 1,
             )
         )
         db.eventLogDao().insert(EventLogEntity(type = "SNOOZE", detail = "test"))
@@ -168,6 +170,9 @@ class BackupRoundTripTest {
         assertEquals(0.93, log.desiredRetentionAtReview, 1e-9)
         assertEquals("FSRS-5", log.schedulerVersion)
         assertEquals("v7 calibration scale survives the round trip", 0.83, log.calibrationScaleAtReview, 1e-9)
+        assertEquals("key points survive the round trip", "Light reactions make ATP\nCalvin cycle fixes CO2", unit.keyPoints)
+        assertEquals("and so does a review's score against them", 2, log.keyPointsTotal)
+        assertEquals(1, log.keyPointsRecalled)
 
         assertEquals("SNOOZE", db.eventLogDao().getAll().single().type)
         assertEquals("Physics", db.categoryDao().getAllSubjects().first().single().name)
@@ -199,5 +204,80 @@ class BackupRoundTripTest {
         // And the current data must be untouched — validation runs BEFORE any delete.
         assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
         assertEquals(1, db.reviewLogDao().getLogsForUnit(unitId).first().size)
+    }
+
+    @Test
+    fun `a key-point score that claims more ticks than points is rejected before any data is deleted`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val now = System.currentTimeMillis()
+
+        val unitId = db.studyUnitDao().insertUnit(
+            StudyUnitEntity(title = "Scored", studyType = "Topic", studiedAt = now, nextReviewAt = now, keyPoints = "a\nb\nc")
+        )
+        db.reviewLogDao().insertLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now, memoryRating = "Hard", understandingRating = "Clear",
+                previousIntervalDays = 1.0, nextIntervalDays = 2.0, previousState = "Learning", nextState = "Learning",
+                logType = "RECALL", keyPointsTotal = 3, keyPointsRecalled = 2,
+            )
+        )
+        val json = BackupManager.buildBackupJson(context)
+        val bad = json.replace("\"keyPointsRecalled\": 2", "\"keyPointsRecalled\": 5")
+        assertTrue("tampering must have applied", bad != json)
+
+        assertTrue("an impossible score must be rejected", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
+        assertEquals("Scored", db.studyUnitDao().getUnitById(unitId)!!.title)
+        assertEquals(2, db.reviewLogDao().getLogsForUnit(unitId).first().single().keyPointsRecalled)
+    }
+
+    /**
+     * A topic on a personal weight set can only be replayed with those weights, so a restore must bring
+     * the sets back with the topics that name them — and refuse a file whose weights no longer decode,
+     * before anything current is deleted.
+     */
+    @Test
+    fun `personal memory models survive a round trip and a broken one is rejected first`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val sched = com.example.domain.srs.MedScheduler
+        val now = System.currentTimeMillis()
+        val weights = com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { it[20] = 0.3 }
+        val encoded = com.example.domain.srs.Fsrs6Optimizer.encode(weights)
+        fun set(status: String, w: String, z: Double) = com.example.data.local.entity.MemoryParameterSetEntity(
+            createdAt = now, status = status, weights = w, comparedWithSetId = 0, availableReviews = 700,
+            trainReviews = 560, testReviews = 140, currentLogLoss = 0.36, candidateLogLoss = 0.33,
+            currentRmseBins = 0.09, candidateRmseBins = 0.05, currentAuc = 0.7, candidateAuc = -1.0, zScore = z,
+        )
+        val setId = db.memoryParameterSetDao().insert(set(com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE, encoded, 6.0))
+        db.memoryParameterSetDao().insert(set(com.example.data.local.entity.MemoryParameterSetEntity.REJECTED, "", -1.2))
+        val unitId = db.studyUnitDao().insertUnit(
+            StudyUnitEntity(title = "Fitted", studyType = "Topic", studiedAt = now, nextReviewAt = now, memoryModel = "FSRS-6", parameterSetId = setId)
+        )
+        db.reviewLogDao().insertLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now, memoryRating = "Good", understandingRating = "Clear",
+                previousIntervalDays = 1.0, nextIntervalDays = 3.0, previousState = "Learning", nextState = "Learning",
+                logType = "RECALL", parameterSetId = setId,
+            )
+        )
+        try {
+            val json = BackupManager.buildBackupJson(context)
+            BackupManager.restoreFromJson(context, json)
+            val sets = db.memoryParameterSetDao().getAll()
+            assertEquals("the adopted and the rejected attempt both come back", 2, sets.size)
+            assertEquals(encoded, sets.single { it.id == setId }.weights)
+            assertEquals(setId, db.studyUnitDao().getUnitById(unitId)!!.parameterSetId)
+            assertEquals(setId, db.reviewLogDao().getLogsForUnit(unitId).first().single().parameterSetId)
+            assertEquals("the scheduler sees the restored set", setId, sched.activeParameterSet.id)
+
+            val broken = json.replace(encoded, "1,2,3")
+            assertTrue("tampering must have applied", broken != json)
+            assertTrue("weights that do not decode are rejected", runCatching { BackupManager.restoreFromJson(context, broken) }.isFailure)
+            assertEquals("and nothing was deleted", setId, db.studyUnitDao().getUnitById(unitId)!!.parameterSetId)
+        } finally {
+            sched.activeParameterSet = sched.DEFAULT_PARAMETER_SET
+            sched.knownParameterSets = emptyMap()
+        }
     }
 }

@@ -6,6 +6,24 @@ of forgetting, and never quote a universal forgetting percentage — there isn't
 something fades depends on the material and the learner. Calm confidence sells this app; hype
 breaks its own brand.
 
+**Claims checked against the evidence (2026-09-14).** Proposed: "learn any topic smarter, with almost
+least reviews, and almost never forget it." Not supportable as worded:
+- *"any topic"* — spaced retrieval is robust for knowledge you can recall (spaced vs massed retrieval
+  g = 0.74), weaker in mathematics (spacing g = 0.28; testing vs restudy not reliable), and disputed for
+  highly complex material.
+- *"smarter"* — model-based, personalised scheduling has beaten one-size spacing in trials (Lindsey
+  2014; Upadhyay 2021), but there is no outcome data on Yadora itself yet.
+- *"least reviews"* — the product rules (365-day cap, repair clock, first check-in cap) deliberately
+  spend extra reviews; in simulation, plain FSRS at a slightly higher target reached the same average
+  recall with fewer.
+- *"never forget"* — at a 90% target about one scheduled review in ten is expected to fail, by design.
+
+What may be said: Yadora schedules each topic's next review with FSRS, an open-source memory model,
+adapts to how your own reviews go (and fits the model to you once enough of them exist), and keeps each
+topic near the recall level you choose for as long as you keep reviewing. Revisit the stronger claims
+only with real outcome data: held-out prediction scores from real users, and a comparison against a
+fixed schedule on objective tests.
+
 ---
 
 ## 1. Positioning

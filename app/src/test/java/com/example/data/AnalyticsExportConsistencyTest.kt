@@ -86,7 +86,9 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 8, json.getInt("exportVersion"))
+        assertEquals("export version", 10, json.getInt("exportVersion"))
+        assertTrue("the fit attempts are exported", json.has("memoryParameterSets"))
+        assertEquals("with no personal model the defaults schedule", 0L, json.getJSONObject("policy").getLong("activeParameterSetId"))
 
         // THE TIME ZONE. FSRS-6 elapsed time is a difference of LOCAL calendar dates, so without the
         // zone that produced the file nothing in it can be recomputed from its own timestamps — an
@@ -148,6 +150,8 @@ class AnalyticsExportConsistencyTest {
             assertTrue("log carries policy version", log.has("schedulerPolicyVersion"))
             assertTrue("log carries applied factor", log.has("understandingFactorAtReview"))
             assertTrue("log carries the calibration scale it was scheduled with", log.has("calibrationScaleAtReview"))
+            assertTrue("log carries its key-point score", log.has("keyPointsTotal") && log.has("keyPointsRecalled"))
+            assertTrue("log names its weight set", log.has("parameterSetId"))
             // v4 adherence: without these, analysis cannot tell a bad interval apart from a late user.
             assertTrue("log carries the date it was answering", log.has("scheduledForAt"))
             assertTrue("log carries lateness", log.has("daysLate"))
@@ -186,6 +190,8 @@ class AnalyticsExportConsistencyTest {
             assertTrue("unit carries modelDueAt", u.has("modelDueAt"))
             assertTrue("unit says whether it has a recall prompt", u.has("hasRecallPrompt"))
             assertTrue("but never the prompt text itself", !u.has("recallPrompt"))
+            assertTrue("unit says how many key points it has", u.has("keyPointCount"))
+            assertTrue("but never the points themselves", !u.has("keyPoints"))
             if (u.getLong("id") == id3) {
                 assertEquals("deferredUntil visible in export", now + day, u.getLong("deferredUntil"))
                 assertEquals("model's date untouched by deferral", now, u.getLong("modelDueAt"))

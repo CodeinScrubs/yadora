@@ -25,7 +25,7 @@ class TopicEditTest {
 
     private fun formOf(u: StudyUnitEntity) = TopicEdit.Form(
         title = u.title, subjectId = u.subjectId, systemId = u.systemId, studyType = u.studyType,
-        recallPrompt = u.recallPrompt, notes = u.notes ?: "", source = u.source ?: "", highYield = u.highYield,
+        recallPrompt = u.recallPrompt, keyPoints = u.keyPoints, notes = u.notes ?: "", source = u.source ?: "", highYield = u.highYield,
         studiedAt = u.studiedAt, nextReviewAt = u.nextReviewAt,
     )
 
@@ -49,6 +49,16 @@ class TopicEditTest {
         assertFalse(plan.nextDateChanged)
         assertFalse(plan.studyDateChanged)
         assertFalse(plan.tightenForImportant)
+    }
+
+    @Test
+    fun `edited key points are saved onto the row as it is now`() {
+        val loaded = topic()
+        val fresh = loaded.copy(stability = 31.0, reviewCount = 3)
+        val plan = TopicEdit.plan(loaded, fresh, formOf(loaded).copy(keyPoints = "RLQ pain\nAlvarado score"), t0 + 13 * day)
+        assertEquals("RLQ pain\nAlvarado score", plan.updated.keyPoints)
+        assertEquals("the review behind the form survives", 31.0, plan.updated.stability, 0.0)
+        assertNull("clearing them saves none", TopicEdit.plan(loaded, fresh.copy(keyPoints = "x"), formOf(loaded), t0).updated.keyPoints)
     }
 
     @Test

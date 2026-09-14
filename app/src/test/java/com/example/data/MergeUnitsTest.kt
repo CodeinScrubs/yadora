@@ -346,6 +346,25 @@ class MergeUnitsTest {
         assertEquals("the survivor's own prompt wins", "Murphy's sign, ultrasound findings", kept.recallPrompt)
     }
 
+    /**
+     * Key points are the scoring standard for the material, so a merge keeps them by the prompt's rule
+     * and never unions two copies' lists (the same points in two languages would count twice).
+     */
+    @Test
+    fun `merging keeps key points from whichever copy has them, never a union`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val bare = addUnit("Appendicitis", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        val scored = addUnit("آپاندیسیت", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.updateUnit(repo.getUnitById(scored)!!.copy(keyPoints = "McBurney's point\nAlvarado score"))
+        assertEquals("McBurney's point\nAlvarado score", repo.mergeUnits(bare, listOf(scored))!!.keyPoints)
+
+        val own = addUnit("Cholecystitis", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        val other = addUnit("کوله‌سیستیت", stability = 10.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.updateUnit(repo.getUnitById(own)!!.copy(keyPoints = "Murphy's sign"))
+        repo.updateUnit(repo.getUnitById(other)!!.copy(keyPoints = "Murphy's sign\nUltrasound"))
+        assertEquals("the survivor's own points win", "Murphy's sign", repo.mergeUnits(own, listOf(other))!!.keyPoints)
+    }
+
     @Test
     fun `merging three copies at once combines all of them`() = runBlocking {
         val now = System.currentTimeMillis()

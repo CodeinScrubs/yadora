@@ -101,7 +101,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
         }
     }
 
-    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
+    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, keyPoints: String?, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
         viewModelScope.launch {
             // "Am I editing?" comes from the nav argument, NOT from whether the row has finished
             // loading — see editingUnitId.
@@ -141,7 +141,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             fresh = fresh,
                             form = TopicEdit.Form(
                                 title = title, subjectId = subjectId, systemId = systemId, studyType = studyType,
-                                recallPrompt = prompt.ifBlank { null }, notes = notes, source = source,
+                                recallPrompt = prompt.ifBlank { null }, keyPoints = keyPoints, notes = notes, source = source,
                                 highYield = highYield, studiedAt = studiedAt, nextReviewAt = nextReviewAt,
                             ),
                             now = System.currentTimeMillis(),
@@ -155,6 +155,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                         if (plan.tightenForImportant && lastReviewedAt != null) {
                             // The per-user interval correction, refreshed from the logs right before it is
                             // used — the review session and a rating correction do the same.
+                            runCatching { repository.refreshMemoryModel() }
                             runCatching { MedScheduler.calibrationScale = repository.recallCalibrationScale() }
                             // Through the topic's OWN model: a stored stability only means something
                             // together with the model that produced it, and re-deriving the interval on
@@ -163,6 +164,8 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                                 fresh.stability,
                                 MedScheduler.effectiveRetention(true),
                                 MedScheduler.MemoryModel.of(fresh.memoryModel),
+                                // ...and its own weight set, for the same reason.
+                                fresh.parameterSetId,
                             ).coerceIn(MedScheduler.MIN_INTERVAL_DAYS, MedScheduler.MAX_INTERVAL_DAYS)
                             val tighterNext = lastReviewedAt + (tighter * 86400000).toLong()
                             if (tighterNext < updated.nextReviewAt) {
@@ -210,6 +213,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             systemId = systemId,
                             studyType = studyType,
                             recallPrompt = prompt.ifBlank { null },
+                            keyPoints = keyPoints,
                             notes = notes,
                             source = source,
                             highYield = highYield,
@@ -262,7 +266,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
 
 /** A small forgetting-curve sparkline: recall probability decaying over time for this topic's stability. */
 @androidx.compose.runtime.Composable
-private fun ForgettingCurve(stability: Double, model: com.example.domain.srs.MedScheduler.MemoryModel, modifier: Modifier = Modifier) {
+private fun ForgettingCurve(stability: Double, model: com.example.domain.srs.MedScheduler.MemoryModel, parameterSetId: Long, modifier: Modifier = Modifier) {
     val primary = MaterialTheme.colorScheme.primary
     val mutedLine = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
     androidx.compose.foundation.Canvas(modifier = modifier) {
@@ -275,7 +279,7 @@ private fun ForgettingCurve(stability: Double, model: com.example.domain.srs.Med
         val steps = 60
         for (i in 0..steps) {
             val t = maxT * i / steps
-            val r = com.example.domain.srs.MedScheduler.retrievability(t, stability, model).toFloat()
+            val r = com.example.domain.srs.MedScheduler.retrievability(t, stability, model, parameterSetId).toFloat()
             val x = w * i / steps
             val y = h * (1f - r)
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -318,6 +322,7 @@ fun AddUnitScreen(
     var title by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var notes by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var recallPrompt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var keyPointsText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var highYield by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var selectedSubjectId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var studiedAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
@@ -344,6 +349,7 @@ fun AddUnitScreen(
             title = it.title
             notes = it.notes ?: ""
             recallPrompt = it.recallPrompt ?: ""
+            keyPointsText = it.keyPoints ?: ""
             sourceLink = it.source ?: ""
             highYield = it.highYield
             selectedSubjectId = it.subjectId
@@ -383,7 +389,7 @@ fun AddUnitScreen(
                                 saving = true
                                 // System and study type were removed as v1 bloat (columns kept, dormant).
                                 // The recall prompt was too, until it returned as an optional field.
-                                viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), notes, sourceLink, highYield, studiedAt, nextReviewAt,
+                                viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
                                     onSaved = {
                                         com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                                         com.example.widget.DueWidgetProvider.updateAll(reminderContext) // new topic changes today's count
@@ -446,7 +452,7 @@ fun AddUnitScreen(
                         TextButton(onClick = {
                             archivedDuplicate = null
                             saving = true
-                            viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), notes, sourceLink, highYield, studiedAt, nextReviewAt,
+                            viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
                                 onSaved = {
                                     com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                                     com.example.widget.DueWidgetProvider.updateAll(reminderContext)
@@ -523,7 +529,50 @@ fun AddUnitScreen(
                 maxLines = 3,
                 shape = RoundedCornerShape(12.dp)
             )
-            
+            Spacer(modifier = Modifier.height(12.dp))
+            // OPTIONAL key points (DB v8): the answer split into the ideas a complete recall must hold.
+            // Ticked at each review, they cap the memory rating (see KeyPoints for the evidence). The
+            // editor stops at MAX_POINTS rather than truncating what was typed.
+            val keyPointCount = com.example.domain.srs.KeyPoints.parse(keyPointsText).size
+            val faNum: (Int) -> String = { if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(it.toString()) else it.toString() }
+            OutlinedTextField(
+                value = keyPointsText,
+                onValueChange = { typed -> if (com.example.domain.srs.KeyPoints.withinLimit(typed)) keyPointsText = typed },
+                label = {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "نکات کلیدی (اختیاری)"
+                            "de" -> "Kernpunkte (optional)"
+                            else -> "Key points (optional)"
+                        }
+                    )
+                },
+                placeholder = {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "هر نکته در یک خط"
+                            "de" -> "Ein Punkt pro Zeile"
+                            else -> "One point per line"
+                        }
+                    )
+                },
+                supportingText = {
+                    val counter = "${faNum(keyPointCount)}/${faNum(com.example.domain.srs.KeyPoints.MAX_POINTS)}"
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "در هر مرور نکاتی را که به یاد آوردی تیک می‌زنی و ارزیابی حافظه از آن بالاتر نمی‌رود. $counter"
+                            "de" -> "Bei jeder Wiederholung hakst du die abgerufenen an; die Bewertung liegt nie darüber. $counter"
+                            else -> "At each review you tick the ones you recalled; the rating can't go above them. $counter"
+                        }
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = LocalTextStyle.current.autoDirection(),
+                minLines = 2,
+                maxLines = 8,
+                shape = RoundedCornerShape(12.dp)
+            )
+
             Spacer(modifier = Modifier.height(24.dp))
             Text(strings.subjectFolder, style = MaterialTheme.typography.titleSmall)
             Text(
@@ -633,9 +682,10 @@ fun AddUnitScreen(
             )
             Text(
                 text = when (strings.languageCode) {
-                    "fa" -> "نکات کلیدی، یک خلاصه، یا چیزی که موقع مرور کمکت می‌کند به یاد بیاوری."
-                    "de" -> "Kernpunkte, eine kurze Zusammenfassung oder was dir beim Wiederholen hilft."
-                    else -> "Key points, a short summary, or anything that helps you recall it at review time."
+                    // Not "key points": those have their own field now, and this hint used to promise them here.
+                    "fa" -> "یک خلاصه، یا هر چیزی که موقع مرور کمکت می‌کند خودت را بسنجی."
+                    "de" -> "Eine kurze Zusammenfassung oder alles, womit du dich beim Wiederholen prüfen kannst."
+                    else -> "A short summary, or anything that helps you check yourself at review time."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -759,6 +809,7 @@ fun AddUnitScreen(
                     ForgettingCurve(
                         stability = unit.stability,
                         model = com.example.domain.srs.MedScheduler.MemoryModel.of(unit.memoryModel),
+                        parameterSetId = unit.parameterSetId,
                         modifier = Modifier.fillMaxWidth().height(100.dp),
                     )
                 }

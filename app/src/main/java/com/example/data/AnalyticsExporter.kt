@@ -32,7 +32,9 @@ object AnalyticsExporter {
         lateinit var events: List<com.example.data.local.entity.EventLogEntity>
         lateinit var subjects: List<com.example.data.local.entity.SubjectEntity>
         lateinit var systems: List<com.example.data.local.entity.SystemEntity>
+        lateinit var parameterSets: List<com.example.data.local.entity.MemoryParameterSetEntity>
         app.database.withTransaction {
+            parameterSets = app.database.memoryParameterSetDao().getAll()
             units = unitDao.getAllActiveOnce() + unitDao.getArchivedOnce() + unitDao.getRecentlyDeletedOnce()
             logs = logDao.getAllLogsOnce()
             events = app.database.eventLogDao().getAll()
@@ -57,7 +59,12 @@ object AnalyticsExporter {
         // what lets calibration later be compared between topics that do and don't define "remembered".
         // v8: per-log calibrationScaleAtReview — the per-user interval correction each review was
         // scheduled with, so an interval in the data can still be recomputed from its inputs.
-        root.put("exportVersion", 8)
+        // v9: key points. Per topic only their COUNT (the points themselves are the user's own content,
+        // like titles and notes); per log how the review scored against them, which is what lets the
+        // ratings of scored and unscored topics be compared.
+        // v10: the personal memory model — every fit attempt with its held-out scores and weights, and the
+        // weight set each topic and review belongs to. Calibration MUST group by (model, set).
+        root.put("exportVersion", 10)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
@@ -148,6 +155,29 @@ object AnalyticsExporter {
             put("highYieldRetentionInForce", com.example.domain.srs.MedScheduler.effectiveRetention(true))
             put("highYieldRetentionBonus", 0.03)
             put("examDateAffectsScheduling", false)
+            // The rule that capped a scored review's rating (KeyPoints.ceiling).
+            put("keyPointRatingCeiling", "all recalled: any rating; at least half: up to Hard; fewer: Forgot")
+            // The weight set scheduling NEW reviews: 0 = the published defaults named by parameterSetId above.
+            put(
+                "activeParameterSetId",
+                parameterSets.lastOrNull { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE }?.id ?: 0L,
+            )
+            put("personalModelGate", "held-out later 20%, paired per-review log loss, one-sided z >= ${com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z}")
+        })
+
+        // Every attempt to fit the memory model to this learner, adopted or not, with the held-out evidence
+        // it was judged on. Weights are model parameters, not user content.
+        root.put("memoryParameterSets", JSONArray().apply {
+            for (s in parameterSets) put(JSONObject().apply {
+                put("id", s.id); put("createdAt", s.createdAt); put("status", s.status)
+                put("weights", JSONArray().apply { com.example.domain.srs.Fsrs6Optimizer.decode(s.weights)?.forEach { put(it) } })
+                put("comparedWithSetId", s.comparedWithSetId); put("availableReviews", s.availableReviews)
+                put("trainReviews", s.trainReviews); put("testReviews", s.testReviews)
+                put("currentLogLoss", s.currentLogLoss); put("candidateLogLoss", s.candidateLogLoss)
+                put("currentRmseBins", s.currentRmseBins); put("candidateRmseBins", s.candidateRmseBins)
+                put("currentAuc", s.currentAuc); put("candidateAuc", s.candidateAuc); put("zScore", s.zScore)
+                put("activatedAt", s.activatedAt ?: JSONObject.NULL); put("retiredAt", s.retiredAt ?: JSONObject.NULL)
+            })
         })
 
         val unitsArr = JSONArray()
@@ -177,6 +207,8 @@ object AnalyticsExporter {
                 put("understandingDueAt", u.understandingDueAt ?: JSONObject.NULL)
                 put("memoryModel", u.memoryModel)
                 put("hasRecallPrompt", !u.recallPrompt.isNullOrBlank())
+                put("keyPointCount", com.example.domain.srs.KeyPoints.parse(u.keyPoints).size)
+                put("parameterSetId", u.parameterSetId)
             })
         }
         root.put("studyUnits", unitsArr)
@@ -257,6 +289,9 @@ object AnalyticsExporter {
                 put("schedulerPolicyVersion", l.schedulerPolicyVersion)
                 put("understandingFactorAtReview", l.understandingFactorAtReview)
                 put("calibrationScaleAtReview", l.calibrationScaleAtReview)
+                put("keyPointsTotal", l.keyPointsTotal)
+                put("keyPointsRecalled", l.keyPointsRecalled)
+                put("parameterSetId", l.parameterSetId)
             })
         }
         root.put("reviewLogs", logsArr)
@@ -274,8 +309,15 @@ object AnalyticsExporter {
         }
         val logsByUnit = logs.groupBy { it.studyUnitId }
         val unitIdSet = units.map { it.id }.toSet()
+        val usableSetIds = parameterSets
+            .filter { it.status != com.example.data.local.entity.MemoryParameterSetEntity.REJECTED }
+            .mapTo(HashSet()) { it.id } + 0L
         for (l in logs) {
             if (l.studyUnitId !in unitIdSet) flag("ORPHAN_LOG", l.studyUnitId, "log ${l.id} references a topic not in this export")
+            if (l.parameterSetId !in usableSetIds) flag("UNKNOWN_PARAMETER_SET", l.studyUnitId, "log ${l.id} names weight set ${l.parameterSetId}")
+        }
+        for (u in units) {
+            if (u.parameterSetId !in usableSetIds) flag("UNKNOWN_PARAMETER_SET", u.id, "topic names weight set ${u.parameterSetId}")
         }
         for (u in units) {
             val mine = logsByUnit[u.id].orEmpty().sortedWith(compareBy({ it.reviewedAt }, { it.id }))

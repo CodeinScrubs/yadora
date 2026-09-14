@@ -90,6 +90,7 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
                 u.title.contains(query, ignoreCase = true) ||
                     u.studyType.contains(query, ignoreCase = true) ||
                     (u.recallPrompt?.contains(query, ignoreCase = true) == true) ||
+                    (u.keyPoints?.contains(query, ignoreCase = true) == true) ||
                     (u.notes?.contains(query, ignoreCase = true) == true) ||
                     (u.source?.contains(query, ignoreCase = true) == true) ||
                     (subjectList.find { it.id == u.subjectId }?.name?.contains(query, ignoreCase = true) == true) ||

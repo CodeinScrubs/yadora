@@ -46,11 +46,11 @@ interface ReviewLogDao {
      * explains.
      */
     @Query(
-        "SELECT * FROM review_logs WHERE logType = 'RECALL' AND schedulerVersion = :model " +
+        "SELECT * FROM review_logs WHERE logType = 'RECALL' AND schedulerVersion = :model AND parameterSetId = :parameterSetId " +
             "AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays " +
             "AND elapsedDays >= :earlyFraction * previousIntervalDays ORDER BY reviewedAt DESC, id DESC LIMIT :limit"
     )
-    suspend fun getRecentRecallLogsOnce(model: String, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
+    suspend fun getRecentRecallLogsOnce(model: String, parameterSetId: Long, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
 
     /**
      * The most recently measured review durations, newest first, for the Today time estimate. Rows

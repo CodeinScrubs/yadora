@@ -769,6 +769,44 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+                // The personal memory model (PersonalModelWorker). On by default. Switching it off retires the
+                // fitted weight set at once; nothing is refitted or adopted until it is switched on again.
+                var personalModel by remember {
+                    mutableStateOf(sharedPrefs.getBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, true))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text(
+                            when (language) { "fa" -> "تطبیق مدل با مرورهای من"; "de" -> "Modell an meine Wiederholungen anpassen"; else -> "Fit the model to my reviews" },
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            when (language) {
+                                "fa" -> "وقتی مرورهای کافی جمع شود، FSRS-6 بر مرورهای خودت برازش می‌شود و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند به کار می‌رود."
+                                "de" -> "Sobald genug Wiederholungen vorliegen, wird FSRS-6 an deine eigenen angepasst und nur verwendet, wenn es deine späteren Wiederholungen besser vorhersagt."
+                                else -> "Once enough reviews exist, FSRS-6 is fitted to your own and used only if it predicts your later reviews better."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = personalModel,
+                        onCheckedChange = { on ->
+                            personalModel = on
+                            sharedPrefs.edit { putBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, on) }
+                            if (!on) exportScope.launch {
+                                runCatching { (context.applicationContext as com.example.MedReviewApplication).repository.useDefaultMemoryModel() }
+                            }
+                        }
+                    )
+                }
             }
             
             item {

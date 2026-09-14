@@ -101,7 +101,7 @@ class RecallCalibrationEvidenceTest {
         val kotlinRows = db.reviewLogDao().getAllLogsOnce()
             .filter { RecallCalibration.isEvidence(it.elapsedDays, it.previousIntervalDays) }
         val sqlRows = db.reviewLogDao().getRecentRecallLogsOnce(
-            MedScheduler.CURRENT_MODEL.id, RecallCalibration.MIN_ELAPSED_DAYS, RecallCalibration.EARLY_REVIEW_FRACTION,
+            MedScheduler.CURRENT_MODEL.id, 0L, RecallCalibration.MIN_ELAPSED_DAYS, RecallCalibration.EARLY_REVIEW_FRACTION,
             RecallCalibration.WINDOW,
         )
         assertTrue("the grid exercises both outcomes", kotlinRows.isNotEmpty() && kotlinRows.size < 90)

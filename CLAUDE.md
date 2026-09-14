@@ -121,6 +121,24 @@ These were decided deliberately. Re-suggesting them wastes a session:
   Yadora into a flashcard app. It shows on the review screen under the title, before the notes. A
   merge keeps a prompt (survivor's, else the first absorbed copy's). Analytics exports only
   `hasRecallPrompt`, never the text — it is user content, like titles and notes.
+- **Key points are an optional SCORING STANDARD, and the ticks CAP the rating** (DB v8,
+  `domain/srs/KeyPoints`). A topic may list the few ideas a complete recall must contain, one per line
+  (the editor stops at 12; a stored list is never truncated on read). The recall step shows only how
+  many there are; after the reveal the learner ticks the ones they produced, and every memory button
+  above what the ticks support is disabled: all ticked allows any rating, at least half allows up to
+  Hard, fewer means Forgot. A learner can always rate LOWER. `rateCurrentUnit` enforces the same rule
+  as a backstop, a first check-in is never scored, and each log stores `keyPointsTotal` /
+  `keyPointsRecalled` (-1 = unscored). Why: in simulation, rating errors moved true recall more than any
+  scheduling rule did — a learner who calls a quarter of failed recalls "Hard" ran at 0.895 true recall
+  while the ratings said 0.92, and the self-calibration, which learns from those same ratings,
+  amplified it to a 1.44 scale — and scoring a recall against idea units reduces exactly that
+  overconfidence (Dunlosky, Hartwig, Rawson & Lipko 2011). The half threshold is POLICY, chosen by a
+  three-year simulation of 3-, 5- and 7-point topics: nearly free against a global judgement, while
+  stricter thresholds cost two to three times the reviews (that trade-off belongs to the retention
+  slider). A merge keeps the survivor's key points, else the first absorbed copy's, never a union.
+  Backup v7 carries them; analytics exports only `keyPointCount` and the per-log scores, never the text.
+  Rating corrections on the Edit screen are NOT capped: they are a later judgement, and the stored
+  score stays beside them for analysis.
 - **First-run onboarding has a REMINDERS step** after language selection
   (`ui/onboarding/RemindersSetupScreen` + pure `RemindersSetupPolicy`). Android 14+ denies
   `SCHEDULE_EXACT_ALARM` to new installs, so without it every reminder silently fell back to an
@@ -279,8 +297,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   scale it was scheduled with (`calibrationScaleAtReview`), and replay uses the stored one for
   untouched rows. The shrinkage is deliberately strong: the FSRS-6 curve is so flat that a
   one-point recall gap is a ~15 % stability change, so 100 reviews alone would swing the scale by
-  ~1.5× on noise. This is the honest first-order correction until an FSRS optimizer (all 21
-  weights, ~1,000+ reviews) exists; do not present it as one. Constants are POLICY.
+  ~1.5× on noise. It stays as the first-order correction on top of whichever weight set is active;
+  the full refit of all 21 weights is the personal weight set below, and neither is presented as the other. Constants are POLICY.
   `RecallCalibrationTest` pins recovery of a planted scale, shrinkage, bounds and reach.
   **Evidence** (`RecallCalibration.isEvidence`, stated again in SQL by
   `ReviewLogDao.getRecentRecallLogsOnce`; `RecallCalibrationEvidenceTest` pins the two together):
@@ -297,6 +315,37 @@ These were decided deliberately. Re-suggesting them wastes a session:
   (0.75), so on-time reviews would drop out while late repairs still passed. The Progress card is
   computed from these same rows (`calibrationStatsOf`) and compares the DEFAULT model's stored
   predictions with outcomes; the corrected predictions agree with them by construction.
+- **The memory model is fitted to the learner — a PERSONAL WEIGHT SET — only when their own later
+  reviews prove it predicts better** (DB v9, `domain/srs/Fsrs6Optimizer`, `memory_parameter_sets`,
+  `data/PersonalModelWorker`). Once a day (battery not low, Settings switch on) the repository rebuilds
+  every topic's graded history exactly as projection does and, with at least 640 loss-eligible reviews
+  and 20% more than the last attempt saw (or 30 days since it), runs py-fsrs 6.3.1's own training
+  procedure: binary cross-entropy, same-day reviews out of the loss, the first 64 steps per topic, Adam
+  at 0.04 with cosine annealing, five epochs, batches of 512, every weight clamped to the reference
+  bounds, starting from the defaults — preceded by the initial-stability PRETRAIN Anki's optimizer uses
+  (each first grade's second reviews, shrunk toward the default, monotone in grade), without which five
+  epochs cannot move S₀ far enough. Gradients are exact (dual numbers), pinned against the verified
+  `Fsrs6` and central finite differences by `Fsrs6OptimizerTest`. THE GATE is Yadora's, not py-fsrs's:
+  the history is cut in time into five chunks, each of the last four is predicted by a fit on the reviews
+  before it (`FOLDS`), and the pooled per-review log loss must beat the weights in use with a one-sided
+  paired z of at least `Fsrs6Optimizer.ACCEPT_Z` (2.33, i.e. 1%). Measured by `Fsrs6OptimizerGateTest`:
+  a learner the defaults describe was adopted 0 times in 40 refits; moderate departures 0 in 10 (once
+  real reviews correct the state, the defaults' predictions differ too little); a strong departure 9 in
+  10 at ~9,000 reviews and not yet at ~4,000. Only then
+  is it refitted on everything and stored ACTIVE (the previous set RETIRED); otherwise the attempt is
+  stored REJECTED with its scores. Model identity is now (model, weight set):
+  `study_units.parameterSetId` and `review_logs.parameterSetId`, 0 = the published defaults. Every
+  FSRS-5→6 rule applies to sets: adoption writes no topic; a topic crosses by `projectOntoCurrentModel`
+  (replay onto the active set) at its next display or commit; `editReviewRating` replays a topic on the
+  set it is ON, and `MedScheduler.weightsFor` throws for a set the registry does not hold, so a
+  correction fails closed; the calibration and the Progress card pool evidence within one set and read
+  its predictions on that set's own curve. The in-memory active set changes only in
+  `refreshMemoryModel` — session start, the Important toggle, a correction, a merge, a restore — never
+  from the worker, so a session never previews with one set and commits with another. Retired sets are
+  never deleted: replay needs them. `useDefaultMemoryModel` (the Settings switch) retires the active set.
+  Why: per-user fitting cuts calibration error by about 30% against the defaults on the public
+  benchmark, and the one-number calibration cannot change the curve's shape, what a first study is
+  worth, or what a lapse costs. Backup v8 and analytics v10 carry the sets.
 - **On-demand review from the Library is allowed; interval compression by exam date is not.**
   Long-press a topic → play. It opens the single-topic session whether or not the topic is due; an
   early review is ordinary FSRS (high predicted recall, a small stability gain, a lapse is a lapse)

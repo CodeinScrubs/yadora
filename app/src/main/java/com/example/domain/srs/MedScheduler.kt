@@ -85,6 +85,46 @@ object MedScheduler {
     @Volatile
     var calibrationScale: Double = 1.0
 
+    /**
+     * An FSRS-6 weight set: the published defaults (id 0) or one fitted to THIS learner by
+     * [Fsrs6Optimizer] and stored in `memory_parameter_sets`. Model identity is (model, set): a stored
+     * stability is only meaningful together with the weights that produced it, exactly as it is only
+     * meaningful with the model.
+     */
+    class ParameterSet(val id: Long, val weights: DoubleArray) {
+        init {
+            require(Fsrs6Optimizer.withinBounds(weights)) { "FSRS-6 parameter set $id is outside the reference bounds" }
+        }
+    }
+
+    val DEFAULT_PARAMETER_SET = ParameterSet(0L, Fsrs6Parameters.DEFAULT_WEIGHTS)
+
+    /**
+     * The set that schedules NEW reviews. Refreshed from the database right before anything schedules
+     * (`MedReviewRepository.refreshMemoryModel`), like [calibrationScale], so a session never previews
+     * with one set and commits with another.
+     */
+    @Volatile
+    var activeParameterSet: ParameterSet = DEFAULT_PARAMETER_SET
+
+    /** Every non-rejected personal set by id, so a row still on an older set replays under its own weights. */
+    @Volatile
+    var knownParameterSets: Map<Long, DoubleArray> = emptyMap()
+
+    /** The weights of set [id]. Throws for a set the registry does not hold, so SCHEDULING fails closed. */
+    fun weightsFor(id: Long): DoubleArray {
+        val active = activeParameterSet
+        return when (id) {
+            0L -> Fsrs6Parameters.DEFAULT_WEIGHTS
+            active.id -> active.weights
+            else -> knownParameterSets[id] ?: throw IllegalStateException("unknown FSRS-6 parameter set $id")
+        }
+    }
+
+    /** [weightsFor] for DRAWING only: an unknown set falls back to the defaults instead of failing a screen. */
+    private fun weightsOrDefault(id: Long): DoubleArray =
+        runCatching { weightsFor(id) }.getOrDefault(Fsrs6Parameters.DEFAULT_WEIGHTS)
+
     /** The schedule never asks for a review sooner than the next day. */
     const val MIN_INTERVAL_DAYS = 1.0
 
@@ -444,6 +484,9 @@ object MedScheduler {
         // Replay passes whether the policy that produced the log backed off the repair clock; a row
         // stamped YADORA-5 or older keeps the flat deadline it was actually given.
         backOffRepairClock: Boolean = true,
+        // Which FSRS-6 weight set computes this transition: null = the active set, otherwise the set the
+        // row being replayed is on. Ignored by FSRS-5, which is frozen on its own weights.
+        parameterSetId: Long? = null,
     ): Outcome {
         if (model == MemoryModel.FSRS_6) {
             return reviewFsrs6(
@@ -451,6 +494,7 @@ object MedScheduler {
                 highYield, reviewNumber, desiredRetentionOverride,
                 unrepairedStreak = if (backOffRepairClock) unrepairedStreak else 0,
                 calibrationScale = calibrationScaleOverride ?: calibrationScale,
+                weights = weightsFor(parameterSetId ?: activeParameterSet.id),
             )
         }
         val p = params(highYield, desiredRetentionOverride)
@@ -520,8 +564,9 @@ object MedScheduler {
         desiredRetentionOverride: Double?,
         unrepairedStreak: Int,
         calibrationScale: Double,
+        weights: DoubleArray,
     ): Outcome {
-        val p = params6(highYield, desiredRetentionOverride)
+        val p = params6(highYield, desiredRetentionOverride, weights)
         val before = MemoryState(stability = stability, difficulty = difficulty)
         val grade = memoryRating.toGrade()
 
@@ -572,9 +617,17 @@ object MedScheduler {
      * -0.5). Drawing one topic's memory on the other model's curve — or logging a retrievability
      * measured on the wrong curve — would quietly contradict the schedule the user was actually given.
      */
-    fun retrievability(elapsedDays: Double, stability: Double, model: MemoryModel): Double = when (model) {
+    fun retrievability(
+        elapsedDays: Double,
+        stability: Double,
+        model: MemoryModel,
+        // The weight set the stability was computed under. A set the registry does not hold draws on the
+        // defaults rather than failing a screen; scheduling paths never come through here.
+        parameterSetId: Long = activeParameterSet.id,
+    ): Double = when (model) {
         MemoryModel.FSRS_5 -> Fsrs.retrievability(elapsedDays, stability)
-        MemoryModel.FSRS_6 -> Fsrs6.retrievability(elapsedDays, stability)
+        MemoryModel.FSRS_6 ->
+            Fsrs6.retrievability(elapsedDays, stability, Fsrs6Parameters(weights = weightsOrDefault(parameterSetId)))
     }
 
     /**
@@ -584,9 +637,15 @@ object MedScheduler {
      * ~0.67 S under FSRS-5 and ~0.61 S under FSRS-6. Any code that re-derives an interval outside
      * [review] must go through here, or it will schedule on a curve the next real review disagrees with.
      */
-    fun intervalDays(stability: Double, requestRetention: Double, model: MemoryModel): Double = when (model) {
+    fun intervalDays(
+        stability: Double,
+        requestRetention: Double,
+        model: MemoryModel,
+        parameterSetId: Long = activeParameterSet.id,
+    ): Double = when (model) {
         MemoryModel.FSRS_5 -> Fsrs.intervalDays(stability, requestRetention)
-        MemoryModel.FSRS_6 -> Fsrs6.intervalDays(stability, requestRetention)
+        MemoryModel.FSRS_6 ->
+            Fsrs6.intervalDays(stability, requestRetention, Fsrs6Parameters(weights = weightsFor(parameterSetId)))
     }
 
     /**
@@ -595,8 +654,13 @@ object MedScheduler {
      * Important toggle's immediate reschedule) must use this, or it sets a date the next real review
      * disagrees with. FSRS-5 is frozen and never scaled.
      */
-    fun scheduledIntervalDays(stability: Double, requestRetention: Double, model: MemoryModel): Double =
-        intervalDays(stability, requestRetention, model) *
+    fun scheduledIntervalDays(
+        stability: Double,
+        requestRetention: Double,
+        model: MemoryModel,
+        parameterSetId: Long = activeParameterSet.id,
+    ): Double =
+        intervalDays(stability, requestRetention, model, parameterSetId) *
             (if (model == MemoryModel.FSRS_6) RecallCalibration.safeScale(calibrationScale) else 1.0)
 
     /**
@@ -611,8 +675,11 @@ object MedScheduler {
         elapsedDays: Double,
         memoryRating: MemoryRating,
         highYield: Boolean,
+        // The weight set being projected ONTO. The caller reads the active set once for a whole history,
+        // so a refresh landing mid-projection cannot split one topic across two sets.
+        weights: DoubleArray = activeParameterSet.weights,
     ): MemoryState {
-        val p = params6(highYield)
+        val p = params6(highYield, weights = weights)
         val grade = memoryRating.toGrade()
         return if (previous == null) Fsrs6.initialState(grade, p)
         else Fsrs6.nextState(previous, completedModelDays(elapsedDays), grade, p)
@@ -666,7 +733,8 @@ object MedScheduler {
         kotlin.math.floor(elapsedDays.coerceAtLeast(0.0))
 
     /** FSRS-6 parameters, sharing the same clamped retention policy as the FSRS-5 path. */
-    private fun params6(highYield: Boolean, retentionOverride: Double? = null) = Fsrs6Parameters(
+    private fun params6(highYield: Boolean, retentionOverride: Double? = null, weights: DoubleArray) = Fsrs6Parameters(
+        weights = weights,
         requestRetention = retentionOverride?.let { safeRetention(it) } ?: effectiveRetention(highYield),
     )
 

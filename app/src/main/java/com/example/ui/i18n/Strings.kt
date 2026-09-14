@@ -96,6 +96,10 @@ data class AppStrings(
     val memoryRating: String = "Memory Rating",
     val understandingRating: String = "Understanding Rating",
     val recallFirstPrompt: String = "Recall first. Explain from memory before restudy or review.",
+    // Key points (DB v8): the scoring standard, ticked after the reveal.
+    val keyPointsCount: String = "Key points: %s",
+    val keyPointsTitle: String = "Key points you recalled",
+    val keyPointsScore: String = "%1\$s of %2\$s key points recalled",
     val dueNow: String = "Due Now",
     val needsRelearnState: String = "Needs Relearn",
 
@@ -200,6 +204,9 @@ val PersianStrings = AppStrings(
     memoryRating = "درجه‌بندی حافظه",
     understandingRating = "درجه‌بندی درک مطلب",
     recallFirstPrompt = "ابتدا یادآوری کنید. قبل از مطالعه مجدد یا مرور، از حفظ توضیح دهید.",
+    keyPointsCount = "نکات کلیدی: %s",
+    keyPointsTitle = "نکات کلیدی که به یاد آوردی",
+    keyPointsScore = "%1\$s از %2\$s نکتهٔ کلیدی به یاد آمد",
     dueNow = "موعد الان",
     needsRelearnState = "نیاز به یادگیری مجدد",
 
@@ -303,6 +310,9 @@ val GermanStrings = AppStrings(
     memoryRating = "Erinnerung",
     understandingRating = "Verständnis",
     recallFirstPrompt = "Erst abrufen: Erkläre aus dem Gedächtnis, bevor du nachliest.",
+    keyPointsCount = "Kernpunkte: %s",
+    keyPointsTitle = "Kernpunkte, die du abgerufen hast",
+    keyPointsScore = "%1\$s von %2\$s Kernpunkten abgerufen",
     dueNow = "Jetzt fällig",
     needsRelearnState = "Neu lernen",
 

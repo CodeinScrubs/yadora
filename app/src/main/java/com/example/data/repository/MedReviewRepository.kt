@@ -130,21 +130,29 @@ class MedReviewRepository(
      * recall credit. An unrated topic has nothing to project, so it just adopts the new model id.
      */
     suspend fun projectOntoCurrentModel(unit: StudyUnitEntity): StudyUnitEntity {
-        if (MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL) return unit
+        if (isOnCurrentModel(unit)) return unit
         return projectWithHistory(unit, reviewLogDao.getLogsForUnitOnce(unit.id))
     }
+
+    /** On the live model AND the active weight set: nothing to project. */
+    private fun isOnCurrentModel(unit: StudyUnitEntity): Boolean =
+        MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL &&
+            unit.parameterSetId == MedScheduler.activeParameterSet.id
 
     /**
      * The pure half of [projectOntoCurrentModel], taking the history rather than fetching it, so a
      * caller already inside a transaction (merge) can project without collecting a Flow there.
      */
     private fun projectWithHistory(unit: StudyUnitEntity, history: List<ReviewLogEntity>): StudyUnitEntity {
-        if (MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL) return unit
+        if (isOnCurrentModel(unit)) return unit
+        // Read ONCE: a refresh landing mid-projection must not split one topic's history across two sets.
+        // A personal weight set is projected onto exactly like a new model: by replaying the real history.
+        val target = MedScheduler.activeParameterSet
 
         val logs = history.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
         if (logs.isEmpty()) {
             // Never rated: no evidence to replay, so only the model label changes.
-            return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id, updatedAt = System.currentTimeMillis())
+            return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id, parameterSetId = target.id, updatedAt = System.currentTimeMillis())
         }
 
         var state: MemoryState? = null
@@ -171,13 +179,13 @@ class MedReviewRepository(
             // Projection rebuilds under the CURRENT model, so time is measured its way too.
             val elapsed = MedScheduler.modelElapsedDays(prevTime, log.reviewedAt, MedScheduler.CURRENT_MODEL)
             val highYield = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
-            state = MedScheduler.projectStep(state, elapsed, grade, highYield)
+            state = MedScheduler.projectStep(state, elapsed, grade, highYield, target.weights)
             if (grade == MemoryRating.Forgot) lapses++
             reviews++
             lastGradedRating = log.memoryRating
             prevTime = log.reviewedAt
         }
-        val projected = state ?: return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id)
+        val projected = state ?: return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id, parameterSetId = target.id)
 
         // The SCHEDULE is not recomputed here. The user was promised a date by the old model and that
         // promise is kept; only the latent state moves onto the new model, and the next real review
@@ -192,8 +200,126 @@ class MedReviewRepository(
                 justForgot = lastGradedRating == MemoryRating.Forgot.name,
             ).name,
             memoryModel = MedScheduler.CURRENT_MODEL.id,
+            parameterSetId = target.id,
             updatedAt = System.currentTimeMillis(),
         )
+    }
+
+    // --- the personal memory model (DB v9) ---
+
+    /** Every fit attempt and adopted weight set, oldest first, for the Progress and Settings screens. */
+    fun observeParameterSets(): Flow<List<com.example.data.local.entity.MemoryParameterSetEntity>> =
+        database.memoryParameterSetDao().observeAll()
+
+    /**
+     * Load the weight sets into the scheduler: the ACTIVE one schedules new reviews, and every other
+     * non-rejected set stays readable so a row or log still on it replays under its own weights. Called
+     * right before anything schedules, the same places the calibration is refreshed. A stored vector that
+     * does not decode inside the reference bounds is ignored, which leaves the published defaults active.
+     */
+    suspend fun refreshMemoryModel() {
+        val rows = database.memoryParameterSetDao().getAll()
+        val known = HashMap<Long, DoubleArray>()
+        for (row in rows) {
+            if (row.status == com.example.data.local.entity.MemoryParameterSetEntity.REJECTED) continue
+            com.example.domain.srs.Fsrs6Optimizer.decode(row.weights)?.let { known[row.id] = it }
+        }
+        val active = rows.lastOrNull { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE }
+            ?.let { row -> known[row.id]?.let { MedScheduler.ParameterSet(row.id, it) } }
+        MedScheduler.knownParameterSets = known
+        MedScheduler.activeParameterSet = active ?: MedScheduler.DEFAULT_PARAMETER_SET
+    }
+
+    /** Every topic's graded history, rebuilt exactly as [projectWithHistory] rebuilds it, for the optimizer. */
+    suspend fun trainingHistories(): List<com.example.domain.srs.Fsrs6Optimizer.History> =
+        reviewLogDao.getAllLogsOnce().groupBy { it.studyUnitId }.values.mapNotNull { logs ->
+            com.example.domain.srs.Fsrs6Optimizer.historyOf(
+                logs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+                    .map { com.example.domain.srs.Fsrs6Optimizer.Event(it.reviewedAt, it.memoryRating, it.logType) },
+            ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
+        }
+
+    /**
+     * Refit the memory model to this learner when there is enough NEW evidence to be worth it: at least
+     * [com.example.domain.srs.Fsrs6Optimizer.MIN_REVIEWS_FOR_A_FIT] reviews, and 20% more than the last
+     * attempt saw or a month since it. The fit is judged against the set in use on the learner's own
+     * later reviews ([com.example.domain.srs.Fsrs6Optimizer.fitAndValidate]); the attempt is recorded
+     * either way, and an accepted set becomes ACTIVE in the same transaction that retires the old one.
+     * Writes the database only — the scheduler switches at the next [refreshMemoryModel]. Returns the
+     * attempt's report, or null when none was due.
+     */
+    suspend fun refitPersonalModel(
+        now: Long = System.currentTimeMillis(),
+        force: Boolean = false,
+    ): com.example.domain.srs.Fsrs6Optimizer.FitReport? {
+        val dao = database.memoryParameterSetDao()
+        val histories = trainingHistories()
+        val available = histories.sumOf { h -> (1 until h.size).count { h.inLoss(it) } }
+        if (available < com.example.domain.srs.Fsrs6Optimizer.MIN_REVIEWS_FOR_A_FIT) return null
+        val latest = dao.getLatest()
+        if (!force && latest != null && available < latest.availableReviews * REFIT_EVIDENCE_GROWTH &&
+            now - latest.createdAt < REFIT_MAX_AGE_MS
+        ) return null
+
+        val activeRow = dao.getActive()
+        val activeWeights = activeRow?.let { com.example.domain.srs.Fsrs6Optimizer.decode(it.weights) }
+        val current = activeWeights ?: com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS
+        val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(histories, current)
+        if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return report
+
+        val weights = report.weights
+        val accepted = report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.ACCEPTED && weights != null
+        fun stored(x: Double?) = if (x != null && x.isFinite()) x else -1.0
+        database.withTransaction {
+            if (accepted) dao.retireActive(now)
+            dao.insert(
+                com.example.data.local.entity.MemoryParameterSetEntity(
+                    createdAt = now,
+                    status = if (accepted) com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE
+                        else com.example.data.local.entity.MemoryParameterSetEntity.REJECTED,
+                    weights = if (accepted && weights != null) com.example.domain.srs.Fsrs6Optimizer.encode(weights) else "",
+                    comparedWithSetId = if (activeWeights != null) activeRow?.id ?: 0L else 0L,
+                    availableReviews = available,
+                    trainReviews = report.trainReviews,
+                    testReviews = report.testReviews,
+                    currentLogLoss = stored(report.current?.logLoss),
+                    candidateLogLoss = stored(report.candidate?.logLoss),
+                    currentRmseBins = stored(report.current?.rmseBins),
+                    candidateRmseBins = stored(report.candidate?.rmseBins),
+                    currentAuc = stored(report.current?.auc),
+                    candidateAuc = stored(report.candidate?.auc),
+                    zScore = if (report.zScore.isNaN()) 0.0 else report.zScore.coerceIn(-99.0, 99.0),
+                    activatedAt = if (accepted) now else null,
+                )
+            )
+            database.eventLogDao().insert(
+                com.example.data.local.entity.EventLogEntity(
+                    type = "PERSONAL_MODEL",
+                    detail = "${report.verdict} train=${report.trainReviews} test=${report.testReviews} " +
+                        "z=${"%.2f".format(java.util.Locale.ROOT, report.zScore)}",
+                )
+            )
+        }
+        return report
+    }
+
+    /**
+     * Stop using a personal model: the active set is retired, the published defaults schedule new
+     * reviews, and every topic crosses back by projection at its next review, like any model change.
+     */
+    suspend fun useDefaultMemoryModel(now: Long = System.currentTimeMillis()) {
+        database.withTransaction {
+            database.memoryParameterSetDao().retireActive(now)
+            database.eventLogDao().insert(com.example.data.local.entity.EventLogEntity(type = "PERSONAL_MODEL_OFF"))
+        }
+        refreshMemoryModel()
+    }
+
+    companion object {
+        /** A refit waits for this much more evidence than the last attempt saw... */
+        const val REFIT_EVIDENCE_GROWTH = 1.2
+        /** ...or for this long, whichever comes first. */
+        const val REFIT_MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000
     }
 
     suspend fun archiveUnit(id: Long) {
@@ -236,6 +362,8 @@ class MedReviewRepository(
     suspend fun mergeUnits(keepId: Long, mergeIds: Collection<Long>): StudyUnitEntity? {
         val requestedIds = mergeIds.filter { it != keepId }.distinct()
         if (requestedIds.isEmpty()) return null
+        // Every copy is projected onto the live weight set below, so the registry must be current.
+        runCatching { refreshMemoryModel() }
         return database.withTransaction {
             // Never merge a topic that is already in the recycle bin. getUnitById deliberately does
             // NOT filter soft-deleted rows (restore/purge need them), so without this guard an
@@ -278,6 +406,10 @@ class MedReviewRepository(
                 // The recall prompt defines what "remembering" this topic means, so a merge must not drop
                 // one: keep the survivor's if it has one, otherwise the first absorbed copy's.
                 recallPrompt = all.firstNotNullOfOrNull { it.recallPrompt?.takeIf { p -> p.isNotBlank() } },
+                // Key points are the scoring standard for this material, so they follow the prompt's
+                // rule: the survivor's own, otherwise the first absorbed copy's. Never a union — two
+                // copies in two languages would list every point twice and halve what each tick means.
+                keyPoints = all.firstNotNullOfOrNull { it.keyPoints?.takeIf { p -> p.isNotBlank() } },
                 // A relearn in progress is a union too: if ANY copy was just forgotten, the merged
                 // topic is still relearning. masteryState() can only ever return NeedsRelearn when
                 // told a lapse just happened, so deriving state purely from stability would quietly
@@ -297,6 +429,7 @@ class MedReviewRepository(
                 understandingDueAt = all.mapNotNull { it.understandingDueAt }.minOrNull(),
                 // Every copy was just projected, so the merged state is expressed in one model.
                 memoryModel = MedScheduler.CURRENT_MODEL.id,
+                parameterSetId = survivor.parameterSetId,
                 deferredUntil = null, // the merged topic is a fresh, un-deferred schedule
                 updatedAt = System.currentTimeMillis(),
             )
@@ -324,6 +457,7 @@ class MedReviewRepository(
                         // FSRS-6 would claim a state expressed in units it was not computed in. With
                         // no history left it re-seeds at its first rating either way.
                         memoryModel = MedScheduler.MemoryModel.FSRS_5.id,
+                        parameterSetId = 0L,
                         lastReviewedAt = null,
                         nextReviewAt = copy.studiedAt,
                         modelDueAt = copy.studiedAt,
@@ -408,8 +542,12 @@ class MedReviewRepository(
      * and at the start of every review session into `MedScheduler.calibrationScale`.
      */
     suspend fun recallCalibrationScale(): Double {
+        // Pooled within ONE weight set, and read on that set's own curve: predictions made by different
+        // weights are predictions of different models.
+        val set = MedScheduler.activeParameterSet
         val logs = reviewLogDao.getRecentRecallLogsOnce(
             MedScheduler.CURRENT_MODEL.id,
+            set.id,
             com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
             com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION,
             com.example.domain.srs.RecallCalibration.WINDOW,
@@ -417,6 +555,7 @@ class MedReviewRepository(
         return com.example.domain.srs.RecallCalibration.scale(
             predicted = logs.map { it.retrievabilityAtReview }.toDoubleArray(),
             recalled = logs.map { it.memoryRating != MemoryRating.Forgot.name }.toBooleanArray(),
+            p = com.example.domain.srs.Fsrs6Parameters(weights = set.weights),
         )
     }
 
@@ -536,6 +675,10 @@ class MedReviewRepository(
             .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
         if (logs.isEmpty()) return
 
+        // A topic on a personal weight set replays under that set, so the registry must hold it even in
+        // a process where no review session has run yet.
+        refreshMemoryModel()
+
         // A correction is a NEW scheduling decision, so it uses the per-user calibration as it stands
         // now, read from the logs like every other path that schedules. It used to use whatever
         // MedScheduler.calibrationScale held — 1.0 until a review session had run in this process — so
@@ -562,6 +705,9 @@ class MedReviewRepository(
         var lastDifficulty = difficulty
         var lastStateName = unit.state
         val replayModel = MedScheduler.MemoryModel.of(unit.memoryModel)
+        // ...and under the weight set it is on, for the same reason: replay reproduces the history this
+        // topic actually had. The next review projects it onto the active set like any model change.
+        val replaySetId = if (replayModel == MedScheduler.MemoryModel.FSRS_6) unit.parameterSetId else 0L
         var lastRemediationDays: Double? = null
         // The unrepaired-understanding streak in force before each log, rebuilt from the same rule
         // the live path applies to the same rows (MedScheduler.continuesUnrepairedStreak).
@@ -628,7 +774,7 @@ class MedReviewRepository(
                         nextIntervalDays = prevInterval,
                         previousState = prevStateName,
                         nextState = prevStateName,
-                        retrievabilityAtReview = MedScheduler.retrievability(elapsed, stability, replayModel),
+                        retrievabilityAtReview = MedScheduler.retrievability(elapsed, stability, replayModel, replaySetId),
                         elapsedDays = elapsed,
                         // logType is deliberately PRESERVED. Rewriting it to RECALL would launder a
                         // study exposure into retrieval history and destroy the distinction forever.
@@ -688,6 +834,7 @@ class MedReviewRepository(
                 // YADORA-6 backs off the repair clock; a row stamped with an older policy keeps the
                 // flat deadline it was actually given.
                 backOffRepairClock = MedScheduler.backsOffRepairClock(policyForThisLog),
+                parameterSetId = replaySetId,
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.

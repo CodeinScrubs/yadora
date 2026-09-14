@@ -25,6 +25,8 @@ object TopicEdit {
         val systemId: Long?,
         val studyType: String,
         val recallPrompt: String?,
+        /** Normalized key points ([com.example.domain.srs.KeyPoints.normalize]), or null for none. */
+        val keyPoints: String?,
         val notes: String,
         val source: String,
         val highYield: Boolean,
@@ -58,6 +60,7 @@ object TopicEdit {
             systemId = form.systemId,
             studyType = form.studyType,
             recallPrompt = form.recallPrompt,
+            keyPoints = form.keyPoints,
             notes = form.notes,
             source = form.source,
             highYield = form.highYield,

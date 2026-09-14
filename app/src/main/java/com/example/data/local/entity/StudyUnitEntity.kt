@@ -69,4 +69,21 @@ data class StudyUnitEntity(
      * the model each of them recorded.
      */
     val memoryModel: String = "FSRS-5",
+    // --- DB v8 ---
+    /**
+     * Optional KEY POINTS: the answer to this topic split into the few ideas a complete recall must
+     * contain, one per line ([com.example.domain.srs.KeyPoints]). At a review the learner ticks the
+     * ones they actually produced, and the ticks cap the memory rating. Null = none, and the rating is
+     * the learner's own judgement, exactly as before.
+     */
+    val keyPoints: String? = null,
+    // --- DB v9 ---
+    /**
+     * Which FSRS-6 weight set produced this row's stability/difficulty (meaningful when [memoryModel] is
+     * FSRS-6): 0 = the published defaults, otherwise a set fitted to this learner
+     * (`memory_parameter_sets`). The same rule as the model itself: a state is only meaningful with the
+     * weights that computed it, so a row still on an older set is PROJECTED onto the active one at its
+     * next review, never relabelled.
+     */
+    val parameterSetId: Long = 0,
 )

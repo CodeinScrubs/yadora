@@ -186,9 +186,18 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
     // own evidence rows and compare the DEFAULT model's predictions with what happened. Right after a
     // model change the card goes quiet until ten new reviews exist: nothing is yet known about how
     // well the current model predicts THIS user.
-    val calibrationStats = allLogs
-        .map { logs -> calibrationStatsOf(logs) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    // Which weight set the cards describe comes from the database rows (activeSetOf explains why).
+    private val parameterSets = repository.observeParameterSets()
+        .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
+
+    val calibrationStats = kotlinx.coroutines.flow.combine(allLogs, parameterSets) { logs, sets ->
+        calibrationStatsOf(logs, activeSetOf(sets))
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** The memory model card: the weight set in use, the last fit attempt, and the evidence so far. */
+    val memoryModelStatus = kotlinx.coroutines.flow.combine(allLogs, parameterSets) { logs, sets ->
+        memoryModelStatusOf(logs, sets)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -208,6 +217,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
     val consistencyData by viewModel.consistencyChartData.collectAsStateWithLifecycle()
     val subjectDifficultyData by viewModel.subjectDifficultyData.collectAsStateWithLifecycle()
     val calibration by viewModel.calibrationStats.collectAsStateWithLifecycle()
+    val memoryModel by viewModel.memoryModelStatus.collectAsStateWithLifecycle()
     
     val strings = com.example.ui.i18n.LocalStrings.current
     
@@ -444,6 +454,66 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+                        }
+                    }
+                }
+
+                // The memory model: fitted to this learner or the published defaults, and on what evidence.
+                // Descriptive only, like the calibration card: nothing here asks the learner to act.
+                memoryModel?.let { status ->
+                    item {
+                        Text(
+                            when (strings.languageCode) { "fa" -> "مدل حافظه"; "de" -> "Gedächtnismodell"; else -> "Memory model" },
+                            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 16.dp),
+                        )
+                    }
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                val digits: (String) -> String = { if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(it) else it }
+                                val n: (Int) -> String = { digits(it.toString()) }
+                                val ll: (Double) -> String = { digits(String.format(java.util.Locale.US, "%.3f", it)) }
+                                val pct: (Double) -> String = { digits(String.format(java.util.Locale.US, "%.1f", it * 100)) }
+                                val date: (Long) -> String = { com.example.ui.i18n.AppDate.date(useJalali, it) }
+                                val active = status.active
+                                val latest = status.latestAttempt
+                                val standard = when (strings.languageCode) { "fa" -> "وزن‌های استاندارد FSRS-6"; "de" -> "Standardgewichte von FSRS-6"; else -> "Standard FSRS-6 weights" }
+                                val headline = if (active != null) {
+                                    when (strings.languageCode) { "fa" -> "متناسب با مرورهای خودت"; "de" -> "An deine eigenen Wiederholungen angepasst"; else -> "Fitted to your own reviews" }
+                                } else standard
+                                val since = active?.let { date(it.activatedAt ?: it.createdAt) }
+                                val min = n(com.example.domain.srs.Fsrs6Optimizer.MIN_REVIEWS_FOR_A_FIT)
+                                val detail = when {
+                                    active != null -> when (strings.languageCode) {
+                                        "fa" -> "از $since، بر پایهٔ ${n(active.availableReviews)} مرور. روی مرورهای بعدی‌ات بهتر از مدل قبلی پیش‌بینی کرد: خطای لگاریتمی ${ll(active.currentLogLoss)} ← ${ll(active.candidateLogLoss)}، خطای گروه‌بندی‌شده ٪${pct(active.currentRmseBins)} ← ٪${pct(active.candidateRmseBins)}."
+                                        "de" -> "Seit $since, aus ${active.availableReviews} Wiederholungen. Bei deinen späteren Wiederholungen sagte es besser voraus als das ersetzte Modell: Log-Loss ${ll(active.currentLogLoss)} → ${ll(active.candidateLogLoss)}, gruppierter Fehler ${pct(active.currentRmseBins)} % → ${pct(active.candidateRmseBins)} %."
+                                        else -> "Since $since, from ${active.availableReviews} reviews. On your later reviews it predicted better than the model it replaced: log loss ${ll(active.currentLogLoss)} → ${ll(active.candidateLogLoss)}, binned error ${pct(active.currentRmseBins)}% → ${pct(active.candidateRmseBins)}%."
+                                    }
+                                    latest?.status == com.example.data.local.entity.MemoryParameterSetEntity.REJECTED -> when (strings.languageCode) {
+                                        "fa" -> "آخرین بررسی ${date(latest.createdAt)} با ${n(latest.availableReviews)} مرور: مدلی که بر تو برازش شد مرورهای بعدی‌ات را به‌طور قابل‌اعتمادی بهتر پیش‌بینی نکرد، پس چیزی تغییر نکرد."
+                                        "de" -> "Zuletzt geprüft am ${date(latest.createdAt)} mit ${latest.availableReviews} Wiederholungen: Ein an dich angepasstes Modell sagte deine späteren Wiederholungen nicht verlässlich besser voraus, daher bleibt alles, wie es ist."
+                                        else -> "Last checked ${date(latest.createdAt)} on ${latest.availableReviews} reviews: a model fitted to you did not predict your later reviews reliably better, so nothing changed."
+                                    }
+                                    latest != null -> when (strings.languageCode) {
+                                        "fa" -> "مدلی که بر تو برازش شده بود خاموش شد."
+                                        "de" -> "Das an dich angepasste Modell wurde ausgeschaltet."
+                                        else -> "The model fitted to you was switched off."
+                                    }
+                                    else -> when (strings.languageCode) {
+                                        "fa" -> "مدلی متناسب با مرورهای خودت وقتی حدود $min مرورِ یادآوری جمع شود امتحان می‌شود (تا الان ${n(status.recallReviews)}) و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند به کار می‌رود."
+                                        "de" -> "Ein an deine Wiederholungen angepasstes Modell wird erprobt, sobald etwa $min Abruf-Wiederholungen vorliegen (bisher ${status.recallReviews}), und nur verwendet, wenn es deine späteren Wiederholungen besser vorhersagt."
+                                        else -> "A model fitted to your own reviews is tried once about $min recall reviews exist (${status.recallReviews} so far), and used only if it predicts your later reviews better."
+                                    }
+                                }
+                                Text(headline, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }

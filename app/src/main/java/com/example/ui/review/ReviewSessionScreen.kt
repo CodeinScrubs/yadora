@@ -3,6 +3,7 @@ package com.example.ui.review
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -205,6 +206,8 @@ class ReviewViewModel(
                 // The per-user interval correction, refreshed once per session from the logs. Read
                 // here and not per review so a value cannot move between a button's preview and its
                 // commit; both read MedScheduler.calibrationScale as it stands for the session.
+                // The weight set first: the calibration pools evidence within the active set only.
+                runCatching { repository.refreshMemoryModel() }
                 runCatching { MedScheduler.calibrationScale = repository.recallCalibrationScale() }
                 if (unitId != -1L) {
                     val unit = repository.getUnitById(unitId)
@@ -373,9 +376,22 @@ class ReviewViewModel(
         }
     }
 
-    fun rateCurrentUnit(memoryRating: MemoryRating, understandingRating: UnderstandingRating, understandingAsked: Boolean = true) {
+    /**
+     * @param keyPointsRecalled how many of the displayed topic's key points the learner ticked (0 when it
+     *        has none). Required, not defaulted: a call site that forgot it would log every scored review
+     *        as unscored and let a rating past the ticks through.
+     */
+    fun rateCurrentUnit(memoryRating: MemoryRating, understandingRating: UnderstandingRating, understandingAsked: Boolean = true, keyPointsRecalled: Int) {
         if (isProcessing) return
-        val currentId = _currentUnit.value?.id ?: return
+        val shown = _currentUnit.value ?: return
+        val currentId = shown.id
+        // What the learner was scored against is what they SAW, so the count comes from the displayed row.
+        val keyPointsTotal = com.example.domain.srs.KeyPoints.parse(shown.keyPoints).size
+        // The ticks cap the rating (KeyPoints). The buttons already enforce it; this is the backstop, so no
+        // path commits a rating the learner's own scoring does not support. A first check-in is not a
+        // recall and is never scored.
+        val scored = keyPointsTotal > 0 && MedScheduler.effectiveReviewNumber(shown.reviewCount) > 0
+        if (scored && !com.example.domain.srs.KeyPoints.allows(memoryRating, keyPointsTotal, keyPointsRecalled)) return
         isProcessing = true
 
         viewModelScope.launch {
@@ -416,6 +432,8 @@ class ReviewViewModel(
                 reviewNumber = reviewNumber,
                 model = MedScheduler.CURRENT_MODEL,
                 unrepairedStreak = unrepairedStreak,
+                // The set the projection just put this topic on, stated rather than re-read.
+                parameterSetId = unit.parameterSetId,
             )
 
             // Deterministic ±5% fuzz (seeded by unit + prior review count) de-clumps cohorts; same
@@ -490,6 +508,11 @@ class ReviewViewModel(
                     if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
                 // v7: the per-user interval correction this review was scheduled with.
                 calibrationScaleAtReview = MedScheduler.calibrationScale,
+                // v8: how this review scored against the key points the learner was shown.
+                keyPointsTotal = if (reviewNumber > 0 && keyPointsTotal > 0) keyPointsTotal else -1,
+                keyPointsRecalled = if (reviewNumber > 0 && keyPointsTotal > 0) keyPointsRecalled.coerceIn(0, keyPointsTotal) else -1,
+                // v9: the weight set this prediction and interval came from.
+                parameterSetId = unit.parameterSetId,
             )
             // Update the unit's schedule AND insert its log atomically (one Room transaction), then
             // remember the exact log id so Undo deletes precisely this log.
@@ -621,6 +644,9 @@ fun ReviewSessionScreen(
             restore = { name -> runCatching { MemoryRating.valueOf(name) }.getOrNull() },
         ),
     ) { mutableStateOf<MemoryRating?>(null) }
+    // Which key points the learner ticked as recalled, by index. Saveable and keyed on the unit for the
+    // same reasons as the two states above.
+    var tickedKeyPoints by rememberSaveable(currentUnitState) { mutableStateOf(emptyList<Int>()) }
 
     // Back steps BACKWARDS through the rating flow and cancels — nothing is committed to the DB until
     // the understanding rating is tapped. So leaving mid-rating (difficulty chosen, understanding not)
@@ -739,6 +765,7 @@ fun ReviewSessionScreen(
                 // First study (studied today, never reviewed) vs a recall review (back-dated or later).
                 val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.reviewCount)
                 val isFreshFirstStudy = previewReviewNumber == 0
+                val keyPointList = remember(currentUnit.keyPoints) { com.example.domain.srs.KeyPoints.parse(currentUnit.keyPoints) }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -770,6 +797,7 @@ fun ReviewSessionScreen(
                                 viewModel.undoLastRating()
                                 showNotes = false
                                 selectedMemory = null
+                                tickedKeyPoints = emptyList()
                             }) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.Undo,
@@ -957,7 +985,67 @@ fun ReviewSessionScreen(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
+                            // How many points a complete recall holds; the points themselves stay hidden.
+                            if (keyPointList.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    strings.keyPointsCount.format(num(keyPointList.size)),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         } else {
+                            if (keyPointList.isNotEmpty()) {
+                                HorizontalDivider()
+                                Spacer(modifier = Modifier.height(12.dp))
+                                if (isFreshFirstStudy) {
+                                    // Just studied: nothing to score yet, so the points are simply shown.
+                                    keyPointList.forEach { point ->
+                                        Text(
+                                            text = "• $point",
+                                            style = MaterialTheme.typography.bodyLarge.autoDirection(),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        strings.keyPointsTitle,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    // Scoring locks once a memory rating is chosen, so the ticks can never
+                                    // fall below a rating already made; Back to the rating step unlocks it.
+                                    val scoringOpen = selectedMemory == null && !viewModel.isProcessing
+                                    keyPointList.forEachIndexed { index, point ->
+                                        val ticked = index in tickedKeyPoints
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .toggleable(
+                                                    value = ticked,
+                                                    enabled = scoringOpen,
+                                                    role = androidx.compose.ui.semantics.Role.Checkbox,
+                                                    onValueChange = { on ->
+                                                        tickedKeyPoints = if (on) (tickedKeyPoints + index).distinct().sorted()
+                                                            else tickedKeyPoints - index
+                                                    },
+                                                )
+                                                .padding(vertical = 4.dp),
+                                        ) {
+                                            Checkbox(checked = ticked, onCheckedChange = null, enabled = scoringOpen)
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = point,
+                                                style = MaterialTheme.typography.bodyLarge.autoDirection(),
+                                                modifier = Modifier.weight(1f),
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
                             if (!currentUnit.notes.isNullOrBlank()) {
                                 HorizontalDivider()
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -1059,6 +1147,14 @@ fun ReviewSessionScreen(
                     }
                 } else if (selectedMemory == null) {
                     Text(strings.memoryRating, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (keyPointList.isNotEmpty()) {
+                        // The reason some ratings are unavailable, stated as the score itself.
+                        Text(
+                            strings.keyPointsScore.format(num(tickedKeyPoints.size), num(keyPointList.size)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1075,18 +1171,23 @@ fun ReviewSessionScreen(
                                         // Forgot → relearn tomorrow regardless of understanding, so commit
                                         // now and skip that moot second question (less friction on a miss).
                                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        viewModel.rateCurrentUnit(MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false)
+                                        viewModel.rateCurrentUnit(MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false, keyPointsRecalled = tickedKeyPoints.size)
                                     } else {
                                         selectedMemory = rating
                                     }
                                 },
-                                enabled = !viewModel.isProcessing,
+                                // The ticks cap the rating: anything above what the key points support stays off.
+                                enabled = !viewModel.isProcessing &&
+                                    com.example.domain.srs.KeyPoints.allows(rating, keyPointList.size, tickedKeyPoints.size),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tone.container,
                                     contentColor = tone.onContainer,
                                 ),
                                 modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                // Four buttons share a phone's width: the default 24 dp side padding left
+                                // "Forgot" too little room and broke it mid-word as "Forg / ot".
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                             ) {
                                 Text(
                                     when(rating) {
@@ -1128,6 +1229,7 @@ fun ReviewSessionScreen(
                                 model = MedScheduler.CURRENT_MODEL,
                                 // The repair clock doubles per unrepaired answer; same value the commit reads.
                                 unrepairedStreak = viewModel.currentUnrepairedStreak,
+                                parameterSetId = currentUnit.parameterSetId,
                             )
                             val finalInterval = MedScheduler.fuzzedInterval(
                                 previewOutcome.intervalDays,
@@ -1149,7 +1251,7 @@ fun ReviewSessionScreen(
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     // Read at tap time, not composition time: a Back gesture in the same
                                     // frame clears the choice before this button is gone, and `!!` crashed.
-                                    selectedMemory?.let { chosen -> viewModel.rateCurrentUnit(chosen, rating) }
+                                    selectedMemory?.let { chosen -> viewModel.rateCurrentUnit(chosen, rating, keyPointsRecalled = tickedKeyPoints.size) }
                                 },
                                 enabled = !viewModel.isProcessing,
                                 modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),

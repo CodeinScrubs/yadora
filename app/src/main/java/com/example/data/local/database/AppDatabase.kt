@@ -6,9 +6,11 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.data.local.dao.CategoryDao
 import com.example.data.local.dao.EventLogDao
+import com.example.data.local.dao.MemoryParameterSetDao
 import com.example.data.local.dao.ReviewLogDao
 import com.example.data.local.dao.StudyUnitDao
 import com.example.data.local.entity.EventLogEntity
+import com.example.data.local.entity.MemoryParameterSetEntity
 import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.data.local.entity.SubjectEntity
@@ -21,8 +23,9 @@ import com.example.data.local.entity.SystemEntity
         StudyUnitEntity::class,
         ReviewLogEntity::class,
         EventLogEntity::class,
+        MemoryParameterSetEntity::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun studyUnitDao(): StudyUnitDao
     abstract fun reviewLogDao(): ReviewLogDao
     abstract fun eventLogDao(): EventLogDao
+    abstract fun memoryParameterSetDao(): MemoryParameterSetDao
 
     companion object {
         /**
@@ -135,8 +139,45 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 → v8 (additive, like every migration here): key points. study_units.keyPoints holds a
+         * topic's optional key points (NULL for every existing topic, so nothing about its review
+         * changes), and review_logs.keyPointsTotal/keyPointsRecalled record how a review scored against
+         * them, with the "not scored" sentinel (-1) for every existing row. No schedule moves.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE study_units ADD COLUMN keyPoints TEXT")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN keyPointsTotal INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN keyPointsRecalled INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
+        /**
+         * v8 → v9 (additive, like every migration here): the personal memory model. A new table records
+         * every attempt to fit FSRS-6 to the learner's own history and the sets that passed; study_units
+         * and review_logs gain parameterSetId, which is 0 — the published default weights — for every
+         * existing row, because that is exactly what computed them. No schedule moves.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `memory_parameter_sets` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `createdAt` INTEGER NOT NULL, " +
+                        "`status` TEXT NOT NULL, `weights` TEXT NOT NULL, `comparedWithSetId` INTEGER NOT NULL, " +
+                        "`availableReviews` INTEGER NOT NULL, `trainReviews` INTEGER NOT NULL, `testReviews` INTEGER NOT NULL, " +
+                        "`currentLogLoss` REAL NOT NULL, `candidateLogLoss` REAL NOT NULL, " +
+                        "`currentRmseBins` REAL NOT NULL, `candidateRmseBins` REAL NOT NULL, " +
+                        "`currentAuc` REAL NOT NULL, `candidateAuc` REAL NOT NULL, `zScore` REAL NOT NULL, " +
+                        "`activatedAt` INTEGER, `retiredAt` INTEGER)"
+                )
+                db.execSQL("ALTER TABLE study_units ADD COLUMN parameterSetId INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN parameterSetId INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** Every migration, in order — one list so no builder can forget the newest one. */
         val ALL_MIGRATIONS: Array<Migration>
-            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
     }
 }

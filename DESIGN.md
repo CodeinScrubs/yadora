@@ -372,6 +372,8 @@ decay w₂₀, and a trainable parameter only pays once trained, which needs tho
 On default weights FSRS-6 behaves near-identically to FSRS-5, while migrating would require
 keeping FSRS-5 alive anyway so existing logs still replay faithfully. Real cost, ~zero benefit
 at current data volume. Revisit if the review corpus ever gets large enough to fit parameters.
+(Superseded: FSRS-6 went live in 2026-09, and its weights are now fitted to each learner once their own
+later reviews show the fit predicts better — see "personal weight set" in CLAUDE.md.)
 
 **Rejected — merge by chronological replay** (user-confirmed; see CLAUDE.md).
 
@@ -387,7 +389,8 @@ sources. Its own recommendation is shadow-mode-only, so nothing turns on it.
   as successful recall, so misuse silently lengthens intervals. Cheap copy change, directly
   protects input quality.
 - **Recall anchors** (3–7 per topic) to stabilise what "remembering Appendicitis" means and vary
-  the retrieval cue, without flashcard-scale authoring.
+  the retrieval cue, without flashcard-scale authoring. IMPLEMENTED 2026-09 as optional key points
+  that are ticked after the reveal and cap the rating (DB v8; see CLAUDE.md).
 - **Capacity planning in MINUTES rather than topic count** — `reviewDurationMs` is already
   logged, so the data exists. The full min-cost planner in the document is over-engineered for
   this app; an EWMA per-topic cost plus a daily minute budget would capture most of the value.

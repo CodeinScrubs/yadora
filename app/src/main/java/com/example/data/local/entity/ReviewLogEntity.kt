@@ -55,4 +55,13 @@ data class ReviewLogEntity(
     // evidence accumulates, and a replay must reproduce the interval this review was actually given,
     // not re-decide it under today's estimate. -1.0 = recorded before v7 (replay treats it as 1.0).
     val calibrationScaleAtReview: Double = -1.0,
+    // Key-point scoring (added in DB v8): how many key points the topic showed at this review and how
+    // many the learner ticked as recalled. -1 = no key points were scored (none defined, a first
+    // check-in, or a row written before v8).
+    val keyPointsTotal: Int = -1,
+    val keyPointsRecalled: Int = -1,
+    // Which FSRS-6 weight set produced this review's prediction and interval (added in DB v9): 0 = the
+    // published defaults, as for every row written before personal sets existed. The calibration and
+    // the Progress card only pool rows of the set they describe.
+    val parameterSetId: Long = 0,
 )

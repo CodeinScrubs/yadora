@@ -28,12 +28,17 @@ object BackupManager {
     // policy snapshot (schedulerPolicyVersion/understandingFactorAtReview).
     // v6: study_units.understandingDueAt + memoryModel. Without these a restore would reset every
     // topic to FSRS-5 and drop its pending understanding repair — silently rewriting the schedule.
-    const val BACKUP_VERSION = 6
+    // v7: key points (study_units.keyPoints) and how each review scored against them
+    // (review_logs.keyPointsTotal/keyPointsRecalled).
+    // v8: the personal memory model — every fitted weight set (memoryParameterSets) and which set each
+    // topic and review belongs to (parameterSetId). Without them a restore would put every personal-set
+    // topic on weights the file no longer holds.
+    const val BACKUP_VERSION = 8
 
     // The user-preference keys worth carrying across devices (deliberately excludes transient state
     // like last_notif_shown_at).
     private val SETTINGS_STRING_KEYS = listOf("app_language", "theme_mode", "accent_color", "calendar_format", "exam_name")
-    private val SETTINGS_BOOL_KEYS = listOf("language_selected", "daily_reminder", "sound_enabled", "vibration_enabled", "alarm_enabled", "alarm_silenced")
+    private val SETTINGS_BOOL_KEYS = listOf("language_selected", "daily_reminder", "sound_enabled", "vibration_enabled", "alarm_enabled", "alarm_silenced", PersonalModelWorker.PREF_ENABLED)
     private val SETTINGS_INT_KEYS = listOf("reminder_hour", "reminder_minute")
     private val SETTINGS_FLOAT_KEYS = listOf("daily_review_limit", "desired_retention")
     private val SETTINGS_LONG_KEYS = listOf("exam_date")
@@ -49,7 +54,9 @@ object BackupManager {
         lateinit var units: List<StudyUnitEntity>
         lateinit var logs: List<ReviewLogEntity>
         lateinit var events: List<com.example.data.local.entity.EventLogEntity>
+        lateinit var parameterSets: List<com.example.data.local.entity.MemoryParameterSetEntity>
         db.withTransaction {
+            parameterSets = db.memoryParameterSetDao().getAll()
             subjects = db.categoryDao().getAllSubjectsOnce()
             systems = db.categoryDao().getAllSystemsOnce()
             units = db.studyUnitDao().getAllActiveOnce() +
@@ -91,6 +98,8 @@ object BackupManager {
                 put("deletedAt", u.deletedAt ?: JSONObject.NULL)
                 put("understandingDueAt", u.understandingDueAt ?: JSONObject.NULL)
                 put("memoryModel", u.memoryModel)
+                put("keyPoints", u.keyPoints ?: JSONObject.NULL)
+                put("parameterSetId", u.parameterSetId)
             })
         })
         root.put("reviewLogs", JSONArray().apply {
@@ -107,6 +116,19 @@ object BackupManager {
                 put("schedulerPolicyVersion", l.schedulerPolicyVersion)
                 put("understandingFactorAtReview", l.understandingFactorAtReview)
                 put("calibrationScaleAtReview", l.calibrationScaleAtReview)
+                put("keyPointsTotal", l.keyPointsTotal); put("keyPointsRecalled", l.keyPointsRecalled)
+                put("parameterSetId", l.parameterSetId)
+            })
+        })
+        root.put("memoryParameterSets", JSONArray().apply {
+            for (s in parameterSets) put(JSONObject().apply {
+                put("id", s.id); put("createdAt", s.createdAt); put("status", s.status); put("weights", s.weights)
+                put("comparedWithSetId", s.comparedWithSetId); put("availableReviews", s.availableReviews)
+                put("trainReviews", s.trainReviews); put("testReviews", s.testReviews)
+                put("currentLogLoss", s.currentLogLoss); put("candidateLogLoss", s.candidateLogLoss)
+                put("currentRmseBins", s.currentRmseBins); put("candidateRmseBins", s.candidateRmseBins)
+                put("currentAuc", s.currentAuc); put("candidateAuc", s.candidateAuc); put("zScore", s.zScore)
+                put("activatedAt", s.activatedAt ?: JSONObject.NULL); put("retiredAt", s.retiredAt ?: JSONObject.NULL)
             })
         })
         root.put("eventLogs", JSONArray().apply {
@@ -197,7 +219,48 @@ object BackupManager {
                 // definition. Falling back to the entity default would claim the same thing, but
                 // saying it explicitly keeps the intent obvious at the restore site.
                 memoryModel = o.optString("memoryModel", "FSRS-5").ifBlank { "FSRS-5" },
+                // Pre-v7 files have no key points; absent reads as none, the same as the migration.
+                keyPoints = o.strOrNull("keyPoints"),
+                // Pre-v8 files: everything was computed by the published defaults, set 0.
+                parameterSetId = o.optLong("parameterSetId", 0L),
             )
+        }
+        // The personal weight sets, validated like everything else: a set that ever scheduled must decode
+        // to 21 weights inside the reference bounds, or replaying the topics on it would be impossible.
+        val setsArr = root.optJSONArray("memoryParameterSets") ?: JSONArray()
+        val parameterSets = (0 until setsArr.length()).map { i ->
+            val o = setsArr.getJSONObject(i)
+            com.example.data.local.entity.MemoryParameterSetEntity(
+                id = o.optLong("id", 0L), createdAt = o.optLong("createdAt", 0L), status = o.optString("status", ""),
+                weights = o.optString("weights", ""), comparedWithSetId = o.optLong("comparedWithSetId", 0L),
+                availableReviews = o.optInt("availableReviews", 0), trainReviews = o.optInt("trainReviews", 0),
+                testReviews = o.optInt("testReviews", 0),
+                currentLogLoss = o.optDouble("currentLogLoss", -1.0), candidateLogLoss = o.optDouble("candidateLogLoss", -1.0),
+                currentRmseBins = o.optDouble("currentRmseBins", -1.0), candidateRmseBins = o.optDouble("candidateRmseBins", -1.0),
+                currentAuc = o.optDouble("currentAuc", -1.0), candidateAuc = o.optDouble("candidateAuc", -1.0),
+                zScore = o.optDouble("zScore", 0.0),
+                activatedAt = o.longOrNull("activatedAt"), retiredAt = o.longOrNull("retiredAt"),
+            )
+        }
+        require(parameterSets.all { it.id > 0 }) { "Damaged backup: memory model with invalid id" }
+        require(parameterSets.map { it.id }.toSet().size == parameterSets.size) { "Damaged backup: duplicate memory model ids" }
+        val statuses = setOf(
+            com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE,
+            com.example.data.local.entity.MemoryParameterSetEntity.RETIRED,
+            com.example.data.local.entity.MemoryParameterSetEntity.REJECTED,
+        )
+        require(parameterSets.all { it.status in statuses }) { "Damaged backup: memory model with invalid status" }
+        require(parameterSets.count { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE } <= 1) {
+            "Damaged backup: more than one active memory model"
+        }
+        val usableSetIds = parameterSets
+            .filter { it.status != com.example.data.local.entity.MemoryParameterSetEntity.REJECTED }
+            .onEach { s ->
+                require(com.example.domain.srs.Fsrs6Optimizer.decode(s.weights) != null) { "Damaged backup: memory model ${s.id} has invalid weights" }
+            }
+            .mapTo(HashSet()) { it.id } + 0L
+        units.forEachIndexed { i, u ->
+            require(u.parameterSetId in usableSetIds) { "Damaged backup: topic ${i + 1} references a missing memory model" }
         }
         // Whole-file preflight: reject structurally corrupt topics BEFORE any current data is deleted.
         val fileVersion = root.optInt("backupVersion", 1)
@@ -246,6 +309,14 @@ object BackupManager {
             require(memory in validMemory) { "Damaged backup: invalid memory rating '$memory' (log ${i + 1})" }
             require(understanding in validUnderstanding) { "Damaged backup: invalid understanding rating '$understanding' (log ${i + 1})" }
             require(unitRef in unitIds) { "Damaged backup: review log ${i + 1} references missing topic $unitRef" }
+            // A score is either absent (-1/-1) or a real count of ticked points out of at least one shown.
+            val kpTotal = o.optInt("keyPointsTotal", -1)
+            val kpRecalled = o.optInt("keyPointsRecalled", -1)
+            require((kpTotal == -1 && kpRecalled == -1) || (kpTotal >= 1 && kpRecalled in 0..kpTotal)) {
+                "Damaged backup: invalid key-point score $kpRecalled/$kpTotal (log ${i + 1})"
+            }
+            val logSetId = o.optLong("parameterSetId", 0L)
+            require(logSetId in usableSetIds) { "Damaged backup: review log ${i + 1} references a missing memory model" }
             ReviewLogEntity(
                 id = o.optLong("id", 0L), studyUnitId = unitRef,
                 reviewedAt = o.optLong("reviewedAt", System.currentTimeMillis()),
@@ -267,6 +338,9 @@ object BackupManager {
                 schedulerPolicyVersion = o.optString("schedulerPolicyVersion", ""),
                 understandingFactorAtReview = o.optDouble("understandingFactorAtReview", -1.0),
                 calibrationScaleAtReview = o.optDouble("calibrationScaleAtReview", -1.0),
+                keyPointsTotal = kpTotal,
+                keyPointsRecalled = kpRecalled,
+                parameterSetId = logSetId,
             )
         }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.
@@ -292,12 +366,16 @@ object BackupManager {
             db.studyUnitDao().deleteAllUnits()
             db.categoryDao().deleteAllSubjects()
             db.categoryDao().deleteAllSystems()
+            db.memoryParameterSetDao().deleteAll()
+            parameterSets.forEach { db.memoryParameterSetDao().insert(it) }
             subjects.forEach { db.categoryDao().insertSubject(it) }
             systems.forEach { db.categoryDao().insertSystem(it) }
             units.forEach { db.studyUnitDao().insertUnit(it) }
             logs.forEach { db.reviewLogDao().insertLog(it) }
             events.forEach { db.eventLogDao().insert(it) }
         }
+        // The scheduler must see the restored weight sets before anything schedules again.
+        runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }
 
         // Restore the study setup too (v3+ backups; older files simply have no settings object).
         // Language/theme apply fully on the next app start; the caller already re-arms the reminder.
@@ -366,7 +444,11 @@ object BackupManager {
             db.studyUnitDao().deleteAllUnits()
             db.categoryDao().deleteAllSubjects()
             db.categoryDao().deleteAllSystems()
+            // A personal memory model is fitted from the user's reviews: it is their data too.
+            db.memoryParameterSetDao().deleteAll()
         }
+        com.example.domain.srs.MedScheduler.knownParameterSets = emptyMap()
+        com.example.domain.srs.MedScheduler.activeParameterSet = com.example.domain.srs.MedScheduler.DEFAULT_PARAMETER_SET
         // Stop every scheduled reminder/alarm — there is nothing left to review.
         runCatching { com.example.notifications.NotificationScheduler.cancelReminder(context) }
         // Also take down any reminder ALREADY in the shade: its body lists real topic titles, so

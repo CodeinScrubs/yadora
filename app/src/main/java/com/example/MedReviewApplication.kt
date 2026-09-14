@@ -87,5 +87,18 @@ class MedReviewApplication : Application() {
                 ).build(),
             )
         }
+
+        // The personal memory model: once a day, when the battery is not low, refit FSRS-6 to this
+        // learner's own history if enough new evidence exists (PersonalModelWorker). KEEP, so a relaunch
+        // never restarts the day-long period.
+        runCatching {
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                com.example.data.PersonalModelWorker.UNIQUE_NAME,
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                androidx.work.PeriodicWorkRequestBuilder<com.example.data.PersonalModelWorker>(1, java.util.concurrent.TimeUnit.DAYS)
+                    .setConstraints(androidx.work.Constraints.Builder().setRequiresBatteryNotLow(true).build())
+                    .build(),
+            )
+        }
     }
 }
