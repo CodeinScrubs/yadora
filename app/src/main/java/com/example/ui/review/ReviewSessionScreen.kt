@@ -215,7 +215,7 @@ class ReviewViewModel(
                     }
                 } else {
                     val sharedPrefs = getApplication<android.app.Application>().getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-                    val limit = MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f).toInt())
+                    val limit = MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f))
                     val now = System.currentTimeMillis()
                     val units = repository.getDueUnits(cutoffTime).first()
                     dueUnits.clear()
@@ -270,7 +270,9 @@ class ReviewViewModel(
             }
             if (projected != null) { shown = projected; break }
         }
-        currentUnrepairedStreak = shown?.let { repository.unrepairedStreak(it.id) } ?: 0
+        // Read from the logs, as the commit reads it. An unreadable history degrades to "no streak" for
+        // the preview instead of crashing the session; the commit reads it again and fails loudly there.
+        currentUnrepairedStreak = shown?.let { runCatching { repository.unrepairedStreak(it.id) }.getOrDefault(0) } ?: 0
         _currentUnit.value = shown
         unitShownAt = System.currentTimeMillis()
         _currentUnit.value?.let { checkSplitSuggestion(it) } ?: run { splitSuggestion = false }
@@ -536,7 +538,8 @@ class ReviewViewModel(
 
     /**
      * "Not today" for the current topic: move it to tomorrow morning WITHOUT logging a review, so the
-     * FSRS memory state is untouched. It leaves today's queue and returns tomorrow.
+     * FSRS memory state is untouched. It leaves today's queue and returns tomorrow — or on its own date
+     * if that is later: a topic opened early from the Library is never pulled forward.
      */
     fun procrastinateCurrentUnit() {
         if (isProcessing) return
@@ -1144,7 +1147,9 @@ fun ReviewSessionScreen(
                             Button(
                                 onClick = {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    viewModel.rateCurrentUnit(selectedMemory!!, rating)
+                                    // Read at tap time, not composition time: a Back gesture in the same
+                                    // frame clears the choice before this button is gone, and `!!` crashed.
+                                    selectedMemory?.let { chosen -> viewModel.rateCurrentUnit(chosen, rating) }
                                 },
                                 enabled = !viewModel.isProcessing,
                                 modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),

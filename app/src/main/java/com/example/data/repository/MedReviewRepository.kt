@@ -75,6 +75,13 @@ class MedReviewRepository(
         studyUnitDao.updateUnit(unit)
     }
 
+    /**
+     * Run [block] as ONE database transaction. For read-modify-write edits that must not interleave
+     * with another writer — a review committing, a notification's "Not today" — between the read and
+     * the write. Nested transactions (e.g. [updateUnitReplayingHistory] inside it) join this one.
+     */
+    suspend fun <R> inTransaction(block: suspend () -> R): R = database.withTransaction(block)
+
     /** Update a batch atomically — a crash mid-way must not leave a half-applied recovery plan. */
     suspend fun updateUnitsAtomic(units: List<StudyUnitEntity>) {
         database.withTransaction {
@@ -452,6 +459,11 @@ class MedReviewRepository(
     suspend fun procrastinateUnit(id: Long, until: Long) {
         database.withTransaction {
             val unit = studyUnitDao.getUnitById(id) ?: return@withTransaction
+            // "Not today" means LATER, never sooner. The Library's review-now opens a topic weeks
+            // before its date, and writing [until] unconditionally pulled a topic due in a month
+            // forward to tomorrow — and recorded that as the user's own choice. A topic not due
+            // before [until] is left exactly as it is, with no deferral and no event.
+            if (unit.nextReviewAt >= until) return@withTransaction
             studyUnitDao.updateUnit(
                 unit.copy(nextReviewAt = until, deferredUntil = until, updatedAt = System.currentTimeMillis())
             )
@@ -523,6 +535,15 @@ class MedReviewRepository(
         val logs = reviewLogDao.getLogsForUnit(unitId).first()
             .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
         if (logs.isEmpty()) return
+
+        // A correction is a NEW scheduling decision, so it uses the per-user calibration as it stands
+        // now, read from the logs like every other path that schedules. It used to use whatever
+        // MedScheduler.calibrationScale held — 1.0 until a review session had run in this process — so
+        // a correction made straight after launching the app ignored the learned correction. A pure
+        // replay (logId = -1) decides nothing new: every row keeps the scale it recorded.
+        if (logId != -1L) {
+            runCatching { MedScheduler.calibrationScale = recallCalibrationScale() }
+        }
 
         // Seed the replay from the SAME state AddUnit wrote (firstStudy Partial), so a back-dated
         // topic's first review (which builds on this seed via nextState) replays exactly like the live
@@ -706,7 +727,10 @@ class MedReviewRepository(
                         else histFactor ?: MedScheduler.understandingFactor(und),
                     // The edited row records today's scale, the one it was just scheduled with; an
                     // untouched row keeps whatever it recorded (copy() preserves the sentinel too).
-                    calibrationScaleAtReview = if (log.id == logId) MedScheduler.calibrationScale else log.calibrationScaleAtReview,
+                    // FSRS-5 is frozen and never scaled, so a corrected row on it records "no correction".
+                    calibrationScaleAtReview = if (log.id != logId) log.calibrationScaleAtReview
+                        else if (replayModel == MedScheduler.MemoryModel.FSRS_6) MedScheduler.calibrationScale
+                        else 1.0,
                 )
             )
 

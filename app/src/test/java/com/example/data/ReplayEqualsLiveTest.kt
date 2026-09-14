@@ -145,7 +145,8 @@ class ReplayEqualsLiveTest {
     /**
      * DB v7: every log records the calibration scale it was scheduled with. When the scale later
      * moves, a replay must reproduce each untouched review's interval from ITS scale, and only the
-     * row being corrected — a new decision — takes today's.
+     * row being corrected — a new decision — takes the scale the logs support now (never a stale
+     * value left in memory).
      */
     @Test
     fun `a moved calibration scale never rewrites the intervals of untouched reviews`() = runBlocking {
@@ -163,12 +164,28 @@ class ReplayEqualsLiveTest {
             val liveLogs = db.reviewLogDao().getLogsForUnitOnce(unitId)
             assertTrue("every live log recorded the scale", liveLogs.all { it.calibrationScaleAtReview == 0.8 })
 
-            MedScheduler.calibrationScale = 1.25
+            // The evidence moves on: 200 on-schedule reviews elsewhere, all recalled at a predicted 90%.
+            val otherId = repo.insertUnit(newUnit("Evidence", now - 400 * day))
+            for (i in 0 until 200) {
+                db.reviewLogDao().insertLog(
+                    ReviewLogEntity(
+                        studyUnitId = otherId, reviewedAt = now - 300 * day + i * 60_000L,
+                        memoryRating = "Good", understandingRating = "Clear",
+                        previousIntervalDays = 10.0, nextIntervalDays = 10.0, previousState = "Building", nextState = "Building",
+                        retrievabilityAtReview = 0.9, elapsedDays = 10.0, logType = "RECALL",
+                        schedulerVersion = MedScheduler.CURRENT_MODEL.id,
+                    )
+                )
+            }
+            val learned = repo.recallCalibrationScale()
+            assertTrue("the scale really moved ($learned)", Math.abs(learned - 0.8) > 0.1 && Math.abs(learned - 1.25) > 0.1)
+
+            MedScheduler.calibrationScale = 1.25 // a stale value in memory, which the correction must not use
             repo.editReviewRating(unitId, firstLogId, MemoryRating.Good, UnderstandingRating.Clear) // no-op rating, new scale
             val replayed = repo.getUnitById(unitId)!!
             val replayedLogs = db.reviewLogDao().getLogsForUnitOnce(unitId)
 
-            assertEquals("the corrected row took today's scale", 1.25, replayedLogs[0].calibrationScaleAtReview, 0.0)
+            assertEquals("the corrected row took the scale the logs support now", learned, replayedLogs[0].calibrationScaleAtReview, 1e-12)
             assertTrue("and its interval moved with it",
                 Math.abs(replayedLogs[0].nextIntervalDays - liveLogs[0].nextIntervalDays) > 1e-6)
             for (i in 1 until liveLogs.size) {
@@ -610,6 +627,76 @@ class ReplayEqualsLiveTest {
         org.junit.Assert.assertTrue(
             "audit event written atomically with the deferral",
             db.eventLogDao().getAll().any { it.type == "PROCRASTINATE" && it.unitId == unitId })
+    }
+
+    /**
+     * The Library's review-now opens topics that are not due. "Not today" there used to write tomorrow
+     * morning unconditionally, pulling a topic due in a month forward and recording it as a deferral.
+     */
+    @Test
+    fun `not today never pulls a topic forward`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val dueLater = now + 30 * day
+        val unitId = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Sarcoidosis", studyType = "Pathology",
+                stability = 30.0, difficulty = 5.0, retrievability = 1.0, state = "Strong",
+                studiedAt = now - 60 * day, lastReviewedAt = now - day, nextReviewAt = dueLater, modelDueAt = dueLater,
+                currentIntervalDays = 31.0, reviewCount = 4, lapseCount = 0, memoryModel = MedScheduler.CURRENT_MODEL.id,
+            )
+        )
+        repo.procrastinateUnit(unitId, now + day)
+        val after = repo.getUnitById(unitId)!!
+
+        assertEquals("due date unchanged", dueLater, after.nextReviewAt)
+        assertEquals("no deferral recorded", null, after.deferredUntil)
+        assertEquals("model date unchanged", dueLater, after.modelDueAt)
+        assertTrue("no deferral event either",
+            db.eventLogDao().getAll().none { it.type == "PROCRASTINATE" && it.unitId == unitId })
+    }
+
+    /**
+     * A rating correction is a new scheduling decision. It must use the learned calibration even when
+     * no review session has run in this process, where MedScheduler.calibrationScale is still 1.0.
+     */
+    @Test
+    fun `a rating correction uses the learned calibration straight after launch`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val before = MedScheduler.calibrationScale
+        try {
+            // Evidence that this learner forgets faster than the defaults: 200 on-schedule reviews
+            // predicted at 90%, 85% recalled, on another topic.
+            val otherId = repo.insertUnit(newUnit("Evidence", now - 400 * day))
+            for (i in 0 until 200) {
+                db.reviewLogDao().insertLog(
+                    ReviewLogEntity(
+                        studyUnitId = otherId, reviewedAt = now - 300 * day + i * 60_000L,
+                        memoryRating = if (i < 170) "Good" else "Forgot",
+                        understandingRating = if (i < 170) "Clear" else "NotAsked",
+                        previousIntervalDays = 10.0, nextIntervalDays = 10.0, previousState = "Building", nextState = "Building",
+                        retrievabilityAtReview = 0.9, elapsedDays = 10.0, logType = "RECALL",
+                        schedulerVersion = MedScheduler.CURRENT_MODEL.id,
+                    )
+                )
+            }
+            val learned = repo.recallCalibrationScale()
+            assertTrue("the evidence implies a correction ($learned)", learned < 0.9)
+
+            MedScheduler.calibrationScale = 1.0 // a fresh process: nothing has refreshed it yet
+            val studiedAt = now - 40 * day
+            val unitId = repo.insertUnit(newUnit("Cholangitis", studiedAt))
+            liveReview(unitId, studiedAt, MemoryRating.Good, UnderstandingRating.Clear)
+            val logId = liveReview(unitId, studiedAt + 2 * day, MemoryRating.Good, UnderstandingRating.Clear)
+            MedScheduler.calibrationScale = 1.0
+
+            repo.editReviewRating(unitId, logId, MemoryRating.Good, UnderstandingRating.Clear)
+            val edited = db.reviewLogDao().getLogsForUnitOnce(unitId).first { it.id == logId }
+            assertEquals("the corrected row was scheduled with the learned scale", learned, edited.calibrationScaleAtReview, 1e-12)
+        } finally {
+            MedScheduler.calibrationScale = before
+        }
     }
 
     @Test

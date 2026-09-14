@@ -88,6 +88,31 @@ class RecallCalibrationEvidenceTest {
         assertTrue("qualifying successes raise it back", repo.recallCalibrationScale() > withFailures)
     }
 
+    /** The rule lives twice — SQL for the scheduler, Kotlin for the Progress card — so the two are pinned together. */
+    @Test
+    fun `the SQL evidence query and RecallCalibration_isEvidence keep the same rows`() = runBlocking {
+        var at = 1_000L
+        for (elapsed in listOf(0.0, 1.0, 2.0, 2.9, 3.0, 4.0, 5.0, 10.0, 20.0, 40.0)) {
+            for (previous in listOf(0.0, 1.0, 3.0, 5.99, 6.0, 8.0, 20.0, 40.0, 80.0)) {
+                log(at = at, recalled = at % 3L != 0L, elapsed = elapsed, previousInterval = previous)
+                at++
+            }
+        }
+        val kotlinRows = db.reviewLogDao().getAllLogsOnce()
+            .filter { RecallCalibration.isEvidence(it.elapsedDays, it.previousIntervalDays) }
+        val sqlRows = db.reviewLogDao().getRecentRecallLogsOnce(
+            MedScheduler.CURRENT_MODEL.id, RecallCalibration.MIN_ELAPSED_DAYS, RecallCalibration.EARLY_REVIEW_FRACTION,
+            RecallCalibration.WINDOW,
+        )
+        assertTrue("the grid exercises both outcomes", kotlinRows.isNotEmpty() && kotlinRows.size < 90)
+        assertEquals("the same rows", kotlinRows.map { it.id }.toSet(), sqlRows.map { it.id }.toSet())
+        val expected = RecallCalibration.scale(
+            kotlinRows.map { it.retrievabilityAtReview }.toDoubleArray(),
+            kotlinRows.map { it.memoryRating != "Forgot" }.toBooleanArray(),
+        )
+        assertEquals("and the same estimate", expected, repo.recallCalibrationScale(), 1e-12)
+    }
+
     @Test
     fun `only the most recent window is read`() = runBlocking {
         // Old failures beyond the window, then a full window of successes: the failures must age out.

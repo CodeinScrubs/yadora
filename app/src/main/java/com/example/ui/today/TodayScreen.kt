@@ -142,7 +142,7 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             // schedule they cannot execute, which teaches them the dates are not to be trusted.
             val capacity = com.example.domain.srs.MedScheduler.safeDailyLimit(
                 context.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-                    .getFloat("daily_review_limit", 50f).toInt()
+                    .getFloat("daily_review_limit", 50f)
             )
             val updated = prioritized.mapIndexed { index, unit ->
                 val target = OverdueRedistributor.targetMillis(
@@ -269,11 +269,11 @@ fun TodayScreen(
     val ctxForLimit = androidx.compose.ui.platform.LocalContext.current
     // Live-read the limit so changing it in Settings reflects here without needing an app restart.
     val dailyLimit by androidx.compose.runtime.produceState(
-        initialValue = com.example.domain.srs.MedScheduler.safeDailyLimit(ctxForLimit.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE).getFloat("daily_review_limit", 50f).toInt())
+        initialValue = com.example.domain.srs.MedScheduler.safeDailyLimit(ctxForLimit.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE).getFloat("daily_review_limit", 50f))
     ) {
         val sp = ctxForLimit.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
-            if (key == "daily_review_limit") value = com.example.domain.srs.MedScheduler.safeDailyLimit(prefs.getFloat("daily_review_limit", 50f).toInt())
+            if (key == "daily_review_limit") value = com.example.domain.srs.MedScheduler.safeDailyLimit(prefs.getFloat("daily_review_limit", 50f))
         }
         sp.registerOnSharedPreferenceChangeListener(listener)
         awaitDispose { sp.unregisterOnSharedPreferenceChangeListener(listener) }

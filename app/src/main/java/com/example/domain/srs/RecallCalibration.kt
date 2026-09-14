@@ -60,12 +60,26 @@ object RecallCalibration {
     /**
      * A review that happened before this fraction of its memory interval had passed was not the
      * memory clock's doing — an understanding repair deadline or an on-demand review from the
-     * Library brought it forward — and it is left out of the evidence. Such reviews sit at a
-     * predicted recall of ~0.97+, where an outcome says almost nothing about the curve, and they
-     * are a selected set (topics the learner was unsure of, or chose to drill), so what little they
-     * say is biased. The estimate is meant to describe the memory model on the reviews it scheduled.
+     * Library brought it forward — and it is left out of the evidence. At a 90% target such a review
+     * sits above ~0.94 predicted recall, where an outcome carries a fraction of an on-time review's
+     * information, and they are a selected set (topics the learner was unsure of, or chose to drill).
+     *
+     * Backed-off repairs that land later than half the interval DO pass, and that is accepted. A
+     * stricter rule ("not before the due day") was simulated over two years: no measurable gain, and
+     * a noisier estimate for an average learner (0.67–1.74 against 0.76–1.25). Raising this fraction
+     * to 0.8 would be wrong too: an on-time review of a 3.99-day interval happens 3 whole calendar
+     * days later (0.75), so on-time reviews would be dropped while late repairs still passed.
      */
     const val EARLY_REVIEW_FRACTION = 0.5
+
+    /**
+     * Whether a recall review may teach the calibration anything, from what its log stores: at least
+     * [MIN_ELAPSED_DAYS] after the previous review, and at least [EARLY_REVIEW_FRACTION] of the memory
+     * interval that review set. `ReviewLogDao.getRecentRecallLogsOnce` states the same rule in SQL;
+     * RecallCalibrationEvidenceTest pins the two together, and the Progress card uses this one.
+     */
+    fun isEvidence(elapsedDays: Double, previousIntervalDays: Double): Boolean =
+        elapsedDays >= MIN_ELAPSED_DAYS && elapsedDays >= EARLY_REVIEW_FRACTION * previousIntervalDays
 
     /** Beyond these the model is simply wrong for this learner in a way one scale cannot express. */
     const val MIN_SCALE = 0.5

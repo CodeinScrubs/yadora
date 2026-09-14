@@ -779,11 +779,13 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(strings.dailyReviewLimit, style = MaterialTheme.typography.bodyLarge)
-                    Text(if (language == "fa") com.example.ui.i18n.PersianDate.faDigits(limit.toInt()) else "${limit.toInt()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                    Text(if (language == "fa") com.example.ui.i18n.PersianDate.faDigits(Math.round(limit)) else "${Math.round(limit)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 }
                 Slider(
                     value = limit,
-                    onValueChange = { value -> limit = value },
+                    // Stored as the whole number shown. The slider interpolates in Float, so the 70 and
+                    // 130 stops arrive as 69.99999 and 129.99998, which truncation turned into 69 and 129.
+                    onValueChange = { value -> limit = Math.round(value).toFloat() },
                     onValueChangeFinished = {
                         // Persist once when the drag settles, not on every pixel frame.
                         sharedPrefs.edit { putFloat("daily_review_limit", limit) }
@@ -939,13 +941,16 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(if (language == "fa") "احتمال به‌خاطرسپاری هدف" else if (language == "de") "Ziel-Erinnerungsquote" else "Target recall", style = MaterialTheme.typography.bodyLarge)
-                    Text(if (language == "fa") "٪${com.example.ui.i18n.PersianDate.faDigits((retention * 100).toInt())}" else "${(retention * 100).toInt()}%", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                    Text(if (language == "fa") "٪${com.example.ui.i18n.PersianDate.faDigits(Math.round(retention * 100))}" else "${Math.round(retention * 100)}%", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                 }
                 Slider(
                     value = retention,
                     onValueChange = {
-                        retention = it
-                        MedScheduler.userRetention = it.toDouble()
+                        // Snapped to the whole percent the label shows: the slider interpolates in Float,
+                        // so a stop can land a hair below its value (under the old range 92% arrived as
+                        // 0.9199999 and was shown as 91%).
+                        retention = Math.round(it * 100) / 100f
+                        MedScheduler.userRetention = retention.toDouble()
                     },
                     onValueChangeFinished = {
                         sharedPrefs.edit { putFloat("desired_retention", retention) }

@@ -33,6 +33,7 @@ import com.example.ui.theme.HighYieldOrange
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import java.util.Calendar
 
@@ -86,10 +87,15 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0f)
 
+    // ONE query feeds every log-derived card below. Each used to run its own getLogsSince(0L), so
+    // opening this screen read the whole review history four times, and four times again per write.
+    private val allLogs = repository.getLogsSince(0L)
+        .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
+
     // Counted from all logs with a FRESH 7-day window each emission, so it can't go stale overnight.
     // FIRST_STUDY rows are difficulty check-ins, not recall reviews — excluded so the count means
     // "reviews done", consistent with the retention chart (which also excludes them).
-    val reviewsLast7Days = repository.getLogsSince(0L)
+    val reviewsLast7Days = allLogs
         .map { logs ->
             val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
             logs.count { it.reviewedAt >= cutoff && it.logType != "FIRST_STUDY" }
@@ -97,7 +103,7 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
         
     // Null = not enough data yet (the UI shows an honest "no data" state instead of a fake-perfect line).
-    val retentionChartData = repository.getLogsSince(0L)
+    val retentionChartData = allLogs
         .map { list ->
             // DST-aware local day index (not raw UTC), so reviews land on the user's actual calendar day.
             fun localDay(ms: Long): Int = ((ms + java.util.TimeZone.getDefault().getOffset(ms)) / (1000L * 60 * 60 * 24)).toInt()
@@ -133,7 +139,7 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    val consistencyChartData = repository.getLogsSince(0L)
+    val consistencyChartData = allLogs
         .map { list ->
             fun localDay(ms: Long): Int = ((ms + java.util.TimeZone.getDefault().getOffset(ms)) / (1000L * 60 * 60 * 24)).toInt()
             val counts = mutableMapOf<Int, Int>()
@@ -176,50 +182,12 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
         val scale: Double,
     )
 
-    // Only real recall events count: first-study rows (elapsed < 1 day with R≈1) and pre-v2 rows
-    // (sentinel -1) are excluded so the comparison is honest — predicted R vs "did it come back?".
-    //
-    // Scoped to the model that is scheduling the user RIGHT NOW. Each log stores the R predicted by
-    // whichever model was live at the time, and FSRS-5 and FSRS-6 fit different curves — pooling them
-    // would average two forgetting curves and report an accuracy belonging to neither. Right after a
-    // model change that means the card goes quiet until enough new evidence exists, which is the
-    // honest answer: nothing is yet known about how well the current model predicts THIS user.
-    // MemoryModel.of() fails safe to FSRS-5, so a log of unknown provenance is never miscredited.
-    val calibrationStats = repository.getLogsSince(0L)
-        .map { logs ->
-            val recallLogs = logs.filter {
-                it.retrievabilityAtReview in 0.0..1.0 && it.elapsedDays >= 1.0 && it.logType != "FIRST_STUDY" &&
-                    com.example.domain.srs.MedScheduler.MemoryModel.of(it.schedulerVersion) ==
-                    com.example.domain.srs.MedScheduler.CURRENT_MODEL
-            }
-            if (recallLogs.size < 10) return@map null // too little data to be meaningful
-            // The same estimate the scheduler runs on: the last RecallCalibration.WINDOW recall
-            // reviews at least MIN_ELAPSED_DAYS apart (getLogsSince is ascending, so the tail is the
-            // newest), shrunk and clamped. The card's own n/predicted/actual keep every recall row.
-            val evidence = recallLogs
-                .filter {
-                    it.elapsedDays >= com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS &&
-                        it.elapsedDays >= com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION * it.previousIntervalDays
-                }
-                .takeLast(com.example.domain.srs.RecallCalibration.WINDOW)
-            val scale = com.example.domain.srs.RecallCalibration.scale(
-                evidence.map { it.retrievabilityAtReview }.toDoubleArray(),
-                evidence.map { it.memoryRating != "Forgot" }.toBooleanArray(),
-            )
-            // "Predicted" is what the model says AFTER its per-user correction — the prediction the
-            // schedule actually acts on — so the card keeps describing the scheduler in force.
-            val predicted = recallLogs.sumOf {
-                com.example.domain.srs.RecallCalibration.recalibrated(it.retrievabilityAtReview, scale)
-            } / recallLogs.size
-            val actual = recallLogs.count { it.memoryRating != "Forgot" }.toDouble() / recallLogs.size
-            CalibrationStats(
-                n = recallLogs.size,
-                predictedPct = Math.round(predicted * 100).toInt(),
-                actualPct = Math.round(actual * 100).toInt(),
-                model = com.example.domain.srs.MedScheduler.CURRENT_MODEL.id,
-                scale = scale,
-            )
-        }
+    // The calibration card. calibrationStatsOf explains why its numbers come from the calibration's
+    // own evidence rows and compare the DEFAULT model's predictions with what happened. Right after a
+    // model change the card goes quiet until ten new reviews exist: nothing is yet known about how
+    // well the current model predicts THIS user.
+    val calibrationStats = allLogs
+        .map { logs -> calibrationStatsOf(logs) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 }
 
@@ -544,7 +512,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
             
             val limitContext = LocalContext.current
             val sharedPrefs = remember { limitContext.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE) }
-            val limitValue = com.example.domain.srs.MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f).toInt())
+            val limitValue = com.example.domain.srs.MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f))
             
             val todayCalendar = Calendar.getInstance().apply {
                 set(Calendar.HOUR_OF_DAY, 0)

@@ -103,7 +103,7 @@ object AnalyticsExporter {
 
         root.put("settings", JSONObject().apply {
             put("language", sp.getString("app_language", "en"))
-            put("dailyReviewLimit", sp.getFloat("daily_review_limit", 50f).toInt())
+            put("dailyReviewLimit", com.example.domain.srs.MedScheduler.safeDailyLimit(sp.getFloat("daily_review_limit", 50f)))
             put("reminderHour", sp.getInt("reminder_hour", 20))
             put("reminderMinute", sp.getInt("reminder_minute", 0))
             // The retention actually in force is the USER setting (+0.03 for important topics) —

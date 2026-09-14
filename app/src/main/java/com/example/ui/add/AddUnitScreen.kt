@@ -126,66 +126,70 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
             // so the Save button never stays stuck disabled.
             val ok = try {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                // If the row hasn't landed yet but we KNOW we're editing, fetch it rather than
-                // falling through to the insert branch and forking a duplicate.
-                val current = existingUnit ?: editingUnitId?.let { repository.getUnitById(it) }
-                if (current != null) {
-                    val newStudiedAt = studiedAt ?: current.studiedAt
-                    val newNext = nextReviewAt ?: current.nextReviewAt
-                    // A MANUAL next-date change is a user deferral (v5): record it in deferredUntil and
-                    // leave the model's own opinion (modelDueAt) untouched.
-                    val manualDateChange = newNext != current.nextReviewAt
-                    var updated = current.copy(
-                        title = title,
-                        subjectId = subjectId,
-                        systemId = systemId,
-                        studyType = studyType,
-                        recallPrompt = prompt.ifBlank { null },
-                        notes = notes,
-                        source = source,
-                        highYield = highYield,
-                        studiedAt = newStudiedAt,
-                        lastReviewedAt = current.lastReviewedAt,
-                        nextReviewAt = newNext,
-                        deferredUntil = if (manualDateChange) newNext else current.deferredUntil,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                    // Turning IMPORTANT ON responds immediately (#15): recompute the current interval
-                    // under the tighter retention target from the stored memory state, never later than
-                    // what was already scheduled. A subsequent history edit recomputes from the logs
-                    // (which store per-review importance), so this is a one-time convenience reschedule.
-                    if (highYield && !current.highYield && current.reviewCount > 0 && !manualDateChange && current.lastReviewedAt != null) {
-                        // The per-user interval correction, refreshed from the logs on this same
-                        // coroutine right before it is used — the review session does the same.
-                        runCatching { MedScheduler.calibrationScale = repository.recallCalibrationScale() }
-                        // Through the topic's OWN model: a stored stability only means something
-                        // together with the model that produced it, and re-deriving the interval on
-                        // the wrong curve would set a date the next real review then disagrees with.
-                        val tighter = MedScheduler.scheduledIntervalDays(
-                            current.stability,
-                            MedScheduler.effectiveRetention(true),
-                            MedScheduler.MemoryModel.of(current.memoryModel),
-                        ).coerceIn(1.0, 365.0)
-                        val tighterNext = current.lastReviewedAt!! + (tighter * 86400000).toLong()
-                        if (tighterNext < updated.nextReviewAt) {
-                            updated = updated.copy(
-                                nextReviewAt = tighterNext,
-                                modelDueAt = tighterNext,
-                                // The model reclaimed the schedule — a stale deferral marker would
-                                // make this honest-scheduling data lie about who chose the date.
-                                deferredUntil = null,
-                                currentIntervalDays = tighter,
-                            )
+                val editingId = editingUnitId
+                if (editingId != null) {
+                    // Read-modify-write in ONE transaction against the row as it is NOW (TopicEdit): the
+                    // form was filled when this screen opened, and a review, a "Not today" or a rating
+                    // correction may have written the row since. Saving the loaded copy undid them.
+                    val found = repository.inTransaction {
+                        val fresh = repository.getUnitById(editingId) ?: return@inTransaction false
+                        // The row the form was filled from. If Save beat the load (process death restored
+                        // the form before the row arrived), the fresh row is the only baseline there is.
+                        val loaded = existingUnit?.takeIf { it.id == editingId } ?: fresh
+                        val plan = TopicEdit.plan(
+                            loaded = loaded,
+                            fresh = fresh,
+                            form = TopicEdit.Form(
+                                title = title, subjectId = subjectId, systemId = systemId, studyType = studyType,
+                                recallPrompt = prompt.ifBlank { null }, notes = notes, source = source,
+                                highYield = highYield, studiedAt = studiedAt, nextReviewAt = nextReviewAt,
+                            ),
+                            now = System.currentTimeMillis(),
+                        )
+                        var updated = plan.updated
+                        // Turning IMPORTANT ON responds immediately (#15): recompute the current interval
+                        // under the tighter retention target from the stored memory state, never later than
+                        // what was already scheduled. A subsequent history edit recomputes from the logs
+                        // (which store per-review importance), so this is a one-time convenience reschedule.
+                        val lastReviewedAt = fresh.lastReviewedAt
+                        if (plan.tightenForImportant && lastReviewedAt != null) {
+                            // The per-user interval correction, refreshed from the logs right before it is
+                            // used — the review session and a rating correction do the same.
+                            runCatching { MedScheduler.calibrationScale = repository.recallCalibrationScale() }
+                            // Through the topic's OWN model: a stored stability only means something
+                            // together with the model that produced it, and re-deriving the interval on
+                            // the wrong curve would set a date the next real review then disagrees with.
+                            val tighter = MedScheduler.scheduledIntervalDays(
+                                fresh.stability,
+                                MedScheduler.effectiveRetention(true),
+                                MedScheduler.MemoryModel.of(fresh.memoryModel),
+                            ).coerceIn(MedScheduler.MIN_INTERVAL_DAYS, MedScheduler.MAX_INTERVAL_DAYS)
+                            val tighterNext = lastReviewedAt + (tighter * 86400000).toLong()
+                            if (tighterNext < updated.nextReviewAt) {
+                                updated = updated.copy(
+                                    nextReviewAt = tighterNext,
+                                    modelDueAt = tighterNext,
+                                    // The model reclaimed the schedule — a stale deferral marker would
+                                    // make this honest-scheduling data lie about who chose the date.
+                                    deferredUntil = null,
+                                    currentIntervalDays = tighter,
+                                )
+                            }
                         }
+                        // The study date is the replay origin: when it moves, the schedule is recomputed
+                        // from it atomically with the edit — the whole history of a rated topic, the due
+                        // date of an unrated one. Unrated topics used to skip this, so moving their study
+                        // date in this form left them due on the old day.
+                        if (plan.studyDateChanged) {
+                            repository.updateUnitReplayingHistory(updated)
+                        } else {
+                            repository.updateUnit(updated)
+                        }
+                        true
                     }
-                    // The study date is the replay origin: if it moved and real reviews exist, the
-                    // whole history is recomputed from the new origin, atomically with the edit —
-                    // this is what backs the "recalculates this topic's review history" caption.
-                    if (newStudiedAt != current.studiedAt && current.reviewCount > 0) {
-                        repository.updateUnitReplayingHistory(updated)
-                    } else {
-                        repository.updateUnit(updated)
-                    }
+                    // Never fall through to an insert for a topic this screen was editing: that would fork
+                    // a copy of a topic that has since been deleted or replaced by a restore.
+                    check(found) { "topic $editingId no longer exists" }
                 } else {
                     // First study: seed the FSRS memory state from the student's self-rated confidence.
                     // Seed a neutral starting state; the first rating in the review screen re-seeds the

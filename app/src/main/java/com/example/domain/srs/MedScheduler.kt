@@ -79,8 +79,8 @@ object MedScheduler {
      * It scales the INTERVAL only, never the stored state: the memory model keeps its own
      * arithmetic, and the correction is equivalent to a per-user retention adjustment. Each review
      * log records the scale in force, so replay reproduces the interval a past review was given.
-     * Recomputed at app start and at the start of every review session; 1.0 until enough reviews
-     * exist to say anything.
+     * Refreshed from the logs right before anything schedules with it — the start of a review session,
+     * the Important toggle's reschedule, a rating correction — and 1.0 until evidence exists.
      */
     @Volatile
     var calibrationScale: Double = 1.0
@@ -272,6 +272,19 @@ object MedScheduler {
      * on a negative count. A bad setting must degrade to a sane queue, never crash reviewing.
      */
     fun safeDailyLimit(raw: Int): Int = raw.coerceIn(1, 500)
+
+    /** The daily limit when nothing sane is stored. */
+    const val DEFAULT_DAILY_LIMIT = 50
+
+    /**
+     * The daily limit as Settings stores it — a Float from a stepped Slider — read as the whole number
+     * the user picked. Compose's slider interpolates in Float, so its 70 and 130 stops were stored as
+     * 69.99999 and 129.99998, and truncating with toInt() made those limits 69 and 129 in the queue,
+     * the Today count and the backlog plan. Rounded instead; a non-finite value degrades to the default
+     * like any other corrupt setting.
+     */
+    fun safeDailyLimit(stored: Float): Int =
+        safeDailyLimit(if (stored.isFinite()) Math.round(stored) else DEFAULT_DAILY_LIMIT)
 
     /**
      * The retention target actually in force for an item, logged per review for later tuning.
