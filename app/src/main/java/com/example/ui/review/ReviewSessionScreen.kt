@@ -334,9 +334,9 @@ class ReviewViewModel(
         val core = when {
             firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
             memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else if (de) "Vergessen — morgen kommt es zum Neulernen zurück." else "Forgot — it's back tomorrow to relearn."
-            memory == MemoryRating.Hard -> if (fa) "سخت بود، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es war schwer, also blieb der Abstand kurz — nächste $days." else "It felt hard, so the gap stayed short — next $days."
+            memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es gab Lücken, also blieb der Abstand kurz — nächste $days." else "There were gaps, so it comes back soon — next $days."
             memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — weiter hinausgeschoben, nächste $days." else "Easy — pushed out, next $days."
-            else -> if (fa) "خوب به یاد آوردی — مرور بعدی $days." else if (de) "Gut erinnert — nächste $days." else "Recalled well — next $days."
+            else -> if (fa) "خوب یادت مانده بود — مرور بعدی $days." else if (de) "Gut behalten — nächste $days." else "Remembered well — next $days."
         }
         // When the understanding clock wins, name the memory estimate too. "A bit sooner" alone hid
         // how far apart the two can be — a 100-day memory prediction with a 3-day repair is not
@@ -1166,7 +1166,8 @@ fun ReviewSessionScreen(
                     }
                 } else {
                     Text(
-                        if (isFreshFirstStudy) strings.understandingRating else strings.understandingNowQuestion,
+                        // Asked after a first study and after a review alike: understanding is about now.
+                        strings.understandingNowQuestion,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
