@@ -160,10 +160,14 @@ class ReviewReminderReceiver : BroadcastReceiver() {
         }
     }
 
-    /** Count of units actually due by the END OF TODAY (not the next 24h). */
+    /**
+     * How many topics today's plan still offers (DailyPlan): every first rating, plus the reviews left
+     * under the daily limit. Not the raw due count — once the day's limit is done the reminder stops
+     * nagging about reviews Today itself says are held for tomorrow.
+     */
     private fun dueCountToday(context: Context): Int {
         val app = context.applicationContext as? com.example.MedReviewApplication ?: return 0
-        return runBlocking { app.database.studyUnitDao().getDueCount(endOfToday()) }
+        return runBlocking { app.todayPlan().size }
     }
 
     private fun endOfToday(): Long = Calendar.getInstance().apply {

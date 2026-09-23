@@ -60,11 +60,8 @@ class ReminderSafetyWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
         }
 
         val app = ctx as? com.example.MedReviewApplication ?: return Result.success()
-        val endOfToday = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
-        }.timeInMillis
-        if (app.database.studyUnitDao().getDueCount(endOfToday) > 0) {
+        // Today's plan, not the raw due count: nothing to nag about once the daily limit is done.
+        if (app.todayPlan().size > 0) {
             NotificationScheduler.showReviewNotification(ctx, source = "safety_worker")
         }
         return Result.success()

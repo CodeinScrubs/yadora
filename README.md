@@ -2,7 +2,7 @@
 
 A spaced-review **topic scheduler** for students (Persian: یادورا) — Android, Kotlin + Jetpack Compose, fully offline, no account or backend.
 
-You log a topic after studying it. On its study date, Yadora asks how difficult it was and how well you understood it; later reviews ask how well you recalled it. An **FSRS-6** memory model — conformance-tested against the reference implementation, py-fsrs 6.3.1 — turns those ratings into an adaptive next review date. Understanding runs on a separate, shorter repair clock, so a shaky understanding brings a topic back sooner without distorting the memory estimate. The model estimates a useful schedule; it cannot know the exact moment an individual topic will be forgotten.
+You log a topic after studying it and rate how difficult it was and how well you understood it — right away, or later from Today. When it is due, you review it however you like (questions, notes, a lecture, a video) and rate how much you still remembered when you came back to it. An **FSRS-6** memory model — conformance-tested against the reference implementation, py-fsrs 6.3.1 — turns those ratings into an adaptive next review date. Understanding runs on a separate, shorter repair clock, so a shaky understanding brings a topic back sooner without distorting the memory estimate. The model estimates a useful schedule; it cannot know the exact moment an individual topic will be forgotten.
 
 Data lives in the on-device Room database. Android's phone-to-phone transfer carries the full study history to a new device; Android cloud backup carries settings only. A full JSON backup and a diagnostics/research export are available from Settings.
 

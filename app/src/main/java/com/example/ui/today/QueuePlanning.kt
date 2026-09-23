@@ -1,6 +1,86 @@
 package com.example.ui.today
 
+import com.example.data.local.entity.StudyUnitEntity
+import com.example.domain.srs.MedScheduler
 import java.util.Calendar
+
+/** Local-day boundaries, shared by everything that asks "what is due today". */
+object DayBounds {
+    fun startOf(now: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = now
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    fun endOf(now: Long): Long = Calendar.getInstance().apply {
+        timeInMillis = now
+        set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
+        set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
+    }.timeInMillis
+}
+
+/**
+ * TODAY'S PLAN: which due topics today's session offers.
+ *
+ * The daily limit is a limit per DAY. It used to be applied per session: the queue took the top N due
+ * topics, so finishing N and starting again loaded the next N, while Today said the rest were "held for
+ * later by your daily limit". Now the reviews already done today count against it, and once it is used
+ * up Today says so and offers "review more anyway" instead of quietly serving more.
+ *
+ * FIRST RATINGS ARE NEVER HELD BACK. A topic that has never been rated is waiting for the learner to log
+ * a study that already happened, and its schedule is counted from the moment it is rated. Holding it
+ * behind the limit would push that anchor to another day, so every first rating is offered, first.
+ *
+ * Reviews are ordered by [MedScheduler.priorityScore], the same score the backlog plan uses.
+ */
+object DailyPlan {
+
+    data class Plan(
+        /** Never-rated topics: logging a study that already happened. Not counted against the limit. */
+        val firstRatings: List<StudyUnitEntity>,
+        /** Due reviews that fit in what is left of today's limit, most urgent first. */
+        val reviews: List<StudyUnitEntity>,
+        /** Due reviews today's limit holds for later. */
+        val heldBack: Int,
+        /** Reviews already done today (first ratings excluded), which the limit counts. */
+        val doneToday: Int,
+    ) {
+        /** The session order: first ratings, then reviews. */
+        val queue: List<StudyUnitEntity> get() = firstRatings + reviews
+        val size: Int get() = firstRatings.size + reviews.size
+
+        /** Today's limit is used up while reviews are still waiting. */
+        val limitReached: Boolean get() = size == 0 && heldBack > 0
+    }
+
+    fun isFirstRating(unit: StudyUnitEntity): Boolean = unit.reviewCount == 0
+
+    /**
+     * @param due every active topic due by the end of today.
+     * @param reviewsDoneToday reviews (not first ratings) already committed today.
+     * @param ignoreLimit the learner chose "review more anyway": every due review is offered.
+     */
+    fun plan(
+        due: List<StudyUnitEntity>,
+        reviewsDoneToday: Int,
+        dailyLimit: Int,
+        now: Long,
+        ignoreLimit: Boolean = false,
+    ): Plan {
+        val ordered = due.sortedWith(
+            compareByDescending<StudyUnitEntity> {
+                MedScheduler.priorityScore(
+                    it.highYield, it.state, it.lapseCount, it.modelDueAt, now, it.nextReviewAt, it.understandingDueAt,
+                )
+            }.thenBy { it.nextReviewAt }.thenBy { it.id },
+        )
+        val (firstRatings, reviews) = ordered.partition { isFirstRating(it) }
+        val done = reviewsDoneToday.coerceAtLeast(0)
+        val allowance = if (ignoreLimit) reviews.size else (MedScheduler.safeDailyLimit(dailyLimit) - done).coerceAtLeast(0)
+        val offered = reviews.take(allowance)
+        return Plan(firstRatings, offered, reviews.size - offered.size, done)
+    }
+}
 
 /**
  * Pure due-bucket predicates for the Today screen. Extracted from TodayViewModel's flow lambdas so

@@ -390,7 +390,9 @@ sources. Its own recommendation is shadow-mode-only, so nothing turns on it.
   protects input quality.
 - **Recall anchors** (3–7 per topic) to stabilise what "remembering Appendicitis" means and vary
   the retrieval cue, without flashcard-scale authoring. IMPLEMENTED 2026-09 as optional key points
-  that are ticked after the reveal and cap the rating (DB v8; see CLAUDE.md).
+  that are ticked after the reveal and cap the rating (DB v8); RETIRED 2026-09-23 by the user, together
+  with the reveal step: a Yadora review is done by any method (questions, notes, a lecture, a video),
+  not recited inside the app. Key points remain as reference text (see CLAUDE.md).
 - **Capacity planning in MINUTES rather than topic count** — `reviewDurationMs` is already
   logged, so the data exists. The full min-cost planner in the document is over-engineered for
   this app; an EWMA per-topic cost plus a daily minute budget would capture most of the value.

@@ -173,7 +173,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         if (count != null) {
                             runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
                             com.example.widget.DueWidgetProvider.updateAll(context)
-                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: $count مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
+                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: ${com.example.ui.i18n.PersianDate.faDigits(count)} مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
                         } else {
                             android.widget.Toast.makeText(context, if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup", android.widget.Toast.LENGTH_LONG).show()
                         }
@@ -803,6 +803,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             sharedPrefs.edit { putBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, on) }
                             if (!on) exportScope.launch {
                                 runCatching { (context.applicationContext as com.example.MedReviewApplication).repository.useDefaultMemoryModel() }
+                            } else {
+                                // Back on: try a fit now. The daily refit waits for 20% more evidence or 30
+                                // days after the last attempt — which was the set just retired — so without
+                                // this a learner who toggled it off and on waited up to a month for nothing.
+                                com.example.data.PersonalModelWorker.refitNow(context)
                             }
                         }
                     )
@@ -885,7 +890,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             
-                            // Tip 1: Active Recall First
+                            // Tip 1: Review your way. A review is whatever the learner chooses; the tip says which
+                            // methods tend to stick, without making the app a flashcard tool.
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -893,7 +899,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = when (language) { "fa" -> "۱. ابتدا یادآوری فعال کنید"; "de" -> "1. Erst aktiv abrufen"; else -> "1. Active Recall First" },
+                                        text = when (language) { "fa" -> "۱. به روش خودت مرور کن"; "de" -> "1. Wiederhole auf deine Art"; else -> "1. Review Your Way" },
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
@@ -901,9 +907,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = when (language) {
-                                            "fa" -> "قبل از کلیک روی 'نمایش یادداشت‌ها'، سعی کنید پاسخ را از ذهن خود بیرون بکشید. تقلا برای بازیابی اطلاعات، ارتباطات سیناپسی مغز را تقویت می‌کند."
-                                            "de" -> "Ruf die Antwort erst aus dem Gedächtnis ab, bevor du auf „Notizen anzeigen“ tippst. Genau diese Anstrengung beim Abrufen bildet belastbare Erinnerungen."
-                                            else -> "Force yourself to retrieve the answer from memory before tapping 'Show Notes'. The active struggle of retrieval is what forms robust memories."
+                                            "fa" -> "هر روشی حساب است: دوباره‌خواندن، تست، کلاس یا ویدیو. تست زدن یا توضیح دادن مطلب از حفظ معمولاً بیشتر از فقط دوباره‌خواندن در ذهن می‌ماند؛ اگر وقت کم است، اول تست بزن."
+                                            "de" -> "Jede Methode zählt: nachlesen, Fragen, Vorlesung oder Video. Fragen beantworten oder den Stoff aus dem Kopf erklären bleibt meist besser hängen als bloßes Nachlesen — bei wenig Zeit zuerst Fragen."
+                                            else -> "Any method counts: rereading, questions, a lecture or a video. Doing questions or explaining it from memory usually sticks better than rereading alone — when time is short, do questions first."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -932,9 +938,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                             // perfect baseline" biased the very signal FSRS consumes
                                             // — the rating is the measurement, so the help text must
                                             // not tell the user which button is the good one.
-                                            "fa" -> "این‌ها پاسخ تو را توصیف می‌کنند، نه خودت را. سخت، خوب و آسان همگی یادآوری موفق‌اند؛ فقط فراموشی شکست است.\n• فراموشی: چارچوب اصلی نیامد یا اساساً غلط بود.\n• سخت: درست یادآوری شد، اما کند و با تلاش زیاد یا مکث محسوس.\n• خوب: هستهٔ مطلب درست بود، با تلاش معمولی و تنها خلأهای جزئی.\n• آسان: کامل، دقیق، سریع و با اطمینان."
-                                            "de" -> "Das beschreibt deine Antwort, nicht dich. Schwer, Gut und Leicht sind alle erfolgreiche Abrufe; nur Vergessen ist ein Fehlschlag.\n• Vergessen: Der Kern fehlte oder war grundlegend falsch.\n• Schwer: Richtig abgerufen, aber langsam, mühsam oder mit deutlichem Zögern.\n• Gut: Der Kern war korrekt, mit normalem Aufwand und nur kleinen Lücken.\n• Leicht: Vollständig, korrekt, schnell und sicher."
-                                            else -> "These describe your answer, not you. Hard, Good and Easy are all successful recalls — only Forgot is a failure.\n• Forgot: the core framework was missing or fundamentally wrong.\n• Hard: recalled correctly, but slowly, effortfully, or with real hesitation.\n• Good: the core was right, with normal effort and only minor gaps.\n• Easy: complete, accurate, fast and confident."
+                                            "fa" -> "بگو وقتی دوباره سراغ مبحث آمدی — پیش از دوباره‌خواندن یا دیدن جواب‌ها — چقدر از آن یادت بود؛ نه اینکه جلسهٔ مرور چقدر سخت گذشت. این وصف حافظهٔ توست، نه خودت. سخت، خوب و آسان یعنی هنوز یادت بود؛ فقط فراموشی یعنی از دست رفته بود.\n• فراموشی: بیشترش را فراموش کرده بودم؛ مثل از نو خواندن بود.\n• سخت: اصلش یادم بود، ولی با جاهای خالی جدی یا زحمت زیاد.\n• خوب: بیشترش یادم بود، فقط خلأهای جزئی.\n• آسان: کامل و مسلط بودم؛ چیز تازه‌ای نبود.\nاگر تست زدی، نتیجهٔ تست‌ها بهترین راهنمای توست."
+                                            "de" -> "Bewerte, wie viel du noch wusstest, als du wieder damit angefangen hast — bevor du nachgelesen oder Lösungen angesehen hast —, nicht wie mühsam die Sitzung war. Das beschreibt dein Gedächtnis, nicht dich. Schwer, Gut und Leicht heißen: noch da; nur Vergessen heißt: weg.\n• Vergessen: Das meiste war weg; es war wie neu lernen.\n• Schwer: Der Kern war da, aber mit echten Lücken oder viel Mühe.\n• Gut: Das meiste wusste ich noch, nur kleine Lücken.\n• Leicht: Sicher und vollständig; nichts war neu.\nWenn du Fragen beantwortet hast, ist dein Ergebnis der beste Anhaltspunkt."
+                                            else -> "Rate how much you still knew when you came back to the topic — before rereading or checking answers — not how hard the session felt. It describes your memory, not you. Hard, Good and Easy all mean it was still there; only Forgot means it was gone.\n• Forgot: most of it was gone; it felt like learning it again.\n• Hard: the core was there, but with real gaps or a lot of effort.\n• Good: I remembered most of it, with only small gaps.\n• Easy: I knew it thoroughly; nothing felt new.\nIf you did questions, your score is the best guide."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1011,10 +1017,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(if (language == "fa") "شمارش معکوس آزمون" else if (language == "de") "Prüfungs-Countdown" else "Exam countdown", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(4.dp))
-                // Honest scope: countdown only. Exam-aware schedule compression is a future feature —
-                // the UI must not imply it exists.
+                // Honest scope: countdown only. The exam date is decorative BY DESIGN (settled decision):
+                // it never compresses intervals, so the copy must not promise that it will one day.
                 Text(
-                    if (language == "fa") "روی صفحهٔ امروز نمایش داده می‌شود؛ فعلاً برنامهٔ مرورها را تغییر نمی‌دهد." else if (language == "de") "Wird auf dem Heute-Bildschirm angezeigt — es ändert deinen Wiederholungsplan noch nicht." else "Shown on the Today screen — it doesn't change your review schedule yet.",
+                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی بیشتر پیش از امتحان، هدف به‌خاطرسپاری را بالا ببر." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für mehr Prüfungsreife das Behaltensziel erhöhen." else "Only a countdown on the screens — it doesn't change your review schedule. To be more exam-ready, raise the retention target.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1191,7 +1197,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 },
             )
         } else if (showExamDatePicker) {
-            val examPickerState = rememberDatePickerState(initialSelectedDateMillis = if (examDate > 0L) examDate else System.currentTimeMillis())
+            val examPickerState = rememberDatePickerState(initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(if (examDate > 0L) examDate else System.currentTimeMillis()))
             DatePickerDialog(
                 onDismissRequest = { showExamDatePicker = false },
                 confirmButton = {

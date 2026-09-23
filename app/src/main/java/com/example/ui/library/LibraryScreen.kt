@@ -423,7 +423,7 @@ fun LibraryScreen(
                         IconButton(onClick = { selectedIds = emptySet() }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Clear Selection"
+                                contentDescription = when (strings.languageCode) { "fa" -> "لغو انتخاب"; "de" -> "Auswahl aufheben"; else -> "Clear selection" }
                             )
                         }
                     },
@@ -589,7 +589,7 @@ fun LibraryScreen(
                     onValueChange = { viewModel.searchQuery.value = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text(strings.searchUnits) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = when (strings.languageCode) { "fa" -> "جستجو"; "de" -> "Suchen"; else -> "Search" }) },
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true
                 )

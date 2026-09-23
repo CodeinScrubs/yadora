@@ -64,7 +64,11 @@ object AnalyticsExporter {
         // ratings of scored and unscored topics be compared.
         // v10: the personal memory model — every fit attempt with its held-out scores and weights, and the
         // weight set each topic and review belongs to. Calibration MUST group by (model, set).
-        root.put("exportVersion", 10)
+        // v11: reviews are done by any method (questions, notes, a lecture, a video) and rated by how much
+        // the learner still had when they came back to it. The key-point rating cap is retired, so every
+        // new log records keyPointsTotal/keyPointsRecalled = -1 (older logs keep their scores), and the
+        // daily limit counts the reviews already done today (dailyLimitIsPerDay).
+        root.put("exportVersion", 11)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
@@ -155,14 +159,23 @@ object AnalyticsExporter {
             put("highYieldRetentionInForce", com.example.domain.srs.MedScheduler.effectiveRetention(true))
             put("highYieldRetentionBonus", 0.03)
             put("examDateAffectsScheduling", false)
-            // The rule that capped a scored review's rating (KeyPoints.ceiling).
-            put("keyPointRatingCeiling", "all recalled: any rating; at least half: up to Hard; fewer: Forgot")
+            // The key-point cap applied to logs that carry a score (keyPointsTotal >= 1), all written before
+            // v11. Retired since: new reviews are never capped.
+            put("keyPointRatingCeiling", "retired 2026-09-23; before that, all recalled: any rating; at least half: up to Hard; fewer: Forgot")
+            put("dailyLimitIsPerDay", true)
             // The weight set scheduling NEW reviews: 0 = the published defaults named by parameterSetId above.
             put(
                 "activeParameterSetId",
                 parameterSets.lastOrNull { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE }?.id ?: 0L,
             )
-            put("personalModelGate", "held-out later 20%, paired per-review log loss, one-sided z >= ${com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z}")
+            // What Fsrs6Optimizer.fitAndValidate actually does: the history cut in time into FOLDS + 1 chunks,
+            // each of the last FOLDS predicted by a fit on the reviews before it. It used to say "held-out
+            // later 20%", which described an earlier single-split gate.
+            put(
+                "personalModelGate",
+                "${com.example.domain.srs.Fsrs6Optimizer.FOLDS} time-series folds (each later chunk predicted by a fit on earlier reviews), " +
+                    "paired per-review log loss, one-sided z >= ${com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z}",
+            )
         })
 
         // Every attempt to fit the memory model to this learner, adopted or not, with the held-out evidence

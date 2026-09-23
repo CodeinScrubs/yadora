@@ -7,7 +7,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.widget.RemoteViews
-import java.util.Calendar
 
 /**
  * Home-screen widget: how many reviews are due today, one tap to open the app. A standing visual cue
@@ -59,17 +58,19 @@ class DueWidgetProvider : AppWidgetProvider() {
 
         internal fun render(context: Context, mgr: AppWidgetManager, ids: IntArray) {
             val app = context.applicationContext as? com.example.MedReviewApplication ?: return
-            val endOfToday = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
-                set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
-            }.timeInMillis
-            val due = kotlinx.coroutines.runBlocking { app.database.studyUnitDao().getDueCount(endOfToday) }
+            // Today's plan (DailyPlan): the count "Start review" loads, not every due row.
+            val plan = kotlinx.coroutines.runBlocking { app.todayPlan() }
+            val due = plan.size
 
             val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
             val lang = sp.getString("app_language", "en") ?: "en"
             val isFa = lang == "fa"
             val countText = if (isFa) com.example.ui.i18n.PersianDate.faDigits(due) else due.toString()
             val label = when {
+                // The day's limit is done but reviews are still waiting: "caught up" would be untrue.
+                due == 0 && plan.limitReached && isFa -> "برای امروز کافی است"
+                due == 0 && plan.limitReached && lang == "de" -> "für heute fertig"
+                due == 0 && plan.limitReached -> "done for today"
                 due == 0 && isFa -> "مروری نمانده"
                 due == 0 && lang == "de" -> "alles erledigt"
                 due == 0 -> "all caught up"

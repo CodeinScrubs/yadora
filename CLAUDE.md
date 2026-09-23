@@ -93,7 +93,9 @@ real phone before every release.
   replay), `MedScheduler.kt` (product layer: the understanding clock,
   high-yield retention, first-study window, interval fuzz, queue priority score),
   `Fsrs6Optimizer.kt` (fits and judges the personal weight set) and `KeyPoints.kt`
-  (the rating ceiling). This is the tested core — keep it pure and covered.
+  (reference text only). This is the tested core — keep it pure and covered.
+- `ui/today/QueuePlanning.kt` — pure `DailyPlan` (what today's session offers), `DayBounds`,
+  `TodayBuckets`, `OverdueRedistributor`. Tested in `QueuePlanningTest`.
 - `data/` — Room (`AppDatabase`, DAOs, entities), `MedReviewRepository`,
   `BackupManager` (versioned JSON export/import), `AnalyticsExporter`,
   `PersonalModelWorker` (the daily refit).
@@ -107,9 +109,23 @@ real phone before every release.
 
 These were decided deliberately. Re-suggesting them wastes a session:
 
+- **A REVIEW IS WHATEVER THE LEARNER CHOOSES** (user decision 2026-09-23). Yadora schedules WHEN to
+  study a topic again; it is not a flashcard app and not a recall test. A review can be rereading,
+  doing questions, a lecture, a video — done anywhere, usually outside the app. So the review screen
+  has NO reveal step and NO "recall first" gate: title, scope, notes and source are all visible, and
+  the learner rates afterwards. The memory question is "How much did you still remember?" — what they
+  still had when they came back to the topic, BEFORE rereading or checking answers — because that is
+  the recall outcome FSRS models; each button states its meaning (Forgot: most of it was gone; Hard:
+  the core was there, with real gaps; Good: remembered most of it; Easy: knew it thoroughly). Rating
+  how hard the session FELT would feed the model the wrong quantity. Then "How well do you understand it
+  now?" drives the repair clock as before. The Settings guide says the same, and that doing questions
+  usually sticks better than rereading alone.
 - **First rating happens on the REVIEW screen, not the Add screen.** The Add
   screen intentionally has no confidence/difficulty section. A topic is due on
-  its study date; the first rating there is review #0.
+  its study date; the first rating there is review #0, and the schedule counts from the moment of that
+  rating (the user's model: "when I rate it, that is when I studied it"). The Add screen's "Save and
+  rate now" (new topics studied today or earlier) opens that first rating straight away, so the anchor
+  does not drift to whenever the learner next opens Today.
 - **Day-granularity due model** (date-only). Not a bug; intervals are whole days.
   Due dates are `reviewedAt + intervalDays * 86_400_000` — ELAPSED milliseconds, not calendar
   addition. That is required: forgetting is physical, so FSRS must be fed true elapsed time, and a
@@ -118,29 +134,26 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and midnight on a DST spring-forward night slips one day. Accepted; do NOT "fix" it by switching
   to calendar addition.
 - **The recall prompt is an OPTIONAL per-topic field** (restored 2026-09 by user decision, after
-  being cut as v1 bloat). A bare title like "Appendicitis" leaves Good vs Forgot undefined, and that
-  noise sits under every interval FSRS computes; one optional line fixes most of it without turning
-  Yadora into a flashcard app. It shows on the review screen under the title, before the notes. A
-  merge keeps a prompt (survivor's, else the first absorbed copy's). Analytics exports only
-  `hasRecallPrompt`, never the text — it is user content, like titles and notes.
-- **Key points are an optional SCORING STANDARD, and the ticks CAP the rating** (DB v8,
-  `domain/srs/KeyPoints`). A topic may list the few ideas a complete recall must contain, one per line
-  (the editor stops at 12; a stored list is never truncated on read). The recall step shows only how
-  many there are; after the reveal the learner ticks the ones they produced, and every memory button
-  above what the ticks support is disabled: all ticked allows any rating, at least half allows up to
-  Hard, fewer means Forgot. A learner can always rate LOWER. `rateCurrentUnit` enforces the same rule
-  as a backstop, a first check-in is never scored, and each log stores `keyPointsTotal` /
-  `keyPointsRecalled` (-1 = unscored). Why: in simulation, rating errors moved true recall more than any
-  scheduling rule did — a learner who calls a quarter of failed recalls "Hard" ran at 0.895 true recall
-  while the ratings said 0.92, and the self-calibration, which learns from those same ratings,
-  amplified it to a 1.44 scale — and scoring a recall against idea units reduces exactly that
-  overconfidence (Dunlosky, Hartwig, Rawson & Lipko 2011). The half threshold is POLICY, chosen by a
-  three-year simulation of 3-, 5- and 7-point topics: nearly free against a global judgement, while
-  stricter thresholds cost two to three times the reviews (that trade-off belongs to the retention
-  slider). A merge keeps the survivor's key points, else the first absorbed copy's, never a union.
-  Backup v7 carries them; analytics exports only `keyPointCount` and the per-log scores, never the text.
-  Rating corrections on the Edit screen are NOT capped: they are a later judgement, and the stored
-  score stays beside them for analysis.
+  being cut as v1 bloat), worded since 2026-09-23 as SCOPE — "What does this topic cover?" — not as a
+  quiz question, because a review is not a recall test. A bare title like "Appendicitis" leaves open
+  what "I still remembered it" means, and that noise sits under every interval FSRS computes; one
+  optional line fixes most of it. It shows on the review screen under the title. The column keeps its
+  name (`recallPrompt`). A merge keeps a prompt (survivor's, else the first absorbed copy's). Analytics
+  exports only `hasRecallPrompt`, never the text — it is user content, like titles and notes.
+- **Key points are REFERENCE TEXT ONLY; the rating cap is RETIRED** (user decision 2026-09-23,
+  `domain/srs/KeyPoints`). From DB v8 until then, a topic's key points were a scoring standard: after a
+  reveal the learner ticked the points they produced and the ticks capped the memory rating (all =
+  any rating, at least half = up to Hard, fewer = Forgot), because in simulation optimistic self-ratings
+  moved true recall more than any scheduling rule. The user retired it: a review is done by any method,
+  not recited inside the app, and a tick list fits one method and obstructs the others. What remains:
+  stored points are shown as bullets with the notes on the review screen; the Edit screen offers the
+  field only for a topic that already has points (so they can be read, edited or cleared) — new topics
+  use the notes; the editor still stops at 12 and a stored list is never truncated on read; a merge
+  keeps the survivor's points, else the first absorbed copy's, never a union; backup carries them;
+  analytics exports only `keyPointCount`. Old logs keep their `keyPointsTotal` / `keyPointsRecalled`;
+  every new log records -1/-1 ("not scored"). The DB columns stay (migrations are additive only). The
+  overconfidence risk the cap addressed is now carried by the rating copy and by the calibration and
+  personal model, which learn from outcomes; do not bring the cap back without the user.
 - **First-run onboarding has a REMINDERS step** after language selection
   (`ui/onboarding/RemindersSetupScreen` + pure `RemindersSetupPolicy`). Android 14+ denies
   `SCHEDULE_EXACT_ALARM` to new installs, so without it every reminder silently fell back to an
@@ -355,8 +368,22 @@ These were decided deliberately. Re-suggesting them wastes a session:
   before a test. It does not read the exam date, and the exam date still feeds nothing.
 - **"Not today" never moves a topic sooner** (`MedReviewRepository.procrastinateUnit`). A topic not
   due before tomorrow 08:00 — reachable through review-now — is left untouched: no deferral, no event.
-- **The Today estimate uses the user's own review time**: the median of their last 50 measured
-  durations (≥ 5 s), two minutes until ten exist (`MedReviewRepository.typicalReviewMinutes`).
+- **Today shows NO time estimate** (2026-09-23). It used to print "about N min" from the median of the
+  last 50 measured review durations. A review is done however the learner likes, mostly outside the
+  app, so the seconds a card sits open measure nothing, and the estimate would be invented.
+  `reviewDurationMs` is still logged as research data.
+- **The daily limit is a limit per DAY** (`ui/today/DailyPlan`, 2026-09-23). It used to cap each
+  session: finishing N and starting again loaded the next N, while Today claimed the rest were "held for
+  later by your daily limit". Now the reviews already done today (`logType != FIRST_STUDY` since local
+  midnight, `ReviewLogDao.countReviewsSince`) count against it. FIRST RATINGS ARE NEVER HELD BACK and
+  come first: they log a study that already happened, and the schedule counts from the rating, so
+  holding one behind the limit would move its anchor to another day. Reviews are ordered by
+  `priorityScore`. ONE plan is counted everywhere — the review session, the Today card, the reminder
+  receiver, the notification's list, the safety worker, the boot catch-up and the widget
+  (`MedReviewApplication.todayPlan`) — so once the day's reviews are done the reminders stop nagging
+  and the widget says "done for today". Today then shows "Today's reviews are done" with "Review more
+  anyway", which opens a session without the limit (`Screen.ReviewSession(ignoreLimit = true)`); a
+  Today card or the Library's review-now opens a single topic regardless.
 - **Edit-screen Save writes against the row as it is NOW** (`ui/add/TopicEdit`). The form is filled
   once, and the screen can sit in the back stack while a reminder's "Review now", the notification's
   "Not today" or a rating correction writes the same row; saving the loaded copy silently undid them

@@ -86,7 +86,7 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 10, json.getInt("exportVersion"))
+        assertEquals("export version", 11, json.getInt("exportVersion"))
         assertTrue("the fit attempts are exported", json.has("memoryParameterSets"))
         assertEquals("with no personal model the defaults schedule", 0L, json.getJSONObject("policy").getLong("activeParameterSetId"))
 

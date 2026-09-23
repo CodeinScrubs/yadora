@@ -331,7 +331,7 @@ object MedScheduler {
      *
      * Important topics get the user's target + 0.03, capped at 0.97 and never BELOW the normal target.
      * Without that floor, a target above 0.97 (reachable only through a restored backup; the slider
-     * stops at 0.95) clipped the bump under the normal target, so important topics came back LATER than
+     * stops at 0.97) clipped the bump under the normal target, so important topics came back LATER than
      * ordinary ones.
      */
     fun effectiveRetention(highYield: Boolean): Double {

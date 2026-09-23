@@ -10,6 +10,20 @@ class MedReviewApplication : Application() {
     lateinit var database: AppDatabase
     lateinit var repository: MedReviewRepository
 
+    /**
+     * Today's plan under the user's daily limit, for callers that only hold a Context: the reminder
+     * receiver, the safety worker, the boot catch-up and the widget. They must count exactly what the
+     * Today screen and the review session offer, or a reminder nags about reviews the app itself says
+     * are held for tomorrow.
+     */
+    suspend fun todayPlan(now: Long = System.currentTimeMillis()): com.example.ui.today.DailyPlan.Plan =
+        repository.todayPlan(
+            com.example.domain.srs.MedScheduler.safeDailyLimit(
+                getSharedPreferences("medreview_settings", MODE_PRIVATE).getFloat("daily_review_limit", 50f),
+            ),
+            now,
+        )
+
     override fun onCreate() {
         super.onCreate()
 

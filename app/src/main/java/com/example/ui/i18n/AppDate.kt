@@ -24,6 +24,17 @@ object AppDate {
         if (useJalali) PersianDate.formatDateTime(millis)
         else java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.ENGLISH).format(java.util.Date(millis))
 
+    /**
+     * The value Material's DatePicker expects for "select this LOCAL day": UTC midnight of that date.
+     * Handing it local epoch millis selected the UTC date instead, which is the previous day for any
+     * zone east of UTC in its first hours after midnight — a German user adding a topic at 00:30 saw
+     * yesterday preselected, and confirming it back-dated the study by a day.
+     */
+    fun pickerSelection(localMillis: Long): Long {
+        val local = java.time.Instant.ofEpochMilli(localMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        return local.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+    }
+
     /** "EEE, MMM d" style (weekday + short date) for the forecast headers. */
     fun weekdayDate(useJalali: Boolean, millis: Long): String =
         if (useJalali) PersianDate.formatDate(millis)

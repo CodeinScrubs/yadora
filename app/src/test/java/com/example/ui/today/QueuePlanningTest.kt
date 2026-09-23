@@ -99,4 +99,85 @@ class QueuePlanningTest {
         assertEquals(0, c.get(Calendar.MINUTE))
         assertTrue("target is in the future", t > now)
     }
+
+    // --- DailyPlan: the daily limit is a limit per DAY, and first ratings are never held back ---
+
+    private val now = 2_000_000_000_000L
+    private val day = 86_400_000L
+
+    private fun topic(id: Long, reviews: Int, highYield: Boolean = false, dueDaysAgo: Int = 0) =
+        com.example.data.local.entity.StudyUnitEntity(
+            id = id, title = "t$id", studyType = "Topic", highYield = highYield,
+            state = if (reviews == 0) "New" else "Building", reviewCount = reviews,
+            studiedAt = now - 10 * day, nextReviewAt = now - dueDaysAgo * day, modelDueAt = now - dueDaysAgo * day,
+        )
+
+    @Test fun reviews_already_done_today_use_up_the_limit() {
+        val due = (1L..30L).map { topic(it, reviews = 3) }
+        val fresh = DailyPlan.plan(due, reviewsDoneToday = 0, dailyLimit = 10, now = now)
+        assertEquals(10, fresh.reviews.size)
+        assertEquals(20, fresh.heldBack)
+        // The same morning, after doing 10: the second session used to load the next 10.
+        val later = DailyPlan.plan(due.drop(10), reviewsDoneToday = 10, dailyLimit = 10, now = now)
+        assertEquals("nothing left of today's limit", 0, later.size)
+        assertEquals(20, later.heldBack)
+        assertTrue("and Today says so", later.limitReached)
+        // Part-way through: only what is left.
+        assertEquals(4, DailyPlan.plan(due, reviewsDoneToday = 6, dailyLimit = 10, now = now).reviews.size)
+    }
+
+    @Test fun first_ratings_are_never_held_back_and_come_first() {
+        val due = listOf(topic(1, reviews = 4, highYield = true, dueDaysAgo = 9)) +
+            (2L..6L).map { topic(it, reviews = 0) }
+        val plan = DailyPlan.plan(due, reviewsDoneToday = 10, dailyLimit = 10, now = now)
+        assertEquals("every study waiting to be logged is offered", 5, plan.firstRatings.size)
+        assertEquals("even with the limit used up", 0, plan.reviews.size)
+        assertEquals(1, plan.heldBack)
+        assertEquals("first ratings lead the session", (2L..6L).toSet(), plan.queue.take(5).map { it.id }.toSet())
+        assertFalse("not 'limit reached' while something is still offered", plan.limitReached)
+    }
+
+    @Test fun the_most_urgent_reviews_get_the_slots() {
+        val due = listOf(
+            topic(1, reviews = 3, dueDaysAgo = 1),
+            topic(2, reviews = 3, highYield = true, dueDaysAgo = 0),
+            // 10 days late scores 50; an important topic scores 100 (the overdue term is uncapped on
+            // purpose, so at 20 days late the two would tie — nothing neglected can starve forever).
+            topic(3, reviews = 3, dueDaysAgo = 10),
+        )
+        val plan = DailyPlan.plan(due, reviewsDoneToday = 0, dailyLimit = 2, now = now)
+        assertEquals("important first, then the most overdue", listOf(2L, 3L), plan.reviews.map { it.id })
+        assertEquals(1, plan.heldBack)
+    }
+
+    @Test fun review_more_anyway_offers_everything() {
+        val due = (1L..30L).map { topic(it, reviews = 2) }
+        val plan = DailyPlan.plan(due, reviewsDoneToday = 50, dailyLimit = 10, now = now, ignoreLimit = true)
+        assertEquals(30, plan.reviews.size)
+        assertEquals(0, plan.heldBack)
+    }
+
+    @Test fun caught_up_is_not_limit_reached() {
+        val plan = DailyPlan.plan(emptyList(), reviewsDoneToday = 99, dailyLimit = 10, now = now)
+        assertEquals(0, plan.size)
+        assertFalse(plan.limitReached)
+    }
+
+    @Test fun nonsensical_inputs_degrade_to_a_sane_plan() {
+        val due = (1L..5L).map { topic(it, reviews = 1) }
+        assertEquals("a zero limit reads as the minimum of one", 1, DailyPlan.plan(due, 0, 0, now).reviews.size)
+        assertEquals("a negative done count is none", 5, DailyPlan.plan(due, -7, 10, now).reviews.size)
+    }
+
+    @Test fun day_bounds_cover_the_local_day() {
+        val start = DayBounds.startOf(now)
+        val end = DayBounds.endOf(now)
+        assertTrue(start <= now && now <= end)
+        val c = Calendar.getInstance().apply { timeInMillis = start }
+        assertEquals(0, c.get(Calendar.HOUR_OF_DAY))
+        assertEquals(0, c.get(Calendar.MINUTE))
+        c.timeInMillis = end
+        assertEquals(23, c.get(Calendar.HOUR_OF_DAY))
+        assertEquals(999, c.get(Calendar.MILLISECOND))
+    }
 }
