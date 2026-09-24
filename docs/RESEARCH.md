@@ -145,14 +145,19 @@ but under a backlog it waits its turn behind older debt instead of jumping ahead
 day whose reviews all fit, which is most days at the default limit of 50. "Highest recall first", which
 some apps use for backlogs, is clearly the worst.
 
-**The other knobs, at equal time:**
+**The other knobs, at equal time** (re-run with the new queue order; the earlier run agreed within
+0.2 points, except the over-confident row, which sat up to 0.5 points lower then; see the caution below):
 
 | choice | options, final knowledge (and year average) | verdict |
 |---|---|---|
-| Relearn step after Forgot | **1 day 95.0% (95.0)** · 2 days 95.1% (95.2) · FSRS's own post-lapse interval 95.1% (95.3) | within noise; keep 1 day, the sensible next-day check after restudying |
-| First-study cap, honest ratings | **5 d 95.0% (95.0)** · 3 d 94.9% (94.9) · 7 d 95.0% (95.1) · none 94.9% (95.1) | no difference |
-| First-study cap, 40% of first ratings a grade too high | **5 d 95.0% (95.1)** · 3 d 94.7% (94.9) · 7 d 95.1% (95.1) · none 94.8% (94.8) | the cap is a cheap guard against overconfidence; keep 5 d |
-| Maximum interval, three years | **365 d 95.6% (95.2)** · 180 d 96.2% (95.2) · none 95.0% (95.1) | same average knowledge; no cap is slightly worse; keep 365 d |
+| Relearn step after Forgot | **1 day 94.9% (95.0)** · 2 days 95.0% (95.1) · FSRS's own post-lapse interval 95.0% (95.1) | within noise; keep 1 day, the sensible next-day check after restudying |
+| First-study cap, honest ratings | **5 d 94.9% (95.0)** · 3 d 94.8% (95.0) · 7 d 94.9% (95.0) · none 94.9% (95.1) | no difference |
+| First-study cap, 40% of first ratings a grade too high | **5 d 95.2% (95.3)** · 3 d 95.2% (95.4) · 7 d 95.2% (95.2) · none 95.2% (95.1) | the cap keeps 0.2 points over the year here (0.2–0.3 in the earlier run) and costs nothing when ratings are honest: a cheap guard; keep 5 d |
+| Maximum interval, three years | **365 d 95.6% (95.2)** · 180 d 96.2% (95.2) · none 95.1% (95.2) | same average knowledge; no cap is slightly worse at the end; keep 365 d |
+
+A caution for reading these: one seed's review count can differ from another's by ±8%, because the
+per-user calibration amplifies early luck. That is why every workload-changing knob is compared at equal
+time along its own retention sweep, and why differences under ~0.2 points are called noise.
 
 **Difficulty-adaptive retention (evaluated, not adopted).** FSRS's equations make a review of a hard topic
 buy less stability, so optimal-control work on spaced repetition (SSP-MMC) targets lower retention for

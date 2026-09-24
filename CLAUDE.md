@@ -584,9 +584,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   relative to the interval; "highest recall first" is 4–7 points worse.
   The relearn step (1 d vs 2 d vs FSRS's post-lapse interval), the first-study cap (3/5/7 d/none) and the
   maximum interval (180/365/none over three years) are all within noise of each other at EQUAL TIME;
-  the cap is worth ~0.3 points when first ratings are overconfident. A DIFFICULTY-ADAPTIVE target (lower
-  for harder topics) buys ~0.2–0.4 points at equal time but costs the hardest quarter of topics
-  0.5–0.7 points. It is NOT adopted: that is the owner's trade-off to make, ideally with pilot data. Do not
+  the cap keeps ~0.2 points over the year when first ratings are overconfident and costs nothing when
+  they are honest. A DIFFICULTY-ADAPTIVE target (lower for harder topics) buys ~0.2–0.4 points at equal
+  time but costs the hardest quarter of topics 0.5–0.7 points. It is NOT adopted: that is the owner's trade-off to make, ideally with pilot data. Do not
   ship it silently, and do not re-run these experiments as if they were open questions.
 - **Backup, restore and the research export STREAM** (`data/JsonStreams`, 2026-09-24). They used to build
   one org.json tree and one String. Measured on a multi-year history (3,300 topics, ~20,000 reviews): a
