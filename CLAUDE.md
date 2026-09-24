@@ -13,6 +13,7 @@ Requires Android Studio's bundled JDK:
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:testDebugUnitTest   # unit tests
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleDebug        # debug APK
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:lintDebug            # lint (keep 0 errors)
+python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py              # research toolkit
 ```
 
 (PowerShell: `$env:JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` first.) The bundled JDK is
@@ -93,7 +94,9 @@ real phone before every release.
   replay), `MedScheduler.kt` (product layer: the understanding clock,
   high-yield retention, first-study window, interval fuzz, queue priority score),
   `Fsrs6Optimizer.kt` (fits and judges the personal weight set) and `KeyPoints.kt`
-  (the rating ceiling). This is the tested core — keep it pure and covered.
+  (reference text only). This is the tested core — keep it pure and covered.
+- `ui/today/QueuePlanning.kt` — pure `DailyPlan` (what today's session offers), `DayBounds`,
+  `TodayBuckets`, `OverdueRedistributor`. Tested in `QueuePlanningTest`.
 - `data/` — Room (`AppDatabase`, DAOs, entities), `MedReviewRepository`,
   `BackupManager` (versioned JSON export/import), `AnalyticsExporter`,
   `PersonalModelWorker` (the daily refit).
@@ -102,14 +105,33 @@ real phone before every release.
   safety net.
 - Manual DI: `MedReviewApplication` builds the DB + repository; the repository is
   passed down through composables.
+- `tools/pilot/` — the research toolkit (standard-library Python): `yadora_model.py` (FSRS-6 + the
+  interval rules, transcribed and checked against the py-fsrs goldens and kotlin-stdlib's RNG),
+  `analyze.py` (reads research exports, replays every review, writes the pilot report) and `simulate.py`
+  (the identical-twins simulation). `docs/RESEARCH.md` holds the evidence and results, `docs/PILOT.md`
+  the pilot protocol and its pre-registered decision rules, `docs/PILOT_GUIDE_FA.md` the participant guide.
 
 ## Settled decisions — do NOT re-propose these
 
 These were decided deliberately. Re-suggesting them wastes a session:
 
+- **A REVIEW IS WHATEVER THE LEARNER CHOOSES** (user decision 2026-09-23). Yadora schedules WHEN to
+  study a topic again; it is not a flashcard app and not a recall test. A review can be rereading,
+  doing questions, a lecture, a video — done anywhere, usually outside the app. So the review screen
+  has NO reveal step and NO "recall first" gate: title, scope, notes and source are all visible, and
+  the learner rates afterwards. The memory question is "How much did you still remember?" — what they
+  still had when they came back to the topic, BEFORE rereading or checking answers — because that is
+  the recall outcome FSRS models; each button states its meaning (Forgot: most of it was gone; Hard:
+  the core was there, with real gaps; Good: remembered most of it; Easy: knew it thoroughly). Rating
+  how hard the session FELT would feed the model the wrong quantity. Then "How well do you understand it
+  now?" drives the repair clock as before. The Settings guide says the same, and that doing questions
+  usually sticks better than rereading alone.
 - **First rating happens on the REVIEW screen, not the Add screen.** The Add
   screen intentionally has no confidence/difficulty section. A topic is due on
-  its study date; the first rating there is review #0.
+  its study date; the first rating there is review #0, and the schedule counts from the moment of that
+  rating (the user's model: "when I rate it, that is when I studied it"). The Add screen's "Save and
+  rate now" (new topics studied today or earlier) opens that first rating straight away, so the anchor
+  does not drift to whenever the learner next opens Today.
 - **Day-granularity due model** (date-only). Not a bug; intervals are whole days.
   Due dates are `reviewedAt + intervalDays * 86_400_000` — ELAPSED milliseconds, not calendar
   addition. That is required: forgetting is physical, so FSRS must be fed true elapsed time, and a
@@ -118,29 +140,26 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and midnight on a DST spring-forward night slips one day. Accepted; do NOT "fix" it by switching
   to calendar addition.
 - **The recall prompt is an OPTIONAL per-topic field** (restored 2026-09 by user decision, after
-  being cut as v1 bloat). A bare title like "Appendicitis" leaves Good vs Forgot undefined, and that
-  noise sits under every interval FSRS computes; one optional line fixes most of it without turning
-  Yadora into a flashcard app. It shows on the review screen under the title, before the notes. A
-  merge keeps a prompt (survivor's, else the first absorbed copy's). Analytics exports only
-  `hasRecallPrompt`, never the text — it is user content, like titles and notes.
-- **Key points are an optional SCORING STANDARD, and the ticks CAP the rating** (DB v8,
-  `domain/srs/KeyPoints`). A topic may list the few ideas a complete recall must contain, one per line
-  (the editor stops at 12; a stored list is never truncated on read). The recall step shows only how
-  many there are; after the reveal the learner ticks the ones they produced, and every memory button
-  above what the ticks support is disabled: all ticked allows any rating, at least half allows up to
-  Hard, fewer means Forgot. A learner can always rate LOWER. `rateCurrentUnit` enforces the same rule
-  as a backstop, a first check-in is never scored, and each log stores `keyPointsTotal` /
-  `keyPointsRecalled` (-1 = unscored). Why: in simulation, rating errors moved true recall more than any
-  scheduling rule did — a learner who calls a quarter of failed recalls "Hard" ran at 0.895 true recall
-  while the ratings said 0.92, and the self-calibration, which learns from those same ratings,
-  amplified it to a 1.44 scale — and scoring a recall against idea units reduces exactly that
-  overconfidence (Dunlosky, Hartwig, Rawson & Lipko 2011). The half threshold is POLICY, chosen by a
-  three-year simulation of 3-, 5- and 7-point topics: nearly free against a global judgement, while
-  stricter thresholds cost two to three times the reviews (that trade-off belongs to the retention
-  slider). A merge keeps the survivor's key points, else the first absorbed copy's, never a union.
-  Backup v7 carries them; analytics exports only `keyPointCount` and the per-log scores, never the text.
-  Rating corrections on the Edit screen are NOT capped: they are a later judgement, and the stored
-  score stays beside them for analysis.
+  being cut as v1 bloat), worded since 2026-09-23 as SCOPE — "What does this topic cover?" — not as a
+  quiz question, because a review is not a recall test. A bare title like "Appendicitis" leaves open
+  what "I still remembered it" means, and that noise sits under every interval FSRS computes; one
+  optional line fixes most of it. It shows on the review screen under the title. The column keeps its
+  name (`recallPrompt`). A merge keeps a prompt (survivor's, else the first absorbed copy's). Analytics
+  exports only `hasRecallPrompt`, never the text — it is user content, like titles and notes.
+- **Key points are REFERENCE TEXT ONLY; the rating cap is RETIRED** (user decision 2026-09-23,
+  `domain/srs/KeyPoints`). From DB v8 until then, a topic's key points were a scoring standard: after a
+  reveal the learner ticked the points they produced and the ticks capped the memory rating (all =
+  any rating, at least half = up to Hard, fewer = Forgot), because in simulation optimistic self-ratings
+  moved true recall more than any scheduling rule. The user retired it: a review is done by any method,
+  not recited inside the app, and a tick list fits one method and obstructs the others. What remains:
+  stored points are shown as bullets with the notes on the review screen; the Edit screen offers the
+  field only for a topic that already has points (so they can be read, edited or cleared) — new topics
+  use the notes; the editor still stops at 12 and a stored list is never truncated on read; a merge
+  keeps the survivor's points, else the first absorbed copy's, never a union; backup carries them;
+  analytics exports only `keyPointCount`. Old logs keep their `keyPointsTotal` / `keyPointsRecalled`;
+  every new log records -1/-1 ("not scored"). The DB columns stay (migrations are additive only). The
+  overconfidence risk the cap addressed is now carried by the rating copy and by the calibration and
+  personal model, which learn from outcomes; do not bring the cap back without the user.
 - **First-run onboarding has a REMINDERS step** after language selection
   (`ui/onboarding/RemindersSetupScreen` + pure `RemindersSetupPolicy`). Android 14+ denies
   `SCHEDULE_EXACT_ALARM` to new installs, so without it every reminder silently fell back to an
@@ -160,8 +179,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/…/8_9`, currently DB v9,
-  `exportSchema=true`, schemas 2–9 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
+- **Room migrations are additive only** (`MIGRATION_1_2/…/9_10`, currently DB v10,
+  `exportSchema=true`, schemas 2–10 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
   Never `fallbackToDestructiveMigration`.
 - **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
   query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
@@ -355,8 +374,22 @@ These were decided deliberately. Re-suggesting them wastes a session:
   before a test. It does not read the exam date, and the exam date still feeds nothing.
 - **"Not today" never moves a topic sooner** (`MedReviewRepository.procrastinateUnit`). A topic not
   due before tomorrow 08:00 — reachable through review-now — is left untouched: no deferral, no event.
-- **The Today estimate uses the user's own review time**: the median of their last 50 measured
-  durations (≥ 5 s), two minutes until ten exist (`MedReviewRepository.typicalReviewMinutes`).
+- **Today shows NO time estimate** (2026-09-23). It used to print "about N min" from the median of the
+  last 50 measured review durations. A review is done however the learner likes, mostly outside the
+  app, so the seconds a card sits open measure nothing, and the estimate would be invented.
+  `reviewDurationMs` is still logged as research data.
+- **The daily limit is a limit per DAY** (`ui/today/DailyPlan`, 2026-09-23). It used to cap each
+  session: finishing N and starting again loaded the next N, while Today claimed the rest were "held for
+  later by your daily limit". Now the reviews already done today (`logType != FIRST_STUDY` since local
+  midnight, `ReviewLogDao.countReviewsSince`) count against it. FIRST RATINGS ARE NEVER HELD BACK and
+  come first: they log a study that already happened, and the schedule counts from the rating, so
+  holding one behind the limit would move its anchor to another day. Reviews are ordered by
+  `priorityScore`. ONE plan is counted everywhere — the review session, the Today card, the reminder
+  receiver, the notification's list, the safety worker, the boot catch-up and the widget
+  (`MedReviewApplication.todayPlan`) — so once the day's reviews are done the reminders stop nagging
+  and the widget says "done for today". Today then shows "Today's reviews are done" with "Review more
+  anyway", which opens a session without the limit (`Screen.ReviewSession(ignoreLimit = true)`); a
+  Today card or the Library's review-now opens a single topic regardless.
 - **Edit-screen Save writes against the row as it is NOW** (`ui/add/TopicEdit`). The form is filled
   once, and the screen can sit in the back stack while a reminder's "Review now", the notification's
   "Not today" or a rating correction writes the same row; saving the loaded copy silently undid them
@@ -485,10 +518,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   stays on its old model until a real review commits. `NeglectedTopicTest` sweeps neglect from one
   day to a century across every state/rating/understanding combination (finite, bounded, ordered,
   never throws), and `ReplayEqualsLiveTest` pins the row as byte-identical after repeated reads.
-- **`priorityScore`'s lapse term is capped** at `MAX_SCORED_LAPSES` (5). `lapseCount`
-  only ever grows, so uncapped it eventually outweighed high-yield (100) and let an
-  old struggle permanently outrank a genuinely important topic. The overdue term is
-  deliberately left uncapped so nothing can starve.
+- **The queue order is IMPORTANT FIRST, THEN THE MOST OVERDUE, and nothing else** (`priorityScore`,
+  2026-09-24). Important adds 100 (= 20 days of lateness); lateness adds 5 per day on the model's clock,
+  uncapped so nothing can starve. The score used to add +80/+40/+20 for NeedsRelearn/Learning/Building
+  and +10 per lapse (capped at 5). With the daily limit binding, those bonuses spent the day's slots on
+  the topics a review strengthens least while stronger ones slid further past due. In five simulated
+  backlogs (16 paired seeds each; `experiments.py --only order`) lateness alone knew more through the
+  year in all five (+0.12 to +0.55 points) and at the one-year quiz in four (+0.12 to +0.32; the fifth
+  equal within noise), never less; both bonuses cost, the lapse term more in most worlds. So a topic
+  that just lapsed is not jumped ahead of older debt: its relearn step is a due DATE, and under a backlog
+  it waits its turn like every other due topic. `MAX_SCORED_LAPSES` now caps only the Library's "weakest first" sort. The order
+  matters only when more is due than the day allows; it is not replayed, so no POLICY bump. Do not add
+  weakness or lapse bonuses back without a simulation that beats this.
 - **Retention is clamped on read** (`MedScheduler.safeRetention`), not just on write.
   Prefs store a `Float` and FSRS consumes a `Double`, so even a value clamped to
   exactly `0.99` reads back fractionally outside the band `FsrsParameters` accepts —
@@ -517,9 +558,70 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Behaviour changes are simulated before they are argued.** A two-year simulated student
   (honest ratings drawn from a true memory that may forget faster or slower than the defaults,
   a daily limit, a holiday, the Spread-Out button) found the Partial loop and the leech spiral
-  that code reading missed. The simulator lives with the independent Python reference used for
-  the differential test; rebuild it from `MedScheduler`'s rules rather than reasoning from one
-  worked example when a policy number is on the table.
+  that code reading missed. `tools/pilot/simulate.py` is the committed simulator: the owner's
+  identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
+  a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
+  Use it, extended if needed, rather than reasoning from one worked example when a policy number is
+  on the table. Results as of 2026-09-24 (re-run after the queue-order change) are in `docs/RESEARCH.md`
+  §2: Yadora ahead by 4.5–7.9 points in every realistic scenario (8/8 seeds), about half the forgetting
+  of the other twin at equal time; the only loss is an announced-exam cram needing 96–193 topic reviews
+  a day; and the equal-time advantage peaks at the 0.90 default target.
+- **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
+  today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
+  be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
+  simulation found one losing case: an announced exam where the other twin saves time for a final push.
+  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.7%). It reads NO
+  exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
+  honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
+  (their first rating belongs on the study day), topics due today stay with today's plan, and topics the
+  learner DEFERRED ("Not today", "Spread out") are left out too: offering one again the same evening
+  (first, since it is overdue on the model's clock) contradicted the learner's own choice.
+  `ReviewAhead.isCandidate` is the one rule, used by the queue and by the Today button, so the button
+  never opens an empty session.
+- **Scheduling choices are checked against their alternatives by simulation** (`tools/pilot/experiments.py`,
+  results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: most overdue first
+  (see the queue-order entry above) beat the old weakness/lapse bonuses, lowest recall first and lateness
+  relative to the interval; "highest recall first" is 4–7 points worse.
+  The relearn step (1 d vs 2 d vs FSRS's post-lapse interval), the first-study cap (3/5/7 d/none) and the
+  maximum interval (180/365/none over three years) are all within noise of each other at EQUAL TIME;
+  the cap keeps ~0.2 points over the year when first ratings are overconfident and costs nothing when
+  they are honest. A DIFFICULTY-ADAPTIVE target (lower for harder topics) buys ~0.2–0.4 points at equal
+  time but costs the hardest quarter of topics 0.5–0.7 points. It is NOT adopted: that is the owner's trade-off to make, ideally with pilot data. Do not
+  ship it silently, and do not re-run these experiments as if they were open questions.
+- **Backup, restore and the research export STREAM** (`data/JsonStreams`, 2026-09-24). They used to build
+  one org.json tree and one String. Measured on a multi-year history (3,300 topics, ~20,000 reviews): a
+  backup cost ~141 MB of live heap, and a restore held the file text, its parsed tree AND a full safety
+  backup at once. That is past a phone's heap exactly when the data matters most. Now records are written
+  one at a time, and read one at a time straight into entities: ~15 MB to write, ~9 MB to restore. The
+  output is compact JSON with the same fields. Every older build's backup still restores: pretty-printed,
+  whole doubles as integers, with or without a byte-order mark (`BackupStreamingTest` pins it). Restore
+  validates the WHOLE file before it writes the safety copy or touches the database. Settings runs the
+  write and the restore NonCancellable, so leaving the screen can never leave a truncated backup the
+  user believes is complete; a write that fails part-way deletes the file it was writing (the picked
+  document, or the half-written share file), and the restore's reminder re-arm and widget refresh run
+  inside the same non-cancellable block, because a cancelled `withContext` throws on return and used to
+  skip them. The import holds the picked URI, not the file's text. The export's
+  per-review deferral count is a binary search over sorted event times, not a scan of every event for
+  every review. "Delete all data" also removes `cache/exports/`.
+- **Pilot research data never feeds the scheduler** (DB v10, analytics export v12, backup v9). Each log
+  can carry how the learner reviewed (`reviewMethods`: Questions / Reading / Lecture / Other, optional,
+  several allowed, reset for every topic so no remembered choice is recorded as a new one), an optional
+  question score (`questionsCorrect`/`questionsTotal`, kept only when it is a real count, else -1/-1), and
+  the session that logged it (`sessionKind`: PLAN / EXTRA / TOPIC / AHEAD). A first study records no
+  method or score. Nothing schedules from these fields until a pilot shows what they mean (docs/PILOT.md
+  D6, D7). The export also carries a pseudonymous research id (`data/ResearchId`, `YD-XXXX-XXXX`, random,
+  in the settings file so a JSON restore keeps it, cleared by "Delete all data"), content-free size
+  proxies (notes length, has source, title length) and a `fieldGuide` that explains the file to whoever
+  reads it cold. Settings → "Share research data" sends it through a FileProvider limited to
+  `cache/exports/`.
+- **The pilot toolkit is part of the scheduling contract.** `tools/pilot/yadora_model.py` transcribes
+  every rule that decides an interval, and `analyze.py` replays each exported review and demands the
+  stored elapsed days, prediction and interval come out EXACTLY (fuzz included). A mismatch in a
+  participant's file is a bug found without the phone. So a change to `Fsrs6.kt`, `MedScheduler`'s
+  interval rules or `RecallCalibration` must be made in `yadora_model.py` too.
+  `python3 tools/pilot/test_analyze.py` checks it against `tools/pilot/fixtures/sample_export.json`, a
+  REAL export written by `PilotExportFixtureTest` through the review screen's commit path. Regenerate
+  the fixture when the export format changes.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

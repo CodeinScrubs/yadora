@@ -3,6 +3,7 @@ package com.example.data
 import android.content.Context
 import androidx.room.withTransaction
 import com.example.MedReviewApplication
+import com.example.data.JsonStreams.jsonValue
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -19,7 +20,73 @@ import org.json.JSONObject
  */
 object AnalyticsExporter {
 
-    suspend fun buildJson(context: Context): String {
+    /**
+     * What the fields mean, inside the file. An export gets handed to a person or an AI months later,
+     * without the source; the traps below (which rows are recalls, which clock a date is on, which model a
+     * prediction came from) are exactly the ones that make an analysis silently wrong.
+     */
+    private fun fieldGuide(): JSONObject = JSONObject().apply {
+        put("purpose", "One learner's Yadora history for analysing and tuning the scheduler. Yadora schedules WHEN to review a " +
+            "topic; the review itself is done by any method, mostly outside the app. No topic titles, notes, prompts or key points.")
+        put("times", "Epoch milliseconds (UTC). Local dates need environment.timeZoneId. Day counts on FSRS-6 logs are whole LOCAL calendar days.")
+        put("recallOutcome", "reviewLogs with logType RECALL: memoryRating Forgot = failure, Hard/Good/Easy = success. It is the " +
+            "learner's own answer to 'How much did you still remember?' (before rereading), asked after the review.")
+        put("firstStudy", "logType FIRST_STUDY: the rating given right after first studying the topic. memoryRating Easy/Good/Hard " +
+            "there means topic difficulty Easy/Medium/Hard (initialDifficulty), NOT a recall. The schedule counts from this moment. " +
+            "A later FIRST_STUDY row on the same topic (only after a merge) is a re-exposure, never a recall.")
+        put("retrievabilityAtReview", "The memory model's predicted recall probability at the moment of the review, on the log's own " +
+            "model (schedulerVersion) and weight set (parameterSetId; 0 = published FSRS-6 defaults), BEFORE the per-user " +
+            "calibration. Pool predictions only within one (schedulerVersion, parameterSetId).")
+        put("calibrationScaleAtReview", "The per-user multiplier applied to the memory interval when this review was scheduled " +
+            "(1 = none). Calibrated recall = (1 + ((p^(1/decay)) - 1) / scale)^decay with decay = -w20 of the log's weight set.")
+        put("intervals", "nextIntervalDays is the MEMORY interval actually scheduled (after calibration, caps and +-5% fuzz). The topic " +
+            "can return sooner through the understanding repair clock (understandingRating Partial/Confused) or later through a user " +
+            "deferral (deferralsBeforeThisReview).")
+        put("adherence", "scheduledForAt / daysLate are reconstructed from the previous review's MEMORY date; exact only when " +
+            "deferralsBeforeThisReview = 0. A negative daysLate is either an early review (sessionKind TOPIC or AHEAD) or the " +
+            "understanding repair clock bringing the topic back before its memory date (previous understandingRating Partial or " +
+            "Confused); tools/pilot/analyze.py reconstructs the date that actually applied.")
+        put("reviewMethods", "Optional, several allowed: Questions (question bank, past papers, flashcards), Reading, Lecture, Other. " +
+            "Empty = not said. questionsCorrect/questionsTotal: optional score for that review, -1 = not recorded.")
+        put("sessionKind", "PLAN = today's plan within the daily limit, EXTRA = 'review more anyway', TOPIC = one topic opened on purpose, " +
+            "AHEAD = 'review ahead' (not yet due, weakest first). Null = logged before v12.")
+        put("understandingRating", "'How well do you understand it now?' Confused / Partial / Clear; NotAsked after Forgot.")
+        put("consistency", "consistency.issues lists broken invariants: each one is a bug report, not a statistic. Empty is expected.")
+        put("tools", "tools/pilot/analyze.py in the Yadora repository reads one or many of these files and writes a report.")
+    }
+
+    /** "yadora_research_YD-K7PM-3QXA_2026-09-24.json": who and when, readable in a chat or a folder. */
+    fun fileName(context: Context, today: java.time.LocalDate = java.time.LocalDate.now()): String =
+        "yadora_research_${ResearchId.get(context)}_$today.json"
+
+    /**
+     * Writes the export to cache/exports/ (the one directory the FileProvider exposes) and returns it.
+     * Earlier exports there are removed first, so a stale file can never be the one that gets shared.
+     */
+    suspend fun writeShareableFile(context: Context): java.io.File {
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val file = java.io.File(dir, fileName(context))
+        try {
+            file.outputStream().use { writeJson(context, it) }
+        } catch (t: Throwable) {
+            // A half-written file is never shared, but it should not sit in the cache either.
+            file.delete()
+            throw t
+        }
+        return file
+    }
+
+    /** [writeJson] into a String, for tests and other small callers. */
+    suspend fun buildJson(context: Context): String =
+        java.io.ByteArrayOutputStream().also { writeJson(context, it) }.toString(Charsets.UTF_8.name())
+
+    /**
+     * The export, written straight to [out] as compact JSON. The small blocks are built as objects; the three
+     * long arrays (topics, reviews, events) are streamed one record at a time ([JsonStreams]), so memory
+     * stays the size of the entities however long the history. The caller owns and closes [out].
+     */
+    suspend fun writeJson(context: Context, out: java.io.OutputStream) {
         val app = context.applicationContext as MedReviewApplication
         val unitDao = app.database.studyUnitDao()
         val logDao = app.database.reviewLogDao()
@@ -64,7 +131,17 @@ object AnalyticsExporter {
         // ratings of scored and unscored topics be compared.
         // v10: the personal memory model — every fit attempt with its held-out scores and weights, and the
         // weight set each topic and review belongs to. Calibration MUST group by (model, set).
-        root.put("exportVersion", 10)
+        // v11: reviews are done by any method (questions, notes, a lecture, a video) and rated by how much
+        // the learner still had when they came back to it. The key-point rating cap is retired, so every
+        // new log records keyPointsTotal/keyPointsRecalled = -1 (older logs keep their scores), and the
+        // daily limit counts the reviews already done today (dailyLimitIsPerDay).
+        // v12: the pilot. A pseudonymous participant id (ResearchId) so several people's exports can be pooled
+        // and told apart without names; per log how the learner reviewed (reviewMethods), an optional
+        // question score (questionsCorrect/questionsTotal) and which kind of session logged it
+        // (sessionKind: PLAN / EXTRA / TOPIC / AHEAD); per topic content-free size proxies (notesLength,
+        // hasSource); and a fieldGuide, so the file explains itself to whoever -- or whatever -- reads it.
+        root.put("exportVersion", 12)
+        root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
@@ -155,14 +232,23 @@ object AnalyticsExporter {
             put("highYieldRetentionInForce", com.example.domain.srs.MedScheduler.effectiveRetention(true))
             put("highYieldRetentionBonus", 0.03)
             put("examDateAffectsScheduling", false)
-            // The rule that capped a scored review's rating (KeyPoints.ceiling).
-            put("keyPointRatingCeiling", "all recalled: any rating; at least half: up to Hard; fewer: Forgot")
+            // The key-point cap applied to logs that carry a score (keyPointsTotal >= 1), all written before
+            // v11. Retired since: new reviews are never capped.
+            put("keyPointRatingCeiling", "retired 2026-09-23; before that, all recalled: any rating; at least half: up to Hard; fewer: Forgot")
+            put("dailyLimitIsPerDay", true)
             // The weight set scheduling NEW reviews: 0 = the published defaults named by parameterSetId above.
             put(
                 "activeParameterSetId",
                 parameterSets.lastOrNull { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE }?.id ?: 0L,
             )
-            put("personalModelGate", "held-out later 20%, paired per-review log loss, one-sided z >= ${com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z}")
+            // What Fsrs6Optimizer.fitAndValidate actually does: the history cut in time into FOLDS + 1 chunks,
+            // each of the last FOLDS predicted by a fit on the reviews before it. It used to say "held-out
+            // later 20%", which described an earlier single-split gate.
+            put(
+                "personalModelGate",
+                "${com.example.domain.srs.Fsrs6Optimizer.FOLDS} time-series folds (each later chunk predicted by a fit on earlier reviews), " +
+                    "paired per-review log loss, one-sided z >= ${com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z}",
+            )
         })
 
         // Every attempt to fit the memory model to this learner, adopted or not, with the held-out evidence
@@ -180,9 +266,14 @@ object AnalyticsExporter {
             })
         })
 
-        val unitsArr = JSONArray()
+        // Everything above is small; stream it out, then the long arrays record by record.
+        val w = android.util.JsonWriter(java.io.OutputStreamWriter(java.io.BufferedOutputStream(out), Charsets.UTF_8))
+        w.beginObject()
+        root.keys().forEach { k -> w.name(k); w.jsonValue(root.opt(k)) }
+
+        w.name("studyUnits").beginArray()
         for (u in units) {
-            unitsArr.put(JSONObject().apply {
+            w.jsonValue(JSONObject().apply {
                 put("id", u.id)
                 put("studyType", u.studyType)
                 put("subjectId", u.subjectId ?: JSONObject.NULL)
@@ -209,9 +300,13 @@ object AnalyticsExporter {
                 put("hasRecallPrompt", !u.recallPrompt.isNullOrBlank())
                 put("keyPointCount", com.example.domain.srs.KeyPoints.parse(u.keyPoints).size)
                 put("parameterSetId", u.parameterSetId)
+                // Size proxies without content: how much the learner wrote down, and whether a source is named.
+                put("notesLength", u.notes?.trim()?.length ?: 0)
+                put("hasSource", !u.source.isNullOrBlank())
+                put("titleLength", u.title.trim().length)
             })
         }
-        root.put("studyUnits", unitsArr)
+        w.endArray()
 
         // ADHERENCE: when was this review actually DUE, and how late was it answered?
         // Nothing stores that directly, but it is exactly reconstructable: a review answers the date
@@ -233,24 +328,40 @@ object AnalyticsExporter {
         // The event log already records every such action; joining them here means the analysis does
         // not have to reimplement the join (and get it subtly wrong).
         val deferralTypes = setOf("PROCRASTINATE", "PROCRASTINATE_ALL", "REDISTRIBUTE")
+        // Sorted event times per topic, plus the bulk actions (no unit id: they moved every due topic, so
+        // they count for whatever was due at the time), each counted in a window by binary search. The old
+        // join scanned every event for every review: fine for a pilot, but on a multi-year history (~20k
+        // reviews, ~20k events) it took seconds of phone time.
+        val deferrals = events.filter { it.type in deferralTypes }
+        val bulkDeferralTimes = deferrals.filter { it.unitId == null }.map { it.at }.sorted()
+        val unitDeferralTimes = deferrals.filter { it.unitId != null }.groupBy({ it.unitId!! }, { it.at })
+            .mapValues { (_, times) -> times.sorted() }
+        fun countIn(sorted: List<Long>, from: Long, to: Long): Int {
+            if (sorted.isEmpty() || from > to) return 0
+            // First index with time >= from, and first index with time > to: the count of [from, to].
+            fun firstAtLeast(t: Long): Int {
+                var lo = 0; var hi = sorted.size
+                while (lo < hi) { val mid = (lo + hi) ushr 1; if (sorted[mid] < t) lo = mid + 1 else hi = mid }
+                return lo
+            }
+            val upper = if (to == Long.MAX_VALUE) sorted.size else firstAtLeast(to + 1)
+            return upper - firstAtLeast(from)
+        }
         val deferralsByLog = HashMap<Long, Int>(logs.size)
         for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
             val ordered = unitLogs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             var windowStart = unitStudiedAt[unitId] ?: 0L
+            val ownTimes = unitDeferralTimes[unitId].orEmpty()
             for (l in ordered) {
-                deferralsByLog[l.id] = events.count { e ->
-                    e.type in deferralTypes && e.at in windowStart..l.reviewedAt &&
-                        // PROCRASTINATE_ALL / REDISTRIBUTE are bulk actions with no unit id: they
-                        // moved every due topic, so they count for whatever was due at the time.
-                        (e.unitId == null || e.unitId == unitId)
-                }
+                deferralsByLog[l.id] = countIn(bulkDeferralTimes, windowStart, l.reviewedAt) +
+                    countIn(ownTimes, windowStart, l.reviewedAt)
                 windowStart = l.reviewedAt
             }
         }
 
-        val logsArr = JSONArray()
+        w.name("reviewLogs").beginArray()
         for (l in logs) {
-            logsArr.put(JSONObject().apply {
+            w.jsonValue(JSONObject().apply {
                 put("id", l.id) // join key: STUDY_ACTION events carry the log id in `detail`
                 val scheduledFor = scheduledForByLog[l.id]
                 put("scheduledForAt", scheduledFor ?: JSONObject.NULL)
@@ -292,9 +403,15 @@ object AnalyticsExporter {
                 put("keyPointsTotal", l.keyPointsTotal)
                 put("keyPointsRecalled", l.keyPointsRecalled)
                 put("parameterSetId", l.parameterSetId)
+                put("reviewMethods", JSONArray().apply {
+                    com.example.domain.model.ReviewMethod.decode(l.reviewMethods).forEach { put(it.name) }
+                })
+                put("questionsCorrect", l.questionsCorrect)
+                put("questionsTotal", l.questionsTotal)
+                put("sessionKind", l.sessionKind ?: JSONObject.NULL)
             })
         }
-        root.put("reviewLogs", logsArr)
+        w.endArray()
 
         // SELF-CHECK. The export states where the database disagrees with itself, so a problem is
         // visible in the file rather than having to be suspected and hunted for. Every one of these
@@ -314,6 +431,9 @@ object AnalyticsExporter {
             .mapTo(HashSet()) { it.id } + 0L
         for (l in logs) {
             if (l.studyUnitId !in unitIdSet) flag("ORPHAN_LOG", l.studyUnitId, "log ${l.id} references a topic not in this export")
+            if (!(l.questionsCorrect == -1 && l.questionsTotal == -1) &&
+                !com.example.domain.model.QuestionScore.isValid(l.questionsCorrect, l.questionsTotal)
+            ) flag("BAD_QUESTION_SCORE", l.studyUnitId, "log ${l.id} has ${l.questionsCorrect}/${l.questionsTotal}")
             if (l.parameterSetId !in usableSetIds) flag("UNKNOWN_PARAMETER_SET", l.studyUnitId, "log ${l.id} names weight set ${l.parameterSetId}")
         }
         for (u in units) {
@@ -350,7 +470,8 @@ object AnalyticsExporter {
                 flag("SEED_ORDERING", u.id, "multiple FIRST_STUDY rows and the earliest log is not one of them")
             }
         }
-        root.put("consistency", JSONObject().apply {
+        w.name("consistency")
+        w.jsonValue(JSONObject().apply {
             put("checkedUnits", units.size)
             put("checkedLogs", logs.size)
             put("issueCount", issues.length())
@@ -362,17 +483,19 @@ object AnalyticsExporter {
             )
         })
 
-        val eventsArr = JSONArray()
+        w.name("eventLogs").beginArray()
         for (e in events) {
-            eventsArr.put(JSONObject().apply {
+            w.jsonValue(JSONObject().apply {
                 put("at", e.at)
                 put("type", e.type)
                 put("unitId", e.unitId ?: JSONObject.NULL)
                 put("detail", e.detail ?: JSONObject.NULL)
             })
         }
-        root.put("eventLogs", eventsArr)
-
-        return root.toString(2)
+        w.endArray()
+        w.name("fieldGuide")
+        w.jsonValue(fieldGuide())
+        w.endObject()
+        w.flush()
     }
 }

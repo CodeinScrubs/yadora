@@ -84,7 +84,7 @@ data class AppStrings(
     val vibration: String = "Vibration",
     val algorithmControl: String = "Algorithm", // read-only section: don't promise "control"
     val spacedRepAlgorithm: String = "Spaced Repetition Algorithm",
-    val algorithmDesc: String = "Yadora uses %s to optimize your memory retention. Your items are scheduled based on active recall difficulty ratings.",
+    val algorithmDesc: String = "Yadora uses %s to decide when each topic is due. After every review you rate how much you still remembered, and that sets the next date.",
     val limitsConstraints: String = "Limits & Constraints",
     val dailyReviewLimit: String = "Daily Review Limit",
     
@@ -92,14 +92,14 @@ data class AppStrings(
     val continueBtn: String = "Continue / ادامه",
     
     // Review Session Screen
-    val showNotes: String = "Show Notes",
     val memoryRating: String = "Memory Rating",
     val understandingRating: String = "Understanding Rating",
-    val recallFirstPrompt: String = "Recall first. Explain from memory before restudy or review.",
+    // A review is whatever the learner chooses (questions, notes, a lecture, a video); the rating is how
+    // much of the topic they still had when they came back to it — the recall outcome FSRS models.
+    val memoryQuestion: String = "How much did you still remember?",
+    val memoryQuestionHint: String = "Review it your way — questions, notes, a lecture or a video. Rate what you still knew when you came back to it, before rereading or checking answers.",
+    val understandingNowQuestion: String = "How well do you understand it now?",
     // Key points (DB v8): the scoring standard, ticked after the reveal.
-    val keyPointsCount: String = "Key points: %s",
-    val keyPointsTitle: String = "Key points you recalled",
-    val keyPointsScore: String = "%1\$s of %2\$s key points recalled",
     val dueNow: String = "Due Now",
     val needsRelearnState: String = "Needs Relearn",
 
@@ -108,6 +108,12 @@ data class AppStrings(
     val ratingHard: String = "Hard",
     val ratingGood: String = "Good",
     val ratingEasy: String = "Easy",
+    // What each rating means for a review done any way. Behaviourally anchored: they describe what the
+    // learner still had, never which button is "right".
+    val ratingFailMeaning: String = "Most of it was gone",
+    val ratingHardMeaning: String = "The core was there, with real gaps",
+    val ratingGoodMeaning: String = "I remembered most of it",
+    val ratingEasyMeaning: String = "I knew it thoroughly",
 )
 
 val EnglishStrings = AppStrings()
@@ -192,7 +198,7 @@ val PersianStrings = AppStrings(
     vibration = "لرزش",
     algorithmControl = "الگوریتم",
     spacedRepAlgorithm = "الگوریتم تکرار با فاصله",
-    algorithmDesc = "برنامه از %s برای بهینه‌سازی حفظ حافظه شما استفاده می‌کند. آیتم‌های شما بر اساس درجه‌بندی دشواری یادآوری فعال زمان‌بندی می‌شوند.",
+    algorithmDesc = "یادورا با %s تعیین می‌کند هر مبحث کِی باید مرور شود. بعد از هر مرور می‌گویی چقدر از آن یادت مانده بود و همین، تاریخ مرور بعدی را تعیین می‌کند.",
     limitsConstraints = "محدودیت‌ها",
     dailyReviewLimit = "محدودیت مرور روزانه",
     
@@ -200,13 +206,11 @@ val PersianStrings = AppStrings(
     continueBtn = "Continue / ادامه",
     
     // Review Session Screen
-    showNotes = "نمایش یادداشت‌ها",
     memoryRating = "درجه‌بندی حافظه",
     understandingRating = "درجه‌بندی درک مطلب",
-    recallFirstPrompt = "ابتدا یادآوری کنید. قبل از مطالعه مجدد یا مرور، از حفظ توضیح دهید.",
-    keyPointsCount = "نکات کلیدی: %s",
-    keyPointsTitle = "نکات کلیدی که به یاد آوردی",
-    keyPointsScore = "%1\$s از %2\$s نکتهٔ کلیدی به یاد آمد",
+    memoryQuestion = "چقدر از آن یادت مانده بود؟",
+    memoryQuestionHint = "به هر روشی که می‌خواهی مرورش کن — تست، جزوه، کلاس یا ویدیو. بگو وقتی دوباره سراغش آمدی، پیش از دوباره‌خواندن یا دیدن جواب‌ها، چقدر از آن یادت بود.",
+    understandingNowQuestion = "الان چقدر آن را می‌فهمی؟",
     dueNow = "موعد الان",
     needsRelearnState = "نیاز به یادگیری مجدد",
 
@@ -215,6 +219,10 @@ val PersianStrings = AppStrings(
     ratingHard = "سخت",
     ratingGood = "خوب",
     ratingEasy = "آسان",
+    ratingFailMeaning = "بیشترش را فراموش کرده بودم",
+    ratingHardMeaning = "اصلش یادم بود، ولی با جاهای خالی جدی",
+    ratingGoodMeaning = "بیشترش یادم بود",
+    ratingEasyMeaning = "کامل و مسلط بودم",
 )
 
 val GermanStrings = AppStrings(
@@ -298,7 +306,7 @@ val GermanStrings = AppStrings(
     vibration = "Vibration",
     algorithmControl = "Algorithmus",
     spacedRepAlgorithm = "Spaced-Repetition-Algorithmus",
-    algorithmDesc = "Yadora nutzt %s, um dein Behalten zu optimieren. Deine Themen werden anhand deiner Abruf-Bewertungen geplant.",
+    algorithmDesc = "Yadora bestimmt mit %s, wann jedes Thema fällig ist. Nach jeder Wiederholung bewertest du, wie viel du noch wusstest — das legt den nächsten Termin fest.",
     limitsConstraints = "Limits",
     dailyReviewLimit = "Tägliches Wiederholungslimit",
 
@@ -306,13 +314,11 @@ val GermanStrings = AppStrings(
     continueBtn = "Weiter",
 
     // Review Session Screen
-    showNotes = "Notizen anzeigen",
     memoryRating = "Erinnerung",
     understandingRating = "Verständnis",
-    recallFirstPrompt = "Erst abrufen: Erkläre aus dem Gedächtnis, bevor du nachliest.",
-    keyPointsCount = "Kernpunkte: %s",
-    keyPointsTitle = "Kernpunkte, die du abgerufen hast",
-    keyPointsScore = "%1\$s von %2\$s Kernpunkten abgerufen",
+    memoryQuestion = "Wie viel wusstest du noch?",
+    memoryQuestionHint = "Wiederhole es auf deine Art — Fragen, Notizen, Vorlesung oder Video. Bewerte, was du noch wusstest, als du wieder damit angefangen hast — bevor du nachgelesen oder Lösungen angesehen hast.",
+    understandingNowQuestion = "Wie gut verstehst du es jetzt?",
     dueNow = "Jetzt fällig",
     needsRelearnState = "Neu lernen",
 
@@ -321,6 +327,10 @@ val GermanStrings = AppStrings(
     ratingHard = "Schwer",
     ratingGood = "Gut",
     ratingEasy = "Leicht",
+    ratingFailMeaning = "Das meiste war weg",
+    ratingHardMeaning = "Der Kern war da, mit echten Lücken",
+    ratingGoodMeaning = "Das meiste wusste ich noch",
+    ratingEasyMeaning = "Ich konnte es sicher und vollständig",
 )
 
 val LocalStrings = staticCompositionLocalOf { EnglishStrings }

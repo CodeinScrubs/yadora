@@ -101,7 +101,8 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
         }
     }
 
-    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, keyPoints: String?, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: () -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
+    /** [onSaved] receives the new topic's id when one was inserted, null after an edit. */
+    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, keyPoints: String?, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: (Long?) -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
         viewModelScope.launch {
             // "Am I editing?" comes from the nav argument, NOT from whether the row has finished
             // loading — see editingUnitId.
@@ -124,6 +125,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
             // scope, and without this guard the insert/update could be aborted mid-flight, silently
             // losing the topic. onSaved() fires only AFTER the write commits; on failure onError() fires
             // so the Save button never stays stuck disabled.
+            var insertedId: Long? = null
             val ok = try {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 val editingId = editingUnitId
@@ -206,7 +208,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                     //  - studied in the PAST    -> already overdue (appears in Today, "From earlier")
                     //  - planned for the FUTURE -> surfaces on that day as "study this".
                     val computedNext = baseTime
-                    repository.insertUnit(
+                    insertedId = repository.insertUnit(
                         StudyUnitEntity(
                             title = title,
                             subjectId = subjectId,
@@ -241,7 +243,7 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                 android.util.Log.e("AddUnitViewModel", "Topic save failed", e)
                 false
             }
-            if (ok) onSaved() else onError()
+            if (ok) onSaved(insertedId) else onError()
         }
     }
 
@@ -307,7 +309,9 @@ private fun datePickerUtcToLocalDay(utcMillis: Long): Long {
 fun AddUnitScreen(
     repository: MedReviewRepository,
     unitId: Long?,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** "Save and rate now" on a new topic: open its first rating straight away (the id just saved). */
+    onRateNow: (Long) -> Unit = {},
 ) {
     val viewModel: AddUnitViewModel = viewModel(factory = AddUnitViewModelFactory(repository))
     
@@ -323,11 +327,16 @@ fun AddUnitScreen(
     var notes by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var recallPrompt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var keyPointsText by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    // Key points are reference text now (KeyPoints). The field is offered only for a topic that already
+    // has some, so they can still be read, edited or cleared; new topics use the notes.
+    var showKeyPointsField by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var highYield by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var selectedSubjectId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var studiedAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var nextReviewAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     var saving by remember { mutableStateOf(false) }
+    // Set by "Save and rate now": after a new topic is saved, open its first rating instead of going back.
+    var rateNowAfterSave by remember { mutableStateOf(false) }
     var archivedDuplicate by remember { mutableStateOf<StudyUnitEntity?>(null) }
     var editingLog by remember { mutableStateOf<ReviewLogEntity?>(null) }
     var editingLogSaving by remember { mutableStateOf(false) }
@@ -350,6 +359,7 @@ fun AddUnitScreen(
             notes = it.notes ?: ""
             recallPrompt = it.recallPrompt ?: ""
             keyPointsText = it.keyPoints ?: ""
+            showKeyPointsField = !it.keyPoints.isNullOrBlank()
             sourceLink = it.source ?: ""
             highYield = it.highYield
             selectedSubjectId = it.subjectId
@@ -373,6 +383,34 @@ fun AddUnitScreen(
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
     val fmtDate: (Long) -> String = { m -> com.example.ui.i18n.AppDate.date(useJalali, m) }
 
+    // One save path for both buttons: the top bar's Save, and "Save and rate now" for a new topic.
+    fun save(rateNow: Boolean) {
+        if (saving) return
+        saving = true
+        rateNowAfterSave = rateNow
+        // System and study type were removed as v1 bloat (columns kept, dormant).
+        // The recall prompt was too, until it returned as an optional field.
+        viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
+            onSaved = { newId ->
+                com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
+                com.example.widget.DueWidgetProvider.updateAll(reminderContext) // new topic changes today's count
+                if (rateNowAfterSave && newId != null) onRateNow(newId) else onBack()
+            },
+            onError = { saving = false },
+            onDuplicate = {
+                saving = false
+                android.widget.Toast.makeText(
+                    reminderContext,
+                    if (strings.languageCode == "fa") "این مبحث از قبل وجود دارد. برای تفکیک، درس یا یادداشت متفاوتی اضافه کن." else if (strings.languageCode == "de") "Dieses Thema gibt es schon. Gib einem der beiden ein anderes Fach oder eine andere Notiz." else "This topic already exists. To keep both, give one a different subject or note.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            },
+            onArchivedDuplicate = { archived ->
+                saving = false
+                archivedDuplicate = archived
+            })
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -384,32 +422,7 @@ fun AddUnitScreen(
                 },
                 actions = {
                     TextButton(
-                        onClick = {
-                            if (!saving) {
-                                saving = true
-                                // System and study type were removed as v1 bloat (columns kept, dormant).
-                                // The recall prompt was too, until it returned as an optional field.
-                                viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
-                                    onSaved = {
-                                        com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
-                                        com.example.widget.DueWidgetProvider.updateAll(reminderContext) // new topic changes today's count
-                                        onBack()
-                                    },
-                                    onError = { saving = false },
-                                    onDuplicate = {
-                                        saving = false
-                                        android.widget.Toast.makeText(
-                                            reminderContext,
-                                            if (strings.languageCode == "fa") "این مبحث از قبل وجود دارد. برای تفکیک، درس یا یادداشت متفاوتی اضافه کن." else if (strings.languageCode == "de") "Dieses Thema gibt es schon. Gib einem der beiden ein anderes Fach oder eine andere Notiz." else "This topic already exists. To keep both, give one a different subject or note.",
-                                            android.widget.Toast.LENGTH_LONG
-                                        ).show()
-                                    },
-                                    onArchivedDuplicate = { archived ->
-                                        saving = false
-                                        archivedDuplicate = archived
-                                    })
-                            }
-                        },
+                        onClick = { save(rateNow = false) },
                         enabled = title.isNotBlank() && !saving,
                         // A greyed-out Save with no stated reason is a dead end — invisible to a
                         // screen reader and a guessing game for everyone else. Name the one thing
@@ -453,10 +466,10 @@ fun AddUnitScreen(
                             archivedDuplicate = null
                             saving = true
                             viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
-                                onSaved = {
+                                onSaved = { newId ->
                                     com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                                     com.example.widget.DueWidgetProvider.updateAll(reminderContext)
-                                    onBack()
+                                    if (rateNowAfterSave && newId != null) onRateNow(newId) else onBack()
                                 },
                                 onError = { saving = false },
                                 skipArchivedDuplicateCheck = true)
@@ -488,20 +501,21 @@ fun AddUnitScreen(
                 shape = RoundedCornerShape(12.dp)
             )
             Spacer(modifier = Modifier.height(12.dp))
-            // OPTIONAL recall prompt — what "remembering this topic" should mean. A bare title such as
-            // "Appendicitis" leaves Good vs Forgot undefined (the presentation? the whole framework?),
-            // and that ambiguity sits under every interval the scheduler computes. Cut as v1 bloat,
-            // restored in 2026-09 at the user's request; the review screen already shows it under the
-            // title, before the notes.
+            // OPTIONAL scope (stored as recallPrompt) — what this topic covers. A bare title such as
+            // "Appendicitis" leaves open what "I still remembered it" means (the presentation? the whole
+            // framework?), and that ambiguity sits under every rating the scheduler learns from. Worded as
+            // scope, not as a quiz question: a review is whatever the learner chooses (questions, notes,
+            // a lecture, a video), so this names what to cover, not what to recite. Shown under the title
+            // at every review.
             OutlinedTextField(
                 value = recallPrompt,
                 onValueChange = { recallPrompt = it },
                 label = {
                     Text(
                         when (strings.languageCode) {
-                            "fa" -> "چه چیزی را باید بتوانی به یاد بیاوری؟ (اختیاری)"
-                            "de" -> "Was solltest du abrufen können? (optional)"
-                            else -> "What should you be able to recall? (optional)"
+                            "fa" -> "این مبحث شامل چه چیزهایی است؟ (اختیاری)"
+                            "de" -> "Was umfasst dieses Thema? (optional)"
+                            else -> "What does this topic cover? (optional)"
                         }
                     )
                 },
@@ -517,9 +531,9 @@ fun AddUnitScreen(
                 supportingText = {
                     Text(
                         when (strings.languageCode) {
-                            "fa" -> "هنگام مرور، پیش از یادداشت‌هایت نشان داده می‌شود."
-                            "de" -> "Wird beim Wiederholen vor deinen Notizen angezeigt."
-                            else -> "Shown when you review, before your notes."
+                            "fa" -> "در هر مرور زیر عنوان نشان داده می‌شود تا بدانی مرور شامل چه چیزهایی است."
+                            "de" -> "Steht bei jeder Wiederholung unter dem Titel, damit klar ist, was dazugehört."
+                            else -> "Shown under the title at every review, so you know what the review covers."
                         }
                     )
                 },
@@ -529,49 +543,51 @@ fun AddUnitScreen(
                 maxLines = 3,
                 shape = RoundedCornerShape(12.dp)
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            // OPTIONAL key points (DB v8): the answer split into the ideas a complete recall must hold.
-            // Ticked at each review, they cap the memory rating (see KeyPoints for the evidence). The
-            // editor stops at MAX_POINTS rather than truncating what was typed.
-            val keyPointCount = com.example.domain.srs.KeyPoints.parse(keyPointsText).size
-            val faNum: (Int) -> String = { if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(it.toString()) else it.toString() }
-            OutlinedTextField(
-                value = keyPointsText,
-                onValueChange = { typed -> if (com.example.domain.srs.KeyPoints.withinLimit(typed)) keyPointsText = typed },
-                label = {
-                    Text(
-                        when (strings.languageCode) {
-                            "fa" -> "نکات کلیدی (اختیاری)"
-                            "de" -> "Kernpunkte (optional)"
-                            else -> "Key points (optional)"
-                        }
-                    )
-                },
-                placeholder = {
-                    Text(
-                        when (strings.languageCode) {
-                            "fa" -> "هر نکته در یک خط"
-                            "de" -> "Ein Punkt pro Zeile"
-                            else -> "One point per line"
-                        }
-                    )
-                },
-                supportingText = {
-                    val counter = "${faNum(keyPointCount)}/${faNum(com.example.domain.srs.KeyPoints.MAX_POINTS)}"
-                    Text(
-                        when (strings.languageCode) {
-                            "fa" -> "در هر مرور نکاتی را که به یاد آوردی تیک می‌زنی و ارزیابی حافظه از آن بالاتر نمی‌رود. $counter"
-                            "de" -> "Bei jeder Wiederholung hakst du die abgerufenen an; die Bewertung liegt nie darüber. $counter"
-                            else -> "At each review you tick the ones you recalled; the rating can't go above them. $counter"
-                        }
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                textStyle = LocalTextStyle.current.autoDirection(),
-                minLines = 2,
-                maxLines = 8,
-                shape = RoundedCornerShape(12.dp)
-            )
+            // KEY POINTS, legacy: only for a topic that already has some (see KeyPoints). They are shown with
+            // the notes at review time and no longer score or cap anything. The editor still stops at
+            // MAX_POINTS rather than truncating what was typed.
+            if (showKeyPointsField) {
+                Spacer(modifier = Modifier.height(12.dp))
+                val keyPointCount = com.example.domain.srs.KeyPoints.parse(keyPointsText).size
+                val faNum: (Int) -> String = { if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(it.toString()) else it.toString() }
+                OutlinedTextField(
+                    value = keyPointsText,
+                    onValueChange = { typed -> if (com.example.domain.srs.KeyPoints.withinLimit(typed)) keyPointsText = typed },
+                    label = {
+                        Text(
+                            when (strings.languageCode) {
+                                "fa" -> "نکات کلیدی (اختیاری)"
+                                "de" -> "Kernpunkte (optional)"
+                                else -> "Key points (optional)"
+                            }
+                        )
+                    },
+                    placeholder = {
+                        Text(
+                            when (strings.languageCode) {
+                                "fa" -> "هر نکته در یک خط"
+                                "de" -> "Ein Punkt pro Zeile"
+                                else -> "One point per line"
+                            }
+                        )
+                    },
+                    supportingText = {
+                        val counter = "${faNum(keyPointCount)}/${faNum(com.example.domain.srs.KeyPoints.MAX_POINTS)}"
+                        Text(
+                            when (strings.languageCode) {
+                                "fa" -> "هنگام مرور همراه یادداشت‌هایت نشان داده می‌شود. $counter"
+                                "de" -> "Wird beim Wiederholen mit deinen Notizen angezeigt. $counter"
+                                else -> "Shown with your notes when you review. $counter"
+                            }
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = LocalTextStyle.current.autoDirection(),
+                    minLines = 2,
+                    maxLines = 8,
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
             Text(strings.subjectFolder, style = MaterialTheme.typography.titleSmall)
@@ -683,9 +699,9 @@ fun AddUnitScreen(
             Text(
                 text = when (strings.languageCode) {
                     // Not "key points": those have their own field now, and this hint used to promise them here.
-                    "fa" -> "یک خلاصه، یا هر چیزی که موقع مرور کمکت می‌کند خودت را بسنجی."
-                    "de" -> "Eine kurze Zusammenfassung oder alles, womit du dich beim Wiederholen prüfen kannst."
-                    else -> "A short summary, or anything that helps you check yourself at review time."
+                    "fa" -> "یک خلاصه، نکته‌های مهم، اشتباه‌هایی که باید حواست باشد، یا هر چیزی که موقع مرور به کارت می‌آید."
+                    "de" -> "Eine kurze Zusammenfassung, Merkpunkte, typische Fehler — alles, was dir beim Wiederholen hilft."
+                    else -> "A short summary, high-yield points, mistakes to watch for — anything useful when you review."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -744,7 +760,7 @@ fun AddUnitScreen(
             
             if (unitId == null) {
                 Text(
-                    text = if (strings.languageCode == "fa") "این مبحث برای اولین مرور در تب «امروز» نمایش داده می‌شود؛ همان‌جا سختی و میزان درکت را ثبت می‌کنی." else if (strings.languageCode == "de") "Es erscheint unter Heute zur ersten Wiederholung — dort bewertest du Schwierigkeit & Verständnis." else "This appears in Today for its first review — you'll rate difficulty & understanding there.",
+                    text = if (strings.languageCode == "fa") "بعد از ذخیره، سختی و میزان درکت را ثبت می‌کنی — همین حالا یا بعداً در تب «امروز». برنامهٔ مرور از لحظهٔ همین ثبت شروع می‌شود." else if (strings.languageCode == "de") "Nach dem Speichern bewertest du Schwierigkeit & Verständnis — jetzt gleich oder später unter Heute. Der Wiederholungsplan zählt ab dieser Bewertung." else "After saving, you rate difficulty & understanding — right away, or later in Today. The review schedule counts from that rating.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -811,6 +827,28 @@ fun AddUnitScreen(
                         model = com.example.domain.srs.MedScheduler.MemoryModel.of(unit.memoryModel),
                         parameterSetId = unit.parameterSetId,
                         modifier = Modifier.fillMaxWidth().height(100.dp),
+                    )
+                }
+            }
+
+            // A NEW topic studied today or earlier can be rated straight away: the study just happened, and
+            // the schedule counts from the rating, so rating now keeps the first review on time. A topic
+            // planned for a future day is rated on that day, from Today.
+            if (unitId == null && (studiedAt ?: 0L) <= System.currentTimeMillis()) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(
+                    onClick = { save(rateNow = true) },
+                    enabled = title.isNotBlank() && !saving,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    shape = RoundedCornerShape(percent = 50),
+                ) {
+                    Text(
+                        when (strings.languageCode) {
+                            "fa" -> "ذخیره و ثبت همین حالا"
+                            "de" -> "Speichern und jetzt bewerten"
+                            else -> "Save and rate now"
+                        },
+                        fontWeight = FontWeight.Bold,
                     )
                 }
             }
@@ -905,6 +943,30 @@ fun AddUnitScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )
+                            // How this review was done, when the learner said (pilot research data).
+                            val methods = com.example.domain.model.ReviewMethod.decode(log.reviewMethods)
+                            val hasScore = com.example.domain.model.QuestionScore.isValid(log.questionsCorrect, log.questionsTotal)
+                            if (methods.isNotEmpty() || hasScore) {
+                                val fa = strings.languageCode == "fa"
+                                val methodText = methods.joinToString(" · ") { m ->
+                                    when (m) {
+                                        com.example.domain.model.ReviewMethod.Questions -> when (strings.languageCode) { "fa" -> "تست و سؤال"; "de" -> "Fragen"; else -> "Questions" }
+                                        com.example.domain.model.ReviewMethod.Reading -> when (strings.languageCode) { "fa" -> "خواندن"; "de" -> "Lesen"; else -> "Reading" }
+                                        com.example.domain.model.ReviewMethod.Lecture -> when (strings.languageCode) { "fa" -> "کلاس یا ویدیو"; "de" -> "Vorlesung / Video"; else -> "Lecture / video" }
+                                        com.example.domain.model.ReviewMethod.Other -> when (strings.languageCode) { "fa" -> "روش دیگر"; "de" -> "Anders"; else -> "Other" }
+                                    }
+                                }
+                                val scoreText = if (hasScore) {
+                                    val raw = "${log.questionsCorrect}/${log.questionsTotal}"
+                                    if (fa) com.example.ui.i18n.PersianDate.faDigits(raw) else raw
+                                } else null
+                                Text(
+                                    text = listOfNotNull(methodText.ifBlank { null }, scoreText).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -1028,7 +1090,7 @@ fun AddUnitScreen(
                 onConfirm = { millis -> studiedAt = millis; showStudiedAtPicker = false },
             )
         } else {
-            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = studiedAt ?: System.currentTimeMillis())
+            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(studiedAt ?: System.currentTimeMillis()))
             DatePickerDialog(
                 onDismissRequest = { showStudiedAtPicker = false },
                 confirmButton = {
@@ -1054,7 +1116,7 @@ fun AddUnitScreen(
                 onConfirm = { millis -> nextReviewAt = millis; showNextReviewAtPicker = false },
             )
         } else {
-            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = nextReviewAt ?: (System.currentTimeMillis() + 86400000))
+            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(nextReviewAt ?: (System.currentTimeMillis() + 86400000)))
             DatePickerDialog(
                 onDismissRequest = { showNextReviewAtPicker = false },
                 confirmButton = {

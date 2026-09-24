@@ -16,10 +16,7 @@ interface StudyUnitDao {
     @Query("SELECT * FROM study_units WHERE archived = 0 AND nextReviewAt <= :cutoffTime ORDER BY nextReviewAt ASC")
     fun getDueUnits(cutoffTime: Long): Flow<List<StudyUnitEntity>>
 
-    @Query("SELECT COUNT(*) FROM study_units WHERE archived = 0 AND nextReviewAt <= :cutoffTime")
-    suspend fun getDueCount(cutoffTime: Long): Int
-
-    /** Due units for the rich reminder — high-yield first, then soonest-due. One-shot (not a Flow). */
+    /** Due units, one-shot (not a Flow): today's plan (DailyPlan) is built from these. */
     @Query("SELECT * FROM study_units WHERE archived = 0 AND nextReviewAt <= :cutoffTime ORDER BY highYield DESC, nextReviewAt ASC")
     suspend fun getDueUnitsList(cutoffTime: Long): List<StudyUnitEntity>
 

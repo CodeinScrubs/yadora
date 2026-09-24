@@ -53,12 +53,15 @@ interface ReviewLogDao {
     suspend fun getRecentRecallLogsOnce(model: String, parameterSetId: Long, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
 
     /**
-     * The most recently measured review durations, newest first, for the Today time estimate. Rows
-     * under five seconds are mis-taps or undo churn, not reviews; the commit path already caps a
-     * duration at 30 minutes.
+     * Reviews committed since [since], first ratings excluded: what the daily limit counts. A first
+     * rating logs a study that already happened, so it never uses up the day's reviews.
      */
-    @Query("SELECT reviewDurationMs FROM review_logs WHERE reviewDurationMs >= 5000 ORDER BY reviewedAt DESC, id DESC LIMIT :limit")
-    suspend fun getRecentReviewDurationsMs(limit: Int): List<Long>
+    @Query("SELECT COUNT(*) FROM review_logs WHERE reviewedAt >= :since AND logType != 'FIRST_STUDY'")
+    suspend fun countReviewsSince(since: Long): Int
+
+    /** [countReviewsSince] as a Flow, for the Today screen. */
+    @Query("SELECT COUNT(*) FROM review_logs WHERE reviewedAt >= :since AND logType != 'FIRST_STUDY'")
+    fun observeReviewsSince(since: Long): Flow<Int>
 
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")

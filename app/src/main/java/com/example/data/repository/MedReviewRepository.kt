@@ -560,18 +560,43 @@ class MedReviewRepository(
     }
 
     /**
-     * How long one review actually takes THIS user, in minutes: the median of the last 50 measured
-     * durations, or two minutes until at least ten exist. Feeds only the Today estimate ("about N
-     * min"), which used to assume a flat two minutes per topic for everyone.
+     * Today's plan ([com.example.ui.today.DailyPlan]): every never-rated topic due today, plus the due
+     * reviews that fit in what is left of the daily limit. The one definition the review session, the
+     * Today screen, the reminders and the widget all count from, so none of them can disagree.
      */
-    suspend fun typicalReviewMinutes(): Double {
-        val ms = reviewLogDao.getRecentReviewDurationsMs(50)
-        if (ms.size < 10) return 2.0
-        val sorted = ms.sorted()
-        val median = if (sorted.size % 2 == 1) sorted[sorted.size / 2].toDouble()
-            else (sorted[sorted.size / 2 - 1] + sorted[sorted.size / 2]) / 2.0
-        return (median / 60_000.0).coerceIn(0.5, 15.0)
+    suspend fun todayPlan(
+        dailyLimit: Int,
+        now: Long = System.currentTimeMillis(),
+        ignoreLimit: Boolean = false,
+    ): com.example.ui.today.DailyPlan.Plan {
+        val due = studyUnitDao.getDueUnitsList(com.example.ui.today.DayBounds.endOf(now))
+        val done = reviewLogDao.countReviewsSince(com.example.ui.today.DayBounds.startOf(now))
+        return com.example.ui.today.DailyPlan.plan(due, done, dailyLimit, now, ignoreLimit)
     }
+
+    /**
+     * "Review ahead" ([com.example.ui.today.ReviewAhead]): rated topics not due today, the lowest current
+     * recall first, read on each topic's OWN model and weight set. A topic whose recall cannot be computed
+     * is left out rather than guessed at. Reads no exam date.
+     */
+    suspend fun reviewAheadQueue(
+        now: Long = System.currentTimeMillis(),
+        limit: Int = com.example.ui.today.ReviewAhead.SESSION_SIZE,
+    ): List<StudyUnitEntity> = com.example.ui.today.ReviewAhead.order(
+        active = studyUnitDao.getAllActiveOnce(),
+        now = now,
+        recall = { u ->
+            runCatching {
+                val model = MedScheduler.MemoryModel.of(u.memoryModel)
+                val elapsed = MedScheduler.modelElapsedDays(u.lastReviewedAt ?: u.studiedAt, now, model)
+                MedScheduler.retrievability(elapsed, u.stability, model, u.parameterSetId)
+            }.getOrNull()
+        },
+        limit = limit,
+    )
+
+    /** Reviews (first ratings excluded) committed since [since], live. */
+    fun observeReviewsSince(since: Long): Flow<Int> = reviewLogDao.observeReviewsSince(since)
 
     /**
      * How many answers in a row, counting back from the topic's latest log, left understanding

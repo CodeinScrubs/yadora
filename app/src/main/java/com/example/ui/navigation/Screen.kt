@@ -8,7 +8,15 @@ sealed class Screen {
     @Serializable data object Progress : Screen()
     @Serializable data object AddUnit : Screen()
     @Serializable data class EditUnit(val unitId: Long) : Screen()
-    @Serializable data class ReviewSession(val unitId: Long = -1L) : Screen()
+    /**
+     * [ignoreLimit]: the learner chose "review more anyway" after today's limit was used up.
+     * [ahead]: "review ahead" -- topics not yet due, weakest first (ReviewAhead).
+     */
+    @Serializable data class ReviewSession(
+        val unitId: Long = -1L,
+        val ignoreLimit: Boolean = false,
+        val ahead: Boolean = false,
+    ) : Screen()
     @Serializable data object Settings : Screen()
     @Serializable data object ThemeSettings : Screen()
 }

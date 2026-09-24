@@ -3,7 +3,6 @@ package com.example.ui.review
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -69,6 +68,20 @@ internal fun intervalButtonLabel(days: Double): String {
     return if (tenths % 1.0 == 0.0) "${tenths.toLong()}d" else "${tenths}d"
 }
 
+/**
+ * [intervalButtonLabel] in the user's language. Persian gets Persian digits and the unit as a word:
+ * "۳٫۲d" mixed two scripts on one button while every other number on the screen was Persian.
+ */
+internal fun localizedIntervalLabel(days: Double, languageCode: String): String {
+    val latin = intervalButtonLabel(days)
+    if (languageCode != "fa") return latin
+    return when {
+        latin == "<1h" -> "کمتر از ۱ ساعت"
+        latin.endsWith("h") -> "${com.example.ui.i18n.PersianDate.faDigits(latin.dropLast(1))} ساعت"
+        else -> "${com.example.ui.i18n.PersianDate.faDigits(latin.dropLast(1).replace('.', '٫'))} روز"
+    }
+}
+
 /** True if [earlier] falls on an earlier local calendar day than [later]. */
 private fun isEarlierLocalDay(earlier: Long, later: Long): Boolean {
     val c = java.util.Calendar.getInstance()
@@ -93,9 +106,15 @@ class ReviewViewModel(
     application: android.app.Application,
     private val repository: MedReviewRepository
 ) : androidx.lifecycle.AndroidViewModel(application) {
-    data class ReviewHistoryItem(val unitBeforeRating: StudyUnitEntity, val logId: Long, val ratingGiven: MemoryRating)
+    data class ReviewHistoryItem(
+        val unitBeforeRating: StudyUnitEntity,
+        val logId: Long,
+        val ratingGiven: MemoryRating,
+        /** A first rating logs a study; it is counted apart from reviews in the session summary. */
+        val wasFirstRating: Boolean,
+    )
     private val ratedStack = mutableListOf<ReviewHistoryItem>()
-    
+
     private val dueUnits = mutableListOf<StudyUnitEntity>()
 
     /**
@@ -107,10 +126,27 @@ class ReviewViewModel(
      */
     private var sessionStarted = false
 
-    fun startSessionOnce(cutoffTime: Long, unitId: Long = -1L) {
+    /**
+     * Which kind of session this is, stamped on every log it writes (research data: an early review is a
+     * different measurement from an on-time one). Set once, when the session starts.
+     */
+    private var sessionKind = com.example.domain.model.SessionKind.PLAN
+
+    /**
+     * @param unitId one topic to review now (from a Today card or the Library), or -1 for today's plan.
+     * @param ignoreLimit the learner chose "review more anyway" after today's limit was used up.
+     * @param ahead "review ahead": topics not yet due, weakest first ([com.example.ui.today.ReviewAhead]).
+     */
+    fun startSessionOnce(unitId: Long = -1L, ignoreLimit: Boolean = false, ahead: Boolean = false) {
         if (sessionStarted) return
         sessionStarted = true
-        loadNext(cutoffTime, unitId)
+        sessionKind = when {
+            unitId != -1L -> com.example.domain.model.SessionKind.TOPIC
+            ahead -> com.example.domain.model.SessionKind.AHEAD
+            ignoreLimit -> com.example.domain.model.SessionKind.EXTRA
+            else -> com.example.domain.model.SessionKind.PLAN
+        }
+        loadNext(unitId, ignoreLimit, ahead)
     }
     
     private val _currentUnit = MutableStateFlow<StudyUnitEntity?>(null)
@@ -126,6 +162,9 @@ class ReviewViewModel(
     var sessionGood by androidx.compose.runtime.mutableStateOf(0)
         private set
     var sessionForgot by androidx.compose.runtime.mutableStateOf(0)
+        private set
+    /** First ratings (studies logged) this session. Their Easy/Medium/Hard is a difficulty, not recall. */
+    var sessionNew by androidx.compose.runtime.mutableStateOf(0)
         private set
     var canUndo by androidx.compose.runtime.mutableStateOf(false)
         private set
@@ -200,7 +239,7 @@ class ReviewViewModel(
         }
     }
 
-    fun loadNext(cutoffTime: Long, unitId: Long = -1L) {
+    fun loadNext(unitId: Long = -1L, ignoreLimit: Boolean = false, ahead: Boolean = false) {
         viewModelScope.launch {
             if (dueUnits.isEmpty() && _currentUnit.value == null) {
                 // The per-user interval correction, refreshed once per session from the logs. Read
@@ -216,20 +255,20 @@ class ReviewViewModel(
                         dueUnits.add(unit)
                         advanceUnit()
                     }
+                } else if (ahead) {
+                    // Not yet due, weakest predicted recall first. Ordinary reviews in every other respect:
+                    // each one is scored by FSRS at its real elapsed time and rescheduled from there.
+                    dueUnits.clear()
+                    dueUnits.addAll(repository.reviewAheadQueue())
+                    advanceUnit()
                 } else {
                     val sharedPrefs = getApplication<android.app.Application>().getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
                     val limit = MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f))
-                    val now = System.currentTimeMillis()
-                    val units = repository.getDueUnits(cutoffTime).first()
+                    // Today's plan: every first rating, then the most urgent reviews that fit in what is
+                    // left of the DAILY limit (DailyPlan). The same plan Today and the reminders count.
+                    val plan = repository.todayPlan(limit, ignoreLimit = ignoreLimit)
                     dueUnits.clear()
-                    // Priority order so the most important items survive the daily cap, not just the
-                    // earliest-due ones: high-yield, weak/relearn, lapses, and how overdue they are.
-                    val prioritized = units.sortedByDescending { u ->
-                        com.example.domain.srs.MedScheduler.priorityScore(
-                            u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
-                        )
-                    }
-                    dueUnits.addAll(prioritized.take(limit))
+                    dueUnits.addAll(plan.queue)
                     advanceUnit()
                 }
             }
@@ -314,9 +353,9 @@ class ReviewViewModel(
         val core = when {
             firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
             memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else if (de) "Vergessen — morgen kommt es zum Neulernen zurück." else "Forgot — it's back tomorrow to relearn."
-            memory == MemoryRating.Hard -> if (fa) "سخت بود، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es war schwer, also blieb der Abstand kurz — nächste $days." else "It felt hard, so the gap stayed short — next $days."
+            memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es gab Lücken, also blieb der Abstand kurz — nächste $days." else "There were gaps, so it comes back soon — next $days."
             memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — weiter hinausgeschoben, nächste $days." else "Easy — pushed out, next $days."
-            else -> if (fa) "خوب به یاد آوردی — مرور بعدی $days." else if (de) "Gut erinnert — nächste $days." else "Recalled well — next $days."
+            else -> if (fa) "خوب یادت مانده بود — مرور بعدی $days." else if (de) "Gut behalten — nächste $days." else "Remembered well — next $days."
         }
         // When the understanding clock wins, name the memory estimate too. "A bit sooner" alone hid
         // how far apart the two can be — a 100-day memory prediction with a 3-day repair is not
@@ -355,7 +394,9 @@ class ReviewViewModel(
                 // Counters adjust only AFTER the undo transaction succeeds (mirror of rateCurrentUnit).
                 canUndo = ratedStack.isNotEmpty()
                 sessionCount = (sessionCount - 1).coerceAtLeast(0)
-                when (historyItem.ratingGiven) {
+                if (historyItem.wasFirstRating) {
+                    sessionNew = (sessionNew - 1).coerceAtLeast(0)
+                } else when (historyItem.ratingGiven) {
                     MemoryRating.Forgot -> sessionForgot = (sessionForgot - 1).coerceAtLeast(0)
                     MemoryRating.Hard -> sessionHard = (sessionHard - 1).coerceAtLeast(0)
                     MemoryRating.Good, MemoryRating.Easy -> sessionGood = (sessionGood - 1).coerceAtLeast(0)
@@ -377,21 +418,22 @@ class ReviewViewModel(
     }
 
     /**
-     * @param keyPointsRecalled how many of the displayed topic's key points the learner ticked (0 when it
-     *        has none). Required, not defaulted: a call site that forgot it would log every scored review
-     *        as unscored and let a rating past the ticks through.
+     * Commit a rating for the topic on screen. A review can be anything the learner chose — questions,
+     * rereading, a lecture, a video — so the memory rating is their own judgement of how much they still
+     * had when they came back to it, never capped by anything the app scored.
      */
-    fun rateCurrentUnit(memoryRating: MemoryRating, understandingRating: UnderstandingRating, understandingAsked: Boolean = true, keyPointsRecalled: Int) {
+    fun rateCurrentUnit(
+        memoryRating: MemoryRating,
+        understandingRating: UnderstandingRating,
+        understandingAsked: Boolean = true,
+        // Pilot research data, optional and never scheduled from: how the learner reviewed, and a question
+        // score if they entered one. Anything that is not a real count is stored as "not recorded".
+        methods: Set<com.example.domain.model.ReviewMethod> = emptySet(),
+        questionsCorrect: Int? = null,
+        questionsTotal: Int? = null,
+    ) {
         if (isProcessing) return
-        val shown = _currentUnit.value ?: return
-        val currentId = shown.id
-        // What the learner was scored against is what they SAW, so the count comes from the displayed row.
-        val keyPointsTotal = com.example.domain.srs.KeyPoints.parse(shown.keyPoints).size
-        // The ticks cap the rating (KeyPoints). The buttons already enforce it; this is the backstop, so no
-        // path commits a rating the learner's own scoring does not support. A first check-in is not a
-        // recall and is never scored.
-        val scored = keyPointsTotal > 0 && MedScheduler.effectiveReviewNumber(shown.reviewCount) > 0
-        if (scored && !com.example.domain.srs.KeyPoints.allows(memoryRating, keyPointsTotal, keyPointsRecalled)) return
+        val currentId = _currentUnit.value?.id ?: return
         isProcessing = true
 
         viewModelScope.launch {
@@ -475,6 +517,8 @@ class ReviewViewModel(
                 updatedAt = now
             )
 
+            val score = if (reviewNumber == 0) -1 to -1
+                else com.example.domain.model.QuestionScore.normalized(questionsCorrect, questionsTotal)
             val log = com.example.data.local.entity.ReviewLogEntity(
                 studyUnitId = unit.id,
                 reviewedAt = now,
@@ -508,11 +552,16 @@ class ReviewViewModel(
                     if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
                 // v7: the per-user interval correction this review was scheduled with.
                 calibrationScaleAtReview = MedScheduler.calibrationScale,
-                // v8: how this review scored against the key points the learner was shown.
-                keyPointsTotal = if (reviewNumber > 0 && keyPointsTotal > 0) keyPointsTotal else -1,
-                keyPointsRecalled = if (reviewNumber > 0 && keyPointsTotal > 0) keyPointsRecalled.coerceIn(0, keyPointsTotal) else -1,
+                // v8 key-point score: not scored since the rating cap was retired (KeyPoints).
+                keyPointsTotal = -1,
+                keyPointsRecalled = -1,
                 // v9: the weight set this prediction and interval came from.
                 parameterSetId = unit.parameterSetId,
+                // v10 research data. A first study is not a review, so it records no method or score.
+                reviewMethods = if (reviewNumber == 0) null else com.example.domain.model.ReviewMethod.encode(methods),
+                questionsCorrect = score.first,
+                questionsTotal = score.second,
+                sessionKind = sessionKind.name,
             )
             // Update the unit's schedule AND insert its log atomically (one Room transaction), then
             // remember the exact log id so Undo deletes precisely this log.
@@ -520,12 +569,14 @@ class ReviewViewModel(
             // Session counters update only AFTER the commit succeeds — a failed write must never be
             // counted as a completed review in the session summary.
             sessionCount++
-            when (memoryRating) {
+            if (reviewNumber == 0) {
+                sessionNew++
+            } else when (memoryRating) {
                 MemoryRating.Forgot -> sessionForgot++
                 MemoryRating.Hard -> sessionHard++
                 MemoryRating.Good, MemoryRating.Easy -> sessionGood++
             }
-            ratedStack.add(ReviewHistoryItem(unit.copy(), logId, memoryRating))
+            ratedStack.add(ReviewHistoryItem(unit.copy(), logId, memoryRating, wasFirstRating = reviewNumber == 0))
             canUndo = ratedStack.isNotEmpty()
             // (The growth event is inserted inside commitReview's transaction, keyed to the log id,
             // so a committed review and its growth can never disagree — and undo removes both.)
@@ -604,22 +655,21 @@ class ReviewViewModel(
 fun ReviewSessionScreen(
     repository: MedReviewRepository,
     unitId: Long = -1L,
+    /** Today's limit was used up and the learner chose "review more anyway". */
+    ignoreLimit: Boolean = false,
+    /** "Review ahead": topics not yet due, weakest first. */
+    ahead: Boolean = false,
     onNavigateToEdit: (Long) -> Unit,
     onFinish: () -> Unit
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as android.app.Application
     val viewModel: ReviewViewModel = viewModel(factory = ReviewViewModelFactory(application, repository))
-    
-    LaunchedEffect(unitId) {
-        val endOfDay = java.util.Calendar.getInstance().apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 23)
-            set(java.util.Calendar.MINUTE, 59)
-            set(java.util.Calendar.SECOND, 59)
-        }.timeInMillis
-        viewModel.startSessionOnce(endOfDay, unitId = unitId)
+
+    LaunchedEffect(unitId, ignoreLimit, ahead) {
+        viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead)
     }
-    
+
     val currentUnitState by viewModel.currentUnit.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val strings = com.example.ui.i18n.LocalStrings.current
@@ -627,14 +677,11 @@ fun ReviewSessionScreen(
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     // Localized numerals: Persian digits in fa, Latin otherwise.
     val num: (Any) -> String = { if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(it.toString()) else it.toString() }
-    
-    // Survives configuration changes for the same reason: having revealed the source, the learner
-    // should not be silently returned to the pre-reveal screen.
-    var showNotes by rememberSaveable(currentUnitState) { mutableStateOf(false) }
+
     // rememberSaveable, not remember: a rotation, a dark-mode toggle, a split-screen resize or a
     // font-size change destroys composition, and with plain remember the learner was thrown back to
-    // the recall step having already answered it. Stored as the enum NAME because MemoryRating is
-    // not Parcelable; keyed on the unit so moving to the next topic still clears it.
+    // the first rating step having already answered it. Keyed on the unit so moving to the next topic
+    // still clears it.
     var selectedMemory by rememberSaveable(
         currentUnitState,
         // Saved as the enum NAME (MemoryRating is not Parcelable); an unknown name restores as null
@@ -644,18 +691,29 @@ fun ReviewSessionScreen(
             restore = { name -> runCatching { MemoryRating.valueOf(name) }.getOrNull() },
         ),
     ) { mutableStateOf<MemoryRating?>(null) }
-    // Which key points the learner ticked as recalled, by index. Saveable and keyed on the unit for the
-    // same reasons as the two states above.
-    var tickedKeyPoints by rememberSaveable(currentUnitState) { mutableStateOf(emptyList<Int>()) }
+
+    // Optional pilot research data for THIS topic: how the learner reviewed, and a question score. Reset for
+    // every topic (a remembered choice would record a method nobody picked), saved across rotation.
+    var reviewMethods by rememberSaveable(
+        currentUnitState,
+        stateSaver = androidx.compose.runtime.saveable.Saver<Set<com.example.domain.model.ReviewMethod>, String>(
+            save = { com.example.domain.model.ReviewMethod.encode(it).orEmpty() },
+            restore = { com.example.domain.model.ReviewMethod.decode(it) },
+        ),
+    ) { mutableStateOf(emptySet<com.example.domain.model.ReviewMethod>()) }
+    var questionsRight by rememberSaveable(currentUnitState) { mutableStateOf("") }
+    var questionsTotal by rememberSaveable(currentUnitState) { mutableStateOf("") }
+    // Only a Questions review carries a score; unticking Questions drops what was typed.
+    fun scoreOrNull(field: String): Int? =
+        if (com.example.domain.model.ReviewMethod.Questions in reviewMethods) field.trim().toIntOrNull() else null
 
     // Back steps BACKWARDS through the rating flow and cancels — nothing is committed to the DB until
-    // the understanding rating is tapped. So leaving mid-rating (difficulty chosen, understanding not)
+    // the understanding rating is tapped. So leaving mid-rating (memory chosen, understanding not)
     // never counts as a review. At the first step, back exits the session.
     androidx.activity.compose.BackHandler {
         when {
-            selectedMemory != null -> selectedMemory = null   // understanding step -> back to difficulty
-            showNotes -> showNotes = false                    // difficulty step -> back to recall prompt
-            else -> onFinish()                                // recall step -> exit session
+            selectedMemory != null -> selectedMemory = null   // understanding step -> back to the memory step
+            else -> onFinish()                                // memory step -> exit session
         }
     }
 
@@ -730,9 +788,17 @@ fun ReviewSessionScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
+                            // Reviews only: a first rating's Easy/Medium/Hard says how difficult a fresh study
+                            // felt, not how much was remembered, so it is counted on its own.
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(text = num(viewModel.sessionCount), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                                Text(text = when (strings.languageCode) { "fa" -> "کل مرورها"; "de" -> "Wiederholt"; else -> "Reviewed" }, style = MaterialTheme.typography.labelSmall)
+                                Text(text = num(viewModel.sessionCount - viewModel.sessionNew), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                Text(text = when (strings.languageCode) { "fa" -> "مرور"; "de" -> "Wiederholt"; else -> "Reviewed" }, style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (viewModel.sessionNew > 0) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(text = num(viewModel.sessionNew), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.tertiary)
+                                    Text(text = when (strings.languageCode) { "fa" -> "مطالعهٔ ثبت‌شده"; "de" -> "Neu erfasst"; else -> "Studies logged" }, style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(text = num(viewModel.sessionGood), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.secondary)
@@ -762,9 +828,10 @@ fun ReviewSessionScreen(
             } else {
                 val formattedState = strings.stateLabel(currentUnit.state)
                 val subject = subjects.find { it.id == currentUnit.subjectId }
-                // First study (studied today, never reviewed) vs a recall review (back-dated or later).
+                // First rating (logging a study) vs a later review.
                 val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.reviewCount)
                 val isFreshFirstStudy = previewReviewNumber == 0
+                // Reference only: shown with the notes, never scored (KeyPoints).
                 val keyPointList = remember(currentUnit.keyPoints) { com.example.domain.srs.KeyPoints.parse(currentUnit.keyPoints) }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -782,7 +849,9 @@ fun ReviewSessionScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                         }
                         Text(
-                            text = "${(subject?.name ?: currentUnit.studyType).uppercase()} • ${formattedState.uppercase()}",
+                            // No subject: just the state. studyType is a dormant column ("Topic" for every
+                            // topic added since it was retired) and printed English into every language.
+                            text = listOfNotNull(subject?.name, formattedState).joinToString(" • ").uppercase(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
@@ -795,9 +864,7 @@ fun ReviewSessionScreen(
                         if (viewModel.canUndo) {
                             IconButton(enabled = !viewModel.isProcessing, onClick = {
                                 viewModel.undoLastRating()
-                                showNotes = false
                                 selectedMemory = null
-                                tickedKeyPoints = emptyList()
                             }) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.Undo,
@@ -977,105 +1044,51 @@ fun ReviewSessionScreen(
                             }
                         }
 
-                        if (!showNotes && !isFreshFirstStudy) {
-                            Text(
-                                strings.recallFirstPrompt,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                            // How many points a complete recall holds; the points themselves stay hidden.
-                            if (keyPointList.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(8.dp))
+                        // The topic's own material, always visible. A review is whatever the learner
+                        // chooses — questions, rereading, a lecture, a video — so nothing is hidden
+                        // behind a reveal step: this is reference, and the rating below is their own
+                        // judgement of how much they still had.
+                        if (keyPointList.isNotEmpty()) {
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(12.dp))
+                            keyPointList.forEach { point ->
                                 Text(
-                                    strings.keyPointsCount.format(num(keyPointList.size)),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        } else {
-                            if (keyPointList.isNotEmpty()) {
-                                HorizontalDivider()
-                                Spacer(modifier = Modifier.height(12.dp))
-                                if (isFreshFirstStudy) {
-                                    // Just studied: nothing to score yet, so the points are simply shown.
-                                    keyPointList.forEach { point ->
-                                        Text(
-                                            text = "• $point",
-                                            style = MaterialTheme.typography.bodyLarge.autoDirection(),
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                        )
-                                    }
-                                } else {
-                                    Text(
-                                        strings.keyPointsTitle,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                    // Scoring locks once a memory rating is chosen, so the ticks can never
-                                    // fall below a rating already made; Back to the rating step unlocks it.
-                                    val scoringOpen = selectedMemory == null && !viewModel.isProcessing
-                                    keyPointList.forEachIndexed { index, point ->
-                                        val ticked = index in tickedKeyPoints
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .toggleable(
-                                                    value = ticked,
-                                                    enabled = scoringOpen,
-                                                    role = androidx.compose.ui.semantics.Role.Checkbox,
-                                                    onValueChange = { on ->
-                                                        tickedKeyPoints = if (on) (tickedKeyPoints + index).distinct().sorted()
-                                                            else tickedKeyPoints - index
-                                                    },
-                                                )
-                                                .padding(vertical = 4.dp),
-                                        ) {
-                                            Checkbox(checked = ticked, onCheckedChange = null, enabled = scoringOpen)
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = point,
-                                                style = MaterialTheme.typography.bodyLarge.autoDirection(),
-                                                modifier = Modifier.weight(1f),
-                                            )
-                                        }
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(16.dp))
-                            }
-                            if (!currentUnit.notes.isNullOrBlank()) {
-                                HorizontalDivider()
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = currentUnit.notes!!,
+                                    text = "• $point",
                                     style = MaterialTheme.typography.bodyLarge.autoDirection(),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                                 )
                             }
-                            if (!currentUnit.source.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                val src = currentUnit.source!!.trim()
-                                // Bare domains ("wikipedia.org/...") open too — normalized to https.
-                                // A source with spaces is prose (book/page), not a link.
-                                val openUrl = when {
-                                    src.startsWith("http://") || src.startsWith("https://") -> src
-                                    "." in src && " " !in src -> "https://$src"
-                                    else -> null
+                            Spacer(modifier = Modifier.height(16.dp))
+                        }
+                        if (!currentUnit.notes.isNullOrBlank()) {
+                            HorizontalDivider()
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = currentUnit.notes!!,
+                                style = MaterialTheme.typography.bodyLarge.autoDirection(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (!currentUnit.source.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            val src = currentUnit.source!!.trim()
+                            // Bare domains ("wikipedia.org/...") open too — normalized to https.
+                            // A source with spaces is prose (book/page), not a link.
+                            val openUrl = when {
+                                src.startsWith("http://") || src.startsWith("https://") -> src
+                                "." in src && " " !in src -> "https://$src"
+                                else -> null
+                            }
+                            Text(
+                                text = src,
+                                style = MaterialTheme.typography.bodyMedium.autoDirection(),
+                                color = if (openUrl != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = if (openUrl != null) {
+                                    Modifier.fillMaxWidth().clickable { runCatching { uriHandler.openUri(openUrl) } }
+                                } else {
+                                    Modifier.fillMaxWidth()
                                 }
-                                Text(
-                                    text = src,
-                                    style = MaterialTheme.typography.bodyMedium.autoDirection(),
-                                    color = if (openUrl != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = if (openUrl != null) {
-                                        Modifier.fillMaxWidth().clickable { runCatching { uriHandler.openUri(openUrl) } }
-                                    } else {
-                                        Modifier.fillMaxWidth()
-                                    }
-                                )
-                            }
+                            )
                         }
                     }
                 }
@@ -1083,16 +1096,19 @@ fun ReviewSessionScreen(
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 if (isFreshFirstStudy && selectedMemory == null) {
-                    // FIRST STUDY: you just studied this today — rate how hard the topic was (not recall).
+                    // FIRST RATING: the learner just studied this — rate how difficult the topic was.
                     Text(when (strings.languageCode) { "fa" -> "این مبحث چقدر سخت بود؟"; "de" -> "Wie schwer war dieses Thema?"; else -> "How difficult was this topic?" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    // Retrieval nudge: a rating that follows a real recall attempt is far more diagnostic
-                    // than a "felt fluent while reading" judgment. Costs nothing, reinforces active recall.
                     Text(
-                        // Semantically honest: minutes after studying, "recall without looking" is a
-                        // fluency check, not delayed retrieval. Frame it as the check-in it really is.
-                        if (strings.languageCode == "fa") "این ثبت اولیه، اولین مرور را تنظیم می‌کند — سنجش واقعی حافظه از مرور بعدی و پس از گذشت زمان شروع می‌شود." else if (strings.languageCode == "de") "Dieser Check-in legt die erste Wiederholung fest — das echte Gedächtnistesten beginnt beim nächsten Mal." else "This check-in sets your first review — real memory testing starts next time, after time has passed.",
+                        // The schedule counts from the moment of this rating, so rating right after
+                        // studying keeps the first review honest; say so.
+                        when (strings.languageCode) {
+                            "fa" -> "اولین مرورت از همین لحظه زمان‌بندی می‌شود؛ پس بهتر است همان روزی که خواندی ثبتش کنی."
+                            "de" -> "Die erste Wiederholung wird ab jetzt geplant — am besten also am Lerntag selbst bewerten."
+                            else -> "Your first review is scheduled from this moment, so rate it on the day you studied it."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1106,6 +1122,7 @@ fun ReviewSessionScreen(
                             val tone = com.example.ui.theme.ratingTone(rating)
                             Button(
                                 onClick = { selectedMemory = rating },
+                                enabled = !viewModel.isProcessing,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tone.container,
                                     contentColor = tone.onContainer,
@@ -1124,20 +1141,89 @@ fun ReviewSessionScreen(
                             }
                         }
                     }
-                } else if (!isFreshFirstStudy && !showNotes) {
-                    Button(
-                        onClick = { showNotes = true },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 56.dp),
-                        shape = RoundedCornerShape(percent = 50)
-                    ) {
-                        Text(strings.showNotes, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                } else if (selectedMemory == null) {
+                    // A REVIEW. The learner reviews however they like, in or out of the app; what the
+                    // memory model needs is how much of the topic they still had when they came back to
+                    // it — FSRS's recall outcome — not how the review session felt afterwards.
+                    ReviewMethodPicker(
+                        languageCode = strings.languageCode,
+                        selected = reviewMethods,
+                        onToggle = { m -> reviewMethods = if (m in reviewMethods) reviewMethods - m else reviewMethods + m },
+                        right = questionsRight,
+                        onRight = { questionsRight = it.filter(Char::isDigit).take(3) },
+                        total = questionsTotal,
+                        onTotal = { questionsTotal = it.filter(Char::isDigit).take(3) },
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(strings.memoryQuestion, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Text(
+                        strings.memoryQuestionHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp, start = 8.dp, end = 8.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // One full-width button per rating, each saying what it means, so the choice is made
+                    // against a description rather than a single word.
+                    MemoryRating.entries.reversed().forEach { rating ->
+                        // Warm→cool rating ramp; "Forgot" is calm sienna, never alarm-red.
+                        val tone = com.example.ui.theme.ratingTone(rating)
+                        Button(
+                            onClick = {
+                                if (rating == MemoryRating.Forgot) {
+                                    // Forgot → relearn tomorrow regardless of understanding, so commit
+                                    // now and skip that moot second question (less friction on a miss).
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    viewModel.rateCurrentUnit(
+                                        MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false,
+                                        methods = reviewMethods,
+                                        questionsCorrect = scoreOrNull(questionsRight),
+                                        questionsTotal = scoreOrNull(questionsTotal),
+                                    )
+                                } else {
+                                    selectedMemory = rating
+                                }
+                            },
+                            enabled = !viewModel.isProcessing,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = tone.container,
+                                contentColor = tone.onContainer,
+                            ),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).heightIn(min = 52.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    when (rating) {
+                                        MemoryRating.Forgot -> strings.ratingFail
+                                        MemoryRating.Hard -> strings.ratingHard
+                                        MemoryRating.Good -> strings.ratingGood
+                                        MemoryRating.Easy -> strings.ratingEasy
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.width(88.dp),
+                                )
+                                Text(
+                                    when (rating) {
+                                        MemoryRating.Forgot -> strings.ratingFailMeaning
+                                        MemoryRating.Hard -> strings.ratingHardMeaning
+                                        MemoryRating.Good -> strings.ratingGoodMeaning
+                                        MemoryRating.Easy -> strings.ratingEasyMeaning
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
                     }
                     TextButton(
                         onClick = {
                             viewModel.procrastinateCurrentUnit()
-                            showNotes = false
                             selectedMemory = null
                         },
                         enabled = !viewModel.isProcessing,
@@ -1145,64 +1231,14 @@ fun ReviewSessionScreen(
                     ) {
                         Text(strings.notToday)
                     }
-                } else if (selectedMemory == null) {
-                    Text(strings.memoryRating, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (keyPointList.isNotEmpty()) {
-                        // The reason some ratings are unavailable, stated as the score itself.
-                        Text(
-                            strings.keyPointsScore.format(num(tickedKeyPoints.size), num(keyPointList.size)),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        MemoryRating.entries.forEach { rating ->
-                            // No interval on the memory buttons: the final interval also depends on
-                            // the understanding rating (chosen next), so it's shown on those buttons.
-                            // Warm→cool rating ramp; "Forgot" is calm sienna, never alarm-red.
-                            val tone = com.example.ui.theme.ratingTone(rating)
-                            Button(
-                                onClick = {
-                                    if (rating == MemoryRating.Forgot) {
-                                        // Forgot → relearn tomorrow regardless of understanding, so commit
-                                        // now and skip that moot second question (less friction on a miss).
-                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        viewModel.rateCurrentUnit(MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false, keyPointsRecalled = tickedKeyPoints.size)
-                                    } else {
-                                        selectedMemory = rating
-                                    }
-                                },
-                                // The ticks cap the rating: anything above what the key points support stays off.
-                                enabled = !viewModel.isProcessing &&
-                                    com.example.domain.srs.KeyPoints.allows(rating, keyPointList.size, tickedKeyPoints.size),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = tone.container,
-                                    contentColor = tone.onContainer,
-                                ),
-                                modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                // Four buttons share a phone's width: the default 24 dp side padding left
-                                // "Forgot" too little room and broke it mid-word as "Forg / ot".
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                            ) {
-                                Text(
-                                    when(rating) {
-                                        MemoryRating.Forgot -> strings.ratingFail
-                                        MemoryRating.Hard -> strings.ratingHard
-                                        MemoryRating.Good -> strings.ratingGood
-                                        MemoryRating.Easy -> strings.ratingEasy
-                                    },
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                            }
-                        }
-                    }
                 } else {
-                    Text(strings.understandingRating, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        // Asked after a first study and after a review alike: understanding is about now.
+                        strings.understandingNowQuestion,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1245,13 +1281,20 @@ fun ReviewSessionScreen(
                             // and then contradict itself by resurfacing the topic days earlier.
                             val effectiveInterval =
                                 minOf(finalInterval, previewOutcome.remediationDays ?: Double.MAX_VALUE)
-                            val intervalStr = intervalButtonLabel(effectiveInterval)
+                            val intervalStr = localizedIntervalLabel(effectiveInterval, strings.languageCode)
                             Button(
                                 onClick = {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     // Read at tap time, not composition time: a Back gesture in the same
                                     // frame clears the choice before this button is gone, and `!!` crashed.
-                                    selectedMemory?.let { chosen -> viewModel.rateCurrentUnit(chosen, rating, keyPointsRecalled = tickedKeyPoints.size) }
+                                    selectedMemory?.let { chosen ->
+                                        viewModel.rateCurrentUnit(
+                                            chosen, rating,
+                                            methods = reviewMethods,
+                                            questionsCorrect = scoreOrNull(questionsRight),
+                                            questionsTotal = scoreOrNull(questionsTotal),
+                                        )
+                                    }
                                 },
                                 enabled = !viewModel.isProcessing,
                                 modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
@@ -1272,6 +1315,75 @@ fun ReviewSessionScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * "How did you review? (optional)": how the learner reviewed this topic, and a question score if they did
+ * questions. Pilot research data only. The rating does not depend on it and nothing schedules from it; it
+ * is what lets the logs later say whether one way of reviewing holds up better than another.
+ */
+@Composable
+private fun ReviewMethodPicker(
+    languageCode: String,
+    selected: Set<com.example.domain.model.ReviewMethod>,
+    onToggle: (com.example.domain.model.ReviewMethod) -> Unit,
+    right: String,
+    onRight: (String) -> Unit,
+    total: String,
+    onTotal: (String) -> Unit,
+) {
+    fun label(m: com.example.domain.model.ReviewMethod): String = when (m) {
+        com.example.domain.model.ReviewMethod.Questions -> when (languageCode) { "fa" -> "تست و سؤال"; "de" -> "Fragen"; else -> "Questions" }
+        com.example.domain.model.ReviewMethod.Reading -> when (languageCode) { "fa" -> "خواندن"; "de" -> "Lesen"; else -> "Reading" }
+        com.example.domain.model.ReviewMethod.Lecture -> when (languageCode) { "fa" -> "کلاس یا ویدیو"; "de" -> "Vorlesung / Video"; else -> "Lecture / video" }
+        com.example.domain.model.ReviewMethod.Other -> when (languageCode) { "fa" -> "روش دیگر"; "de" -> "Anders"; else -> "Other" }
+    }
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            when (languageCode) { "fa" -> "چطور مرور کردی؟ (اختیاری)"; "de" -> "Wie hast du wiederholt? (optional)"; else -> "How did you review? (optional)" },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        // Wraps instead of scrolling: on a phone the fourth chip was cut off at the edge, and an option
+        // that looks clipped reads as not being there.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        ) {
+            com.example.domain.model.ReviewMethod.entries.forEach { m ->
+                FilterChip(
+                    selected = m in selected,
+                    onClick = { onToggle(m) },
+                    label = { Text(label(m)) },
+                )
+            }
+        }
+        if (com.example.domain.model.ReviewMethod.Questions in selected) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
+                val numberKeyboard = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                )
+                OutlinedTextField(
+                    value = right, onValueChange = onRight, singleLine = true,
+                    label = { Text(when (languageCode) { "fa" -> "درست"; "de" -> "richtig"; else -> "right" }) },
+                    keyboardOptions = numberKeyboard,
+                    modifier = Modifier.width(96.dp),
+                )
+                Text(when (languageCode) { "fa" -> "از"; "de" -> "von"; else -> "out of" })
+                OutlinedTextField(
+                    value = total, onValueChange = onTotal, singleLine = true,
+                    label = { Text(when (languageCode) { "fa" -> "کل"; "de" -> "gesamt"; else -> "total" }) },
+                    keyboardOptions = numberKeyboard,
+                    modifier = Modifier.width(96.dp),
+                )
             }
         }
     }

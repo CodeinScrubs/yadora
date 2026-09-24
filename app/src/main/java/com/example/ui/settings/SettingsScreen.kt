@@ -27,6 +27,25 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Warning
 
 /** One requirement row: green check when satisfied, red cross + a fix button when not. */
+/**
+ * Writes a file the user just created with the system picker, and deletes it if the write fails part-way: a
+ * truncated backup under the name the user chose looks like a good one until the day it is needed. Not
+ * cancellable, so leaving Settings mid-write can neither cut the file short nor skip the cleanup.
+ */
+private suspend fun writePickedDocument(
+    context: Context,
+    uri: android.net.Uri,
+    write: suspend (java.io.OutputStream) -> Unit,
+): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+    val ok = runCatching {
+        (context.contentResolver.openOutputStream(uri)
+            ?: throw java.io.IOException("Could not open the chosen file for writing"))
+            .use { write(it) }
+    }.onFailure { android.util.Log.w("Yadora", "writing the chosen file failed", it) }.isSuccess
+    if (!ok) runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) }
+    ok
+}
+
 @Composable
 private fun PermissionStatusRow(label: String, granted: Boolean, actionLabel: String, onAction: () -> Unit) {
     Row(
@@ -75,14 +94,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     ) { uri ->
         if (uri != null) {
             exportScope.launch {
-                val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        val json = com.example.data.AnalyticsExporter.buildJson(context)
-                        (context.contentResolver.openOutputStream(uri)
-                            ?: throw java.io.IOException("Could not open the chosen file for writing"))
-                            .use { it.write(json.toByteArray()) }
-                    }.isSuccess
-                }
+                val ok = writePickedDocument(context, uri) { com.example.data.AnalyticsExporter.writeJson(context, it) }
                 android.widget.Toast.makeText(context, if (ok) (when (language) { "fa" -> "خروجی ذخیره شد"; "de" -> "Exportiert"; else -> "Exported" }) else (when (language) { "fa" -> "خروجی ناموفق بود"; "de" -> "Export fehlgeschlagen"; else -> "Export failed" }), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -104,21 +116,16 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     }
 
     // --- Full backup / restore: a complete JSON snapshot the user can save to a folder and re-import ---
-    var pendingImportJson by remember { mutableStateOf<String?>(null) }
+    // The picked file, restored only after the user confirms. Read by streaming at that point: holding a
+    // multi-year backup as one String here (and again while parsing it) is what ran restores out of memory.
+    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var showDeleteAll by remember { mutableStateOf(false) }
     val backupExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
             exportScope.launch {
-                val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        val json = com.example.data.BackupManager.buildBackupJson(context)
-                        (context.contentResolver.openOutputStream(uri)
-                            ?: throw java.io.IOException("Could not open the chosen file for writing"))
-                            .use { it.write(json.toByteArray()) }
-                    }.isSuccess
-                }
+                val ok = writePickedDocument(context, uri) { com.example.data.BackupManager.writeBackup(context, it) }
                 android.widget.Toast.makeText(context, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else if (language == "de") "Sicherung gespeichert" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else if (language == "de") "Sicherung fehlgeschlagen" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -126,61 +133,45 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     val backupImportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            exportScope.launch {
-                val json = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        context.contentResolver.openInputStream(uri)?.use { stream ->
-                            // Bounded WHILE reading: abort as soon as the cap is crossed, so a huge
-                            // file picked by mistake never gets fully loaded into memory first.
-                            // 64MB: far above any realistic library (years of heavy use), while
-                            // still bounded. Must comfortably exceed anything the app can EXPORT —
-                            // a backup Yadora created must always be importable again.
-                            val cap = 64_000_000
-                            val out = java.io.ByteArrayOutputStream()
-                            val buf = ByteArray(64 * 1024)
-                            while (true) {
-                                val n = stream.read(buf)
-                                if (n < 0) break
-                                require(out.size() + n <= cap) { "File too large to be a Yadora backup" }
-                                out.write(buf, 0, n)
-                            }
-                            out.toByteArray().decodeToString()
-                        }
-                    }.getOrNull()
-                }
-                if (json.isNullOrBlank()) {
-                    android.widget.Toast.makeText(context, if (language == "fa") "خواندن فایل ناموفق بود" else if (language == "de") "Datei konnte nicht gelesen werden" else "Couldn't read that file", android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                    pendingImportJson = json
-                }
-            }
-        }
+        if (uri != null) pendingImportUri = uri
     }
-    if (pendingImportJson != null) {
+    if (pendingImportUri != null) {
         AlertDialog(
-            onDismissRequest = { pendingImportJson = null },
+            onDismissRequest = { pendingImportUri = null },
             title = { Text(if (language == "fa") "بازیابی پشتیبان؟" else if (language == "de") "Sicherung wiederherstellen?" else "Restore backup?") },
             text = { Text(if (language == "fa") "همهٔ داده‌های فعلی با محتوای این فایل جایگزین می‌شود. این کار قابل بازگشت نیست." else if (language == "de") "Das ersetzt ALLE aktuellen Daten durch den Inhalt dieser Datei. Das lässt sich nicht rückgängig machen." else "This replaces ALL your current data with the contents of this file. This can't be undone.") },
             confirmButton = {
                 TextButton(onClick = {
-                    val json = pendingImportJson!!
-                    pendingImportJson = null
+                    val uri = pendingImportUri ?: return@TextButton
+                    pendingImportUri = null
                     exportScope.launch {
-                        val count = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { com.example.data.BackupManager.restoreFromJson(context, json) }.getOrNull()
+                        // Streamed from the file, validated in full before anything is replaced, and not
+                        // cancellable half-way: a restore either completes or never touches the data. The
+                        // reminder re-arm and the widget refresh belong to the restore, so they run inside the
+                        // same block: leaving Settings mid-restore cancels this scope, and a cancelled
+                        // withContext throws on return, which used to skip them and leave the reminders armed
+                        // for the old data and the widget showing it.
+                        val count = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                            val restored = runCatching {
+                                (context.contentResolver.openInputStream(uri)
+                                    ?: throw java.io.IOException("Could not open the chosen file"))
+                                    .use { com.example.data.BackupManager.restoreFromStream(context, it) }
+                            }.getOrNull()
+                            if (restored != null) {
+                                runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
+                                runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
+                            }
+                            restored
                         }
                         if (count != null) {
-                            runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
-                            com.example.widget.DueWidgetProvider.updateAll(context)
-                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: $count مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
+                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: ${com.example.ui.i18n.PersianDate.faDigits(count)} مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
                         } else {
                             android.widget.Toast.makeText(context, if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup", android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
                 }) { Text(if (language == "fa") "بازیابی" else if (language == "de") "Wiederherstellen" else "Restore") }
             },
-            dismissButton = { TextButton(onClick = { pendingImportJson = null }) { Text(strings.cancel) } }
+            dismissButton = { TextButton(onClick = { pendingImportUri = null }) { Text(strings.cancel) } }
         )
     }
 
@@ -803,6 +794,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             sharedPrefs.edit { putBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, on) }
                             if (!on) exportScope.launch {
                                 runCatching { (context.applicationContext as com.example.MedReviewApplication).repository.useDefaultMemoryModel() }
+                            } else {
+                                // Back on: try a fit now. The daily refit waits for 20% more evidence or 30
+                                // days after the last attempt — which was the set just retired — so without
+                                // this a learner who toggled it off and on waited up to a month for nothing.
+                                com.example.data.PersonalModelWorker.refitNow(context)
                             }
                         }
                     )
@@ -885,7 +881,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             
-                            // Tip 1: Active Recall First
+                            // Tip 1: Review your way. A review is whatever the learner chooses; the tip says which
+                            // methods tend to stick, without making the app a flashcard tool.
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -893,7 +890,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
                                     Text(
-                                        text = when (language) { "fa" -> "۱. ابتدا یادآوری فعال کنید"; "de" -> "1. Erst aktiv abrufen"; else -> "1. Active Recall First" },
+                                        text = when (language) { "fa" -> "۱. به روش خودت مرور کن"; "de" -> "1. Wiederhole auf deine Art"; else -> "1. Review Your Way" },
                                         fontWeight = FontWeight.Bold,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.primary
@@ -901,9 +898,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = when (language) {
-                                            "fa" -> "قبل از کلیک روی 'نمایش یادداشت‌ها'، سعی کنید پاسخ را از ذهن خود بیرون بکشید. تقلا برای بازیابی اطلاعات، ارتباطات سیناپسی مغز را تقویت می‌کند."
-                                            "de" -> "Ruf die Antwort erst aus dem Gedächtnis ab, bevor du auf „Notizen anzeigen“ tippst. Genau diese Anstrengung beim Abrufen bildet belastbare Erinnerungen."
-                                            else -> "Force yourself to retrieve the answer from memory before tapping 'Show Notes'. The active struggle of retrieval is what forms robust memories."
+                                            "fa" -> "هر روشی حساب است: دوباره‌خواندن، تست، کلاس یا ویدیو. تست زدن یا توضیح دادن مطلب از حفظ معمولاً بیشتر از فقط دوباره‌خواندن در ذهن می‌ماند؛ اگر وقت کم است، اول تست بزن."
+                                            "de" -> "Jede Methode zählt: nachlesen, Fragen, Vorlesung oder Video. Fragen beantworten oder den Stoff aus dem Kopf erklären bleibt meist besser hängen als bloßes Nachlesen — bei wenig Zeit zuerst Fragen."
+                                            else -> "Any method counts: rereading, questions, a lecture or a video. Doing questions or explaining it from memory usually sticks better than rereading alone — when time is short, do questions first."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -932,9 +929,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                             // perfect baseline" biased the very signal FSRS consumes
                                             // — the rating is the measurement, so the help text must
                                             // not tell the user which button is the good one.
-                                            "fa" -> "این‌ها پاسخ تو را توصیف می‌کنند، نه خودت را. سخت، خوب و آسان همگی یادآوری موفق‌اند؛ فقط فراموشی شکست است.\n• فراموشی: چارچوب اصلی نیامد یا اساساً غلط بود.\n• سخت: درست یادآوری شد، اما کند و با تلاش زیاد یا مکث محسوس.\n• خوب: هستهٔ مطلب درست بود، با تلاش معمولی و تنها خلأهای جزئی.\n• آسان: کامل، دقیق، سریع و با اطمینان."
-                                            "de" -> "Das beschreibt deine Antwort, nicht dich. Schwer, Gut und Leicht sind alle erfolgreiche Abrufe; nur Vergessen ist ein Fehlschlag.\n• Vergessen: Der Kern fehlte oder war grundlegend falsch.\n• Schwer: Richtig abgerufen, aber langsam, mühsam oder mit deutlichem Zögern.\n• Gut: Der Kern war korrekt, mit normalem Aufwand und nur kleinen Lücken.\n• Leicht: Vollständig, korrekt, schnell und sicher."
-                                            else -> "These describe your answer, not you. Hard, Good and Easy are all successful recalls — only Forgot is a failure.\n• Forgot: the core framework was missing or fundamentally wrong.\n• Hard: recalled correctly, but slowly, effortfully, or with real hesitation.\n• Good: the core was right, with normal effort and only minor gaps.\n• Easy: complete, accurate, fast and confident."
+                                            "fa" -> "بگو وقتی دوباره سراغ مبحث آمدی — پیش از دوباره‌خواندن یا دیدن جواب‌ها — چقدر از آن یادت بود؛ نه اینکه جلسهٔ مرور چقدر سخت گذشت. این وصف حافظهٔ توست، نه خودت. سخت، خوب و آسان یعنی هنوز یادت بود؛ فقط فراموشی یعنی از دست رفته بود.\n• فراموشی: بیشترش را فراموش کرده بودم؛ مثل از نو خواندن بود.\n• سخت: اصلش یادم بود، ولی با جاهای خالی جدی یا زحمت زیاد.\n• خوب: بیشترش یادم بود، فقط خلأهای جزئی.\n• آسان: کامل و مسلط بودم؛ چیز تازه‌ای نبود.\nاگر تست زدی، نتیجهٔ تست‌ها بهترین راهنمای توست."
+                                            "de" -> "Bewerte, wie viel du noch wusstest, als du wieder damit angefangen hast — bevor du nachgelesen oder Lösungen angesehen hast —, nicht wie mühsam die Sitzung war. Das beschreibt dein Gedächtnis, nicht dich. Schwer, Gut und Leicht heißen: noch da; nur Vergessen heißt: weg.\n• Vergessen: Das meiste war weg; es war wie neu lernen.\n• Schwer: Der Kern war da, aber mit echten Lücken oder viel Mühe.\n• Gut: Das meiste wusste ich noch, nur kleine Lücken.\n• Leicht: Sicher und vollständig; nichts war neu.\nWenn du Fragen beantwortet hast, ist dein Ergebnis der beste Anhaltspunkt."
+                                            else -> "Rate how much you still knew when you came back to the topic — before rereading or checking answers — not how hard the session felt. It describes your memory, not you. Hard, Good and Easy all mean it was still there; only Forgot means it was gone.\n• Forgot: most of it was gone; it felt like learning it again.\n• Hard: the core was there, but with real gaps or a lot of effort.\n• Good: I remembered most of it, with only small gaps.\n• Easy: I knew it thoroughly; nothing felt new.\nIf you did questions, your score is the best guide."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1011,10 +1008,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(if (language == "fa") "شمارش معکوس آزمون" else if (language == "de") "Prüfungs-Countdown" else "Exam countdown", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(4.dp))
-                // Honest scope: countdown only. Exam-aware schedule compression is a future feature —
-                // the UI must not imply it exists.
+                // Honest scope: countdown only. The exam date is decorative BY DESIGN (settled decision):
+                // it never compresses intervals, so the copy must not promise that it will one day.
                 Text(
-                    if (language == "fa") "روی صفحهٔ امروز نمایش داده می‌شود؛ فعلاً برنامهٔ مرورها را تغییر نمی‌دهد." else if (language == "de") "Wird auf dem Heute-Bildschirm angezeigt — es ändert deinen Wiederholungsplan noch nicht." else "Shown on the Today screen — it doesn't change your review schedule yet.",
+                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی بیشتر: از چند ماه قبل هدف به‌خاطرسپاری را بالا ببر، و در هفته‌های آخر، بعد از مرورهای هر روز، «مرور جلوتر از برنامه» را در صفحهٔ امروز بزن (ضعیف‌ترین مباحث اول)." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für mehr Prüfungsreife: Monate vorher das Behaltensziel erhöhen und in den letzten Wochen nach den fälligen Wiederholungen auf „Heute“ „Vorausarbeiten“ nutzen (die schwächsten Themen zuerst)." else "Only a countdown on the screens — it doesn't change your review schedule. To be more exam-ready: raise the retention target months ahead, and in the last weeks, after each day's reviews, use Review ahead on Today (weakest topics first).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1066,13 +1063,70 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 }
                 Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = if (language == "fa") "خروجی تحلیلی برای بهبود الگوریتم (نه پشتیبان‌گیری): بدون عنوان و یادداشت مباحث، اما شامل نام درس‌ها/مجموعه‌ها و مشخصات دستگاه." else if (language == "de") "Analyse-Export zur Verbesserung des Algorithmus (keine Sicherung): ohne Thementitel oder Notizen, aber mit deinen Fachnamen und dem Gerätemodell." else "Analytics export for tuning the algorithm (not a backup): no topic titles or notes, but it does include your subject/collection names and device model.",
+                    text = if (language == "fa") "دادهٔ پژوهشی برای بهبود الگوریتم (نه پشتیبان‌گیری): بدون عنوان و یادداشت مباحث، اما شامل نام درس‌ها/مجموعه‌ها و مشخصات دستگاه." else if (language == "de") "Forschungsdaten zur Verbesserung des Algorithmus (keine Sicherung): ohne Thementitel oder Notizen, aber mit deinen Fachnamen und dem Gerätemodell." else "Research data for tuning the algorithm (not a backup): no topic titles or notes, but it does include your subject/collection names and device model.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // The pilot: a pseudonymous id (no name, no account) so several people's files can be pooled,
+                // and a one-tap share to whatever app the file should go through (a chat, e-mail, a drive).
+                val researchId = remember { com.example.data.ResearchId.get(context) }
+                // One export at a time: a second tap while the first is still writing used to race on the
+                // same file, and the app receiving the share could read a file being rewritten under it.
+                var sharing by remember { mutableStateOf(false) }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = when (language) {
+                        "fa" -> "شناسهٔ پژوهشی تو: $researchId — تصادفی است و به اسم یا گوشی‌ات ربطی ندارد."
+                        "de" -> "Deine Forschungs-ID: $researchId — zufällig, ohne Bezug zu deinem Namen oder Gerät."
+                        else -> "Your research ID: $researchId — random, not linked to your name or phone."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(onClick = { exportLauncher.launch("yadora_analytics.json") }, modifier = Modifier.fillMaxWidth()) {
-                    Text(when (language) { "fa" -> "استخراج تحلیل‌ها / لاگ‌ها"; "de" -> "Analysen / Logs extrahieren"; else -> "Extract analytics / logs" })
+                Button(
+                    enabled = !sharing,
+                    onClick = {
+                        sharing = true
+                        exportScope.launch {
+                          try {
+                            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching { com.example.data.AnalyticsExporter.writeShareableFile(context) }.getOrNull()
+                            }
+                            val shared = file != null && runCatching {
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "application/json"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    putExtra(android.content.Intent.EXTRA_SUBJECT, "Yadora research data $researchId")
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(
+                                    android.content.Intent.createChooser(
+                                        send,
+                                        when (language) { "fa" -> "ارسال دادهٔ پژوهشی"; "de" -> "Forschungsdaten senden"; else -> "Send research data" },
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }.isSuccess
+                            if (!shared) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    when (language) { "fa" -> "ارسال ناموفق بود"; "de" -> "Senden fehlgeschlagen"; else -> "Couldn't share the file" },
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                          } finally {
+                            sharing = false
+                          }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(when (language) { "fa" -> "ارسال دادهٔ پژوهشی"; "de" -> "Forschungsdaten senden"; else -> "Share research data" })
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(onClick = { exportLauncher.launch(com.example.data.AnalyticsExporter.fileName(context)) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(when (language) { "fa" -> "ذخیرهٔ دادهٔ پژوهشی در فایل"; "de" -> "Forschungsdaten als Datei speichern"; else -> "Save research data to a file" })
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -1191,7 +1245,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 },
             )
         } else if (showExamDatePicker) {
-            val examPickerState = rememberDatePickerState(initialSelectedDateMillis = if (examDate > 0L) examDate else System.currentTimeMillis())
+            val examPickerState = rememberDatePickerState(initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(if (examDate > 0L) examDate else System.currentTimeMillis()))
             DatePickerDialog(
                 onDismissRequest = { showExamDatePicker = false },
                 confirmButton = {

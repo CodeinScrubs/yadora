@@ -77,9 +77,15 @@ recall because time has elapsed since study.
 event. Elapsed time at the eventual review is still measured from `lastReviewedAt`, keeping the model honest.
 
 ### Exam handling
-An `Exam` (date + linked subjects/systems or tags) raises desired retention as the date approaches
-and forces a final review ~1–2 days before. "Coming before my exam" = linked units with
-`nextReviewAt ≤ examDate`.
+*Original plan, superseded:* an `Exam` (date + linked subjects/systems or tags) would raise desired
+retention as the date approached and force a final review ~1–2 days before.
+
+*As built:* the exam date is decorative by decision (CLAUDE.md); it drives the countdown and nothing else.
+Exam preparation is the learner's choice, not the schedule's: raise the retention target months ahead,
+and in the final weeks use **Review ahead** on Today (rated topics not yet due, weakest predicted recall
+first). The identical-twins simulation (`docs/RESEARCH.md` §2.1) shows why the latter matters: it is the
+one case where a learner without a schedule can win, by saving time for a final push, and a Yadora learner
+spending the same push weakest-first wins again.
 
 ### Weak-topic detection
 `weakness = f(lapseCount, recent Forgot/Hard rate, R below target, time overdue) × highYield weight` —
@@ -222,9 +228,11 @@ genuinely worth considering for v2. Kept here so they aren't lost:
   consistent finding is that optimal gaps scale with the desired retention interval. Today one
   global retention target serves everyone; a per-topic horizon would feed
   `desiredRetentionOverride`, which the scheduler ALREADY accepts per review. Medium.
-- **Risk-per-minute queue refinement**: divide `priorityScore` by expected review minutes (user's
-  observed median) so limited time buys the most retention. Needs per-topic duration estimates —
-  the `reviewDurationMs` data being logged since v4 is exactly this. Medium.
+- ~~**Risk-per-minute queue refinement**: divide `priorityScore` by expected review minutes.~~
+  Withdrawn 2026-09-23: a review is done however the learner likes, mostly outside the app, so the
+  seconds a topic sits open measure nothing (the same reason Today shows no time estimate). The queue
+  order itself was re-tested by simulation on 2026-09-24 and is now simply Important first, then the
+  most overdue (CLAUDE.md).
 - **Validation note**: an external FSRS-6 workload analysis (unverified simulation, but consistent
   with known FSRS workload curves) puts the efficient retention band at ~0.88–0.92, with ~0.92 for
   critical items. Yadora's shipped defaults (0.90 standard / 0.93 important) sit essentially inside
@@ -336,7 +344,8 @@ verified individually instead.
 **Rejected:**
 - *Multiple `FIRST_STUDY` rows corrupt replay* — real, but already fixed this session (see the
   one-seed-per-history rule in CLAUDE.md). The audit's snapshot predates it.
-- *Lifetime lapse count dominates priority* — already fixed (`MAX_SCORED_LAPSES`).
+- *Lifetime lapse count dominates priority* — fixed then (`MAX_SCORED_LAPSES`); since 2026-09-24 the
+  queue does not count lapses at all (simulation: the lapse term cost knowledge under a backlog).
 - *Optimistic concurrency / `rowVersion`* — the failure needs two live review screens for one topic.
   Android runs single-task, and `launchSingleTop` now prevents stacking the destination. A schema
   migration on a shipped DB is not justified by that reachability.
@@ -390,7 +399,9 @@ sources. Its own recommendation is shadow-mode-only, so nothing turns on it.
   protects input quality.
 - **Recall anchors** (3–7 per topic) to stabilise what "remembering Appendicitis" means and vary
   the retrieval cue, without flashcard-scale authoring. IMPLEMENTED 2026-09 as optional key points
-  that are ticked after the reveal and cap the rating (DB v8; see CLAUDE.md).
+  that are ticked after the reveal and cap the rating (DB v8); RETIRED 2026-09-23 by the user, together
+  with the reveal step: a Yadora review is done by any method (questions, notes, a lecture, a video),
+  not recited inside the app. Key points remain as reference text (see CLAUDE.md).
 - **Capacity planning in MINUTES rather than topic count** — `reviewDurationMs` is already
   logged, so the data exists. The full min-cost planner in the document is over-engineered for
   this app; an EWMA per-topic cost plus a daily minute budget would capture most of the value.

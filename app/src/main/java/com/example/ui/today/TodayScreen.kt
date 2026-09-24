@@ -49,6 +49,7 @@ import com.example.ui.i18n.stateLabel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -123,17 +124,23 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
     val totalActive: StateFlow<Int> = repository.totalActiveCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
 
+    /** Reviews done today (first ratings excluded): what the daily limit counts. Resets at midnight. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val reviewsDoneToday: StateFlow<Int> = dayTick
+        .flatMapLatest { repository.observeReviewsSince(startOfToday()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     fun redistributeOverdueUnits(context: android.content.Context) {
         viewModelScope.launch {
             val overdueList = overdueUnits.value
             if (overdueList.isEmpty()) return@launch
             
             val now = System.currentTimeMillis()
-            // Highest-priority first (same score the review queue uses) so DAY 1 gets the important ones
-            // (high-yield, needs-relearn, recent forgot, most overdue) instead of a blind round-robin.
+            // Highest-priority first (same score the review queue uses) so DAY 1 gets the Important topics and
+            // then the longest-overdue ones, instead of a blind round-robin.
             val prioritized = overdueList.sortedByDescending { u ->
                 com.example.domain.srs.MedScheduler.priorityScore(
-                    u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
+                    u.highYield, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
                 )
             }
             val total = prioritized.size
@@ -231,7 +238,11 @@ fun TodayScreen(
     onNavigateToAdd: () -> Unit,
     onNavigateToReview: (Long) -> Unit,
     onNavigateToEdit: (Long) -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    /** Today's limit is used up and the learner wants to keep going: a session without the limit. */
+    onReviewMoreAnyway: () -> Unit = {},
+    /** Nothing is due and the learner wants to study anyway: not-yet-due topics, weakest first (ReviewAhead). */
+    onReviewAhead: () -> Unit = {},
 ) {
     val viewModel: TodayViewModel = viewModel(factory = TodayViewModelFactory(repository))
     
@@ -278,13 +289,17 @@ fun TodayScreen(
         sp.registerOnSharedPreferenceChangeListener(listener)
         awaitDispose { sp.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    val displayDue = minOf(totalDue, dailyLimit)
-    // Minutes a review takes THIS user — the median of their last 50 measured reviews — rather than a
-    // flat two minutes for everyone; two until ten reviews exist. Re-read whenever the due set changes.
-    val minutesPerReview by androidx.compose.runtime.produceState(initialValue = 2.0, key1 = totalDue) {
-        value = runCatching { repository.typicalReviewMinutes() }.getOrDefault(2.0)
+    // Today's plan (DailyPlan): every first rating plus the reviews that fit in what is left of the DAILY
+    // limit — exactly what "Start review" loads, and what the reminders and the widget count.
+    //
+    // No time estimate: a review is done however the learner likes, mostly outside the app (questions,
+    // a lecture, a video), so the seconds a card sits open measure nothing and "about N min" would be a
+    // made-up number.
+    val doneToday by viewModel.reviewsDoneToday.collectAsStateWithLifecycle()
+    val plan = remember(due, doneToday, dailyLimit) {
+        DailyPlan.plan(due, doneToday, dailyLimit, System.currentTimeMillis())
     }
-    val estimatedTimeMin = Math.round(displayDue * minutesPerReview).toInt().let { if (displayDue > 0) maxOf(it, 1) else it }
+    val displayDue = plan.size
 
     if (showUpcomingSchedule) {
         UpcomingScheduleDialog(
@@ -357,12 +372,14 @@ fun TodayScreen(
             }
             // One calm hero card: greeting, what's on the plate, and the single primary action.
             run {
-                // When caught up, the calm "All caught up" card below covers it — don't double up here.
-                if (totalDue == 0) return@run
-                val dueList = overdue + dueToday
-                val highYieldCount = dueList.count { it.highYield }
-                val weakCount = dueList.count { it.state == "NeedsRelearn" || it.state == "Learning" }
+                // When nothing is planned, the calm cards below cover it — don't double up here.
+                if (displayDue == 0) return@run
+                val planned = plan.queue
+                val highYieldCount = planned.count { it.highYield }
+                val weakCount = planned.count { it.state == "NeedsRelearn" || it.state == "Learning" }
+                val newCount = plan.firstRatings.size
                 val isFa = strings.languageCode == "fa"
+                fun n(v: Int) = if (isFa) com.example.ui.i18n.PersianDate.faDigits(v) else v.toString()
                 val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
                 val greeting = when {
                     hour < 12 -> if (isFa) "صبح بخیر" else if (strings.languageCode == "de") "Guten Morgen" else "Good morning"
@@ -381,27 +398,33 @@ fun TodayScreen(
                         Text(greeting, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            // The run block above returns early when totalDue == 0, so this hero card
-                            // only ever renders the "N reviews" case (the caught-up card lives below).
-                            text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(displayDue)} مرور · حدود ${com.example.ui.i18n.PersianDate.faDigits(estimatedTimeMin)} دقیقه" else if (strings.languageCode == "de") "$displayDue ${if (displayDue == 1) "Wiederholung" else "Wiederholungen"} · ca. $estimatedTimeMin Min." else "$displayDue ${if (displayDue == 1) "review" else "reviews"} · about $estimatedTimeMin min",
+                            text = if (isFa) "${n(displayDue)} مورد برای امروز" else if (strings.languageCode == "de") "$displayDue ${if (displayDue == 1) "Thema" else "Themen"} für heute" else "$displayDue ${if (displayDue == 1) "topic" else "topics"} for today",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        if (highYieldCount > 0 || weakCount > 0) {
+                        // What the count is made of: new studies waiting for their first rating are
+                        // quick and never held back; reviews are the real work.
+                        val parts = buildList {
+                            if (newCount > 0) add(if (isFa) "${n(newCount)} مطالعهٔ جدید برای ثبت" else if (strings.languageCode == "de") "$newCount neu zu erfassen" else "$newCount new to log")
+                            if (plan.reviews.isNotEmpty()) add(if (isFa) "${n(plan.reviews.size)} مرور" else if (strings.languageCode == "de") "${plan.reviews.size} ${if (plan.reviews.size == 1) "Wiederholung" else "Wiederholungen"}" else "${plan.reviews.size} ${if (plan.reviews.size == 1) "review" else "reviews"}")
+                            if (highYieldCount > 0) add(if (isFa) "${n(highYieldCount)} مهم" else if (strings.languageCode == "de") "$highYieldCount wichtig" else "$highYieldCount important")
+                            if (weakCount > 0) add(if (isFa) "${n(weakCount)} ضعیف" else if (strings.languageCode == "de") "$weakCount schwach" else "$weakCount weak")
+                        }
+                        if (parts.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(highYieldCount)} مهم · ${com.example.ui.i18n.PersianDate.faDigits(weakCount)} ضعیف" else if (strings.languageCode == "de") "$highYieldCount wichtig · $weakCount schwach" else "$highYieldCount important · $weakCount weak",
+                                text = parts.joinToString(" · "),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (totalDue > displayDue) {
-                            // Transparency: the daily cap is managing the load, not hiding it — the
-                            // highest-priority items got today's slots, the rest wait.
+                        if (plan.heldBack > 0) {
+                            // Transparency: the daily limit is managing the load, not hiding it — the
+                            // most urgent reviews got today's slots, the rest wait for tomorrow.
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isFa) "${com.example.ui.i18n.PersianDate.faDigits(totalDue - displayDue)} مورد طبق سقف روزانه‌ات برای بعد نگه داشته شد" else if (strings.languageCode == "de") "${totalDue - displayDue} durch dein Tageslimit für später aufgehoben" else "${totalDue - displayDue} held for later by your daily limit",
+                                text = if (isFa) "${n(plan.heldBack)} مرور طبق سقف روزانه‌ات برای بعد نگه داشته شد" else if (strings.languageCode == "de") "${plan.heldBack} durch dein Tageslimit für später aufgehoben" else "${plan.heldBack} held for later by your daily limit",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -413,10 +436,46 @@ fun TodayScreen(
                             shape = RoundedCornerShape(percent = 50)
                         ) {
                             Text(
-                                "${strings.startReview} · ${if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(displayDue) else displayDue.toString()}",
+                                "${strings.startReview} · ${n(displayDue)}",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                    }
+                }
+            }
+
+            // Today's limit is used up while reviews are still due. Said plainly, with a way to keep going:
+            // the limit protects the learner's day, it must never stand between them and a review they want.
+            if (plan.limitReached) {
+                val isFa = strings.languageCode == "fa"
+                fun n(v: Int) = if (isFa) com.example.ui.i18n.PersianDate.faDigits(v) else v.toString()
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                        Text(
+                            text = if (isFa) "سهم امروز انجام شد" else if (strings.languageCode == "de") "Tagesziel erreicht" else "Today's reviews are done",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = if (isFa) "امروز ${n(plan.doneToday)} مرور انجام دادی و به سقف روزانه‌ات رسیدی. ${n(plan.heldBack)} مرور دیگر می‌تواند تا فردا صبر کند."
+                                else if (strings.languageCode == "de") "Du hast heute ${plan.doneToday} Wiederholungen gemacht und dein Tageslimit erreicht. ${plan.heldBack} weitere können bis morgen warten."
+                                else "You did ${plan.doneToday} reviews today and reached your daily limit. ${plan.heldBack} more can wait until tomorrow.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        TextButton(onClick = onReviewMoreAnyway) {
+                            Text(if (isFa) "باز هم مرور می‌کنم" else if (strings.languageCode == "de") "Trotzdem weiter wiederholen" else "Review more anyway")
                         }
                     }
                 }
@@ -497,6 +556,26 @@ fun TodayScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
+                                    // Review ahead (ReviewAhead): for spare time and the weeks before an exam.
+                                    // Offered only when a rated topic is waiting; honest about the cost.
+                                    val endOfDay = remember(allUpcoming) { DayBounds.endOf(System.currentTimeMillis()) }
+                                    if (allUpcoming.any { ReviewAhead.isCandidate(it, endOfDay) }) {
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        OutlinedButton(onClick = onReviewAhead, shape = RoundedCornerShape(percent = 50)) {
+                                            Text(when (strings.languageCode) { "fa" -> "مرور جلوتر از برنامه"; "de" -> "Vorausarbeiten"; else -> "Review ahead" })
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = when (strings.languageCode) {
+                                                "fa" -> "مباحثی که هنوز موعدشان نرسیده، از ضعیف‌ترین. پیش از امتحان مفید است؛ مرورِ زودتر از موعد، حافظه را کمتر از مرورِ به‌موقع تقویت می‌کند."
+                                                "de" -> "Noch nicht fällige Themen, die schwächsten zuerst. Nützlich vor einer Prüfung; eine frühe Wiederholung stärkt das Gedächtnis weniger als eine pünktliche."
+                                                else -> "Topics not due yet, weakest first. Useful before an exam; an early review strengthens memory less than one on time."
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -506,11 +585,25 @@ fun TodayScreen(
                         // (When upcoming is also empty, the caught-up card above already says everything —
                         // no second "nothing due" line, and no celebratory tone.)
                         item {
-                            UpcomingHeader(strings.upcoming, upcoming.size, upcomingExpanded) { upcomingExpanded = !upcomingExpanded }
+                            // The header counts everything ahead; the list previews the next five.
+                            UpcomingHeader(strings.upcoming, allUpcoming.size, upcomingExpanded) { upcomingExpanded = !upcomingExpanded }
                         }
                         if (upcomingExpanded) {
                             items(upcoming) { unit ->
                                 StudyUnitCard(unit, subjects, onClick = { onNavigateToEdit(unit.id) }, disambiguator = disambOf(unit))
+                            }
+                            if (allUpcoming.size > upcoming.size) {
+                                item {
+                                    TextButton(onClick = { showUpcomingSchedule = true }) {
+                                        Text(
+                                            when (strings.languageCode) {
+                                                "fa" -> "دیدن همه (${com.example.ui.i18n.PersianDate.faDigits(allUpcoming.size)})"
+                                                "de" -> "Alle ansehen (${allUpcoming.size})"
+                                                else -> "See all (${allUpcoming.size})"
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -602,11 +695,25 @@ fun TodayScreen(
                     
                     if (upcoming.isNotEmpty()) {
                         item {
-                            UpcomingHeader(strings.upcoming, upcoming.size, upcomingExpanded) { upcomingExpanded = !upcomingExpanded }
+                            // The header counts everything ahead; the list previews the next five.
+                            UpcomingHeader(strings.upcoming, allUpcoming.size, upcomingExpanded) { upcomingExpanded = !upcomingExpanded }
                         }
                         if (upcomingExpanded) {
                             items(upcoming) { unit ->
                                 StudyUnitCard(unit, subjects, onClick = { onNavigateToEdit(unit.id) }, disambiguator = disambOf(unit))
+                            }
+                            if (allUpcoming.size > upcoming.size) {
+                                item {
+                                    TextButton(onClick = { showUpcomingSchedule = true }) {
+                                        Text(
+                                            when (strings.languageCode) {
+                                                "fa" -> "دیدن همه (${com.example.ui.i18n.PersianDate.faDigits(allUpcoming.size)})"
+                                                "de" -> "Alle ansehen (${allUpcoming.size})"
+                                                else -> "See all (${allUpcoming.size})"
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -626,15 +733,20 @@ private fun UpcomingHeader(label: String, count: Int, expanded: Boolean, onToggl
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        val strings = com.example.ui.i18n.LocalStrings.current
         Text(
-            text = "${label.uppercase()} ($count)",
+            text = "${label.uppercase()} (${if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(count) else count.toString()})",
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Icon(
             imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription = if (expanded) "Collapse" else "Expand",
+            contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) {
+                "fa" -> if (expanded) "بستن" else "باز کردن"
+                "de" -> if (expanded) "Einklappen" else "Ausklappen"
+                else -> if (expanded) "Collapse" else "Expand"
+            },
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
@@ -817,7 +929,9 @@ fun StudyUnitCard(
                         Spacer(modifier = Modifier.width(6.dp))
                     }
                     Text(
-                        text = "${subject?.name ?: unit.studyType} • $formattedState",
+                        // No subject: just the state. studyType is a dormant column ("Topic" for every
+                        // topic added since it was retired) and printed English into every language.
+                        text = listOfNotNull(subject?.name, formattedState).joinToString(" • "),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

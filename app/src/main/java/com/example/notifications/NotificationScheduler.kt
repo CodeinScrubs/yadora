@@ -612,16 +612,16 @@ object NotificationScheduler {
         return false
     }
 
-    /** (title, highYield) for every unit due by end of today, high-yield first. Safe on any thread. */
+    /**
+     * (title, highYield) for every topic in today's plan (DailyPlan), in the order the session serves
+     * them. Safe on any thread. The plan, not every due row: the reminder must name what "Review now"
+     * actually opens, never reviews the daily limit is holding for tomorrow.
+     */
     private fun fetchDueSummaries(context: Context): List<Pair<String, Boolean>> {
         val app = context.applicationContext as? com.example.MedReviewApplication ?: return emptyList()
-        val endOfToday = java.util.Calendar.getInstance().apply {
-            set(java.util.Calendar.HOUR_OF_DAY, 23); set(java.util.Calendar.MINUTE, 59)
-            set(java.util.Calendar.SECOND, 59); set(java.util.Calendar.MILLISECOND, 999)
-        }.timeInMillis
         return runCatching {
             kotlinx.coroutines.runBlocking {
-                app.database.studyUnitDao().getDueUnitsList(endOfToday).map { it.title to it.highYield }
+                app.todayPlan().queue.map { it.title to it.highYield }
             }
         }.getOrDefault(emptyList())
     }

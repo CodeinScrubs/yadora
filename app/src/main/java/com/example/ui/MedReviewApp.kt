@@ -114,6 +114,8 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     repository = repository,
                     onNavigateToAdd = { navController.navigate(Screen.AddUnit) { launchSingleTop = true } },
                     onNavigateToReview = { unitId -> navController.navigate(Screen.ReviewSession(unitId)) { launchSingleTop = true } },
+                    onReviewMoreAnyway = { navController.navigate(Screen.ReviewSession(-1L, ignoreLimit = true)) { launchSingleTop = true } },
+                    onReviewAhead = { navController.navigate(Screen.ReviewSession(-1L, ahead = true)) { launchSingleTop = true } },
                     onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) { launchSingleTop = true } },
                     onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
                 )
@@ -138,7 +140,14 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 AddUnitScreen(
                     repository = repository,
                     unitId = null,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    // "Save and rate now": the study just happened, so its first rating is logged at once
+                    // instead of waiting in Today. The Add screen is replaced, so Back returns to where
+                    // the learner came from.
+                    onRateNow = { newId ->
+                        navController.popBackStack()
+                        navController.navigate(Screen.ReviewSession(newId)) { launchSingleTop = true }
+                    },
                 )
             }
             composable<Screen.EditUnit> { backStackEntry ->
@@ -154,6 +163,8 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 ReviewSessionScreen(
                     repository = repository,
                     unitId = reviewSession.unitId,
+                    ignoreLimit = reviewSession.ignoreLimit,
+                    ahead = reviewSession.ahead,
                     onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id)) { launchSingleTop = true } },
                     onFinish = { navController.popBackStack() }
                 )

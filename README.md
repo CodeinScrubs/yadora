@@ -2,7 +2,7 @@
 
 A spaced-review **topic scheduler** for students (Persian: یادورا) — Android, Kotlin + Jetpack Compose, fully offline, no account or backend.
 
-You log a topic after studying it. On its study date, Yadora asks how difficult it was and how well you understood it; later reviews ask how well you recalled it. An **FSRS-6** memory model — conformance-tested against the reference implementation, py-fsrs 6.3.1 — turns those ratings into an adaptive next review date. Understanding runs on a separate, shorter repair clock, so a shaky understanding brings a topic back sooner without distorting the memory estimate. The model estimates a useful schedule; it cannot know the exact moment an individual topic will be forgotten.
+You log a topic after studying it and rate how difficult it was and how well you understood it — right away, or later from Today. When it is due, you review it however you like (questions, notes, a lecture, a video) and rate how much you still remembered when you came back to it. An **FSRS-6** memory model — conformance-tested against the reference implementation, py-fsrs 6.3.1 — turns those ratings into an adaptive next review date. Understanding runs on a separate, shorter repair clock, so a shaky understanding brings a topic back sooner without distorting the memory estimate. The model estimates a useful schedule; it cannot know the exact moment an individual topic will be forgotten.
 
 Data lives in the on-device Room database. Android's phone-to-phone transfer carries the full study history to a new device; Android cloud backup carries settings only. A full JSON backup and a diagnostics/research export are available from Settings.
 
@@ -32,5 +32,20 @@ JVM unit tests cover the scheduler math, the py-fsrs golden vectors, replay == l
 ```
 
 From a plain terminal on Windows, point `JAVA_HOME` at Android Studio's bundled JDK first (see [CLAUDE.md](CLAUDE.md)).
+
+The research toolkit has its own checks (standard-library Python):
+
+```
+python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py
+```
+
+## Pilot and research
+
+[`docs/RESEARCH.md`](docs/RESEARCH.md) collects the evidence behind the scheduler and the results of the
+identical-twins simulation (`tools/pilot/simulate.py`). [`docs/PILOT.md`](docs/PILOT.md) is the protocol
+for a two-month pilot with pre-registered decision rules; participants get
+[`docs/PILOT_GUIDE_FA.md`](docs/PILOT_GUIDE_FA.md). Participants send Settings → *Share research data*
+(no titles or notes), and `python3 tools/pilot/analyze.py exports/ --out pilot_report` turns the files
+into a report.
 
 Every push and pull request to `main` runs the same gate on GitHub Actions ([`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml)): unit tests, lint, and debug + R8-minified release builds.

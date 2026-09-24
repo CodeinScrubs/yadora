@@ -119,8 +119,8 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         result = when (sort) {
             LibrarySort.DUE -> result.sortedBy { it.nextReviewAt }
             LibrarySort.TITLE -> result.sortedBy { it.title.lowercase() }
-            // Lapses count only up to the same cap priorityScore uses: lapseCount never decays, so an
-            // uncapped term let one bad stretch years ago outrank a topic that is weak right now.
+            // Lapses count only up to MAX_SCORED_LAPSES: lapseCount never decays, so an uncapped term let
+            // one bad stretch years ago outrank a topic that is weak right now.
             LibrarySort.WEAKNESS -> result.sortedByDescending {
                 minOf(it.lapseCount, com.example.domain.srs.MedScheduler.MAX_SCORED_LAPSES) * 10 +
                     (when (it.state) { "NeedsRelearn" -> 50; "Learning" -> 20; else -> 0 })
@@ -423,7 +423,7 @@ fun LibraryScreen(
                         IconButton(onClick = { selectedIds = emptySet() }) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "Clear Selection"
+                                contentDescription = when (strings.languageCode) { "fa" -> "لغو انتخاب"; "de" -> "Auswahl aufheben"; else -> "Clear selection" }
                             )
                         }
                     },
@@ -589,7 +589,7 @@ fun LibraryScreen(
                     onValueChange = { viewModel.searchQuery.value = it },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text(strings.searchUnits) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = when (strings.languageCode) { "fa" -> "جستجو"; "de" -> "Suchen"; else -> "Search" }) },
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true
                 )

@@ -783,19 +783,9 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                                     color = badgeColor
                                                 )
                                             }
-                                        } else {
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                                shape = RoundedCornerShape(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = unit.studyType.uppercase(),
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
                                         }
+                                        // No subject: no badge. studyType is a dormant column that printed
+                                        // "TOPIC" in English on every subject-less row, in every language.
                                     }
                                 }
                             }
@@ -835,7 +825,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text(
-                                        text = "+${laterUnits.size}",
+                                        text = "+${if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(laterUnits.size) else laterUnits.size.toString()}",
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,

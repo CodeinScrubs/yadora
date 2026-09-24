@@ -97,16 +97,15 @@ class NeglectedTopicTest {
         var previous = -1.0
         for (t in neglect) {
             val score = MedScheduler.priorityScore(
-                highYield = false, state = "Building", lapseCount = 3,
-                modelDueAt = now - (t * day).toLong(), now = now,
+                highYield = false, modelDueAt = now - (t * day).toLong(), now = now,
             )
             assertTrue("score must be finite after $t days, got $score", score.isFinite())
             assertTrue("neglect must never lower priority", score > previous)
             previous = score
         }
         // A decade of neglect must still outrank a brand-new important topic, or the backlog starves.
-        val ancient = MedScheduler.priorityScore(false, "Building", 0, now - 3650L * day, now)
-        val importantToday = MedScheduler.priorityScore(true, "Learning", 0, now, now)
+        val ancient = MedScheduler.priorityScore(false, now - 3650L * day, now)
+        val importantToday = MedScheduler.priorityScore(true, now, now)
         assertTrue("a decade overdue must outrank a fresh important topic", ancient > importantToday)
     }
 

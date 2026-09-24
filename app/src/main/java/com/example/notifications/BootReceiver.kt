@@ -49,11 +49,8 @@ class BootReceiver : BroadcastReceiver() {
                     set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
                 }
                 val reminderToday = if (secondaryToday.before(primaryToday)) secondaryToday else primaryToday
-                val endOfToday = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59)
-                    set(Calendar.SECOND, 59); set(Calendar.MILLISECOND, 999)
-                }.timeInMillis
-                val due = kotlinx.coroutines.runBlocking { app.database.studyUnitDao().getDueCount(endOfToday) }
+                // Today's plan, the same count the reminder and the Today screen use.
+                val due = kotlinx.coroutines.runBlocking { app.todayPlan().size }
                 // Dedup like the safety worker: TIME_SET/TIMEZONE broadcasts can arrive repeatedly,
                 // and a reminder already shown today must not be duplicated by catch-up.
                 val startOfToday = Calendar.getInstance().apply {
