@@ -27,6 +27,25 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Warning
 
 /** One requirement row: green check when satisfied, red cross + a fix button when not. */
+/**
+ * Writes a file the user just created with the system picker, and deletes it if the write fails part-way: a
+ * truncated backup under the name the user chose looks like a good one until the day it is needed. Not
+ * cancellable, so leaving Settings mid-write can neither cut the file short nor skip the cleanup.
+ */
+private suspend fun writePickedDocument(
+    context: Context,
+    uri: android.net.Uri,
+    write: suspend (java.io.OutputStream) -> Unit,
+): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+    val ok = runCatching {
+        (context.contentResolver.openOutputStream(uri)
+            ?: throw java.io.IOException("Could not open the chosen file for writing"))
+            .use { write(it) }
+    }.onFailure { android.util.Log.w("Yadora", "writing the chosen file failed", it) }.isSuccess
+    if (!ok) runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) }
+    ok
+}
+
 @Composable
 private fun PermissionStatusRow(label: String, granted: Boolean, actionLabel: String, onAction: () -> Unit) {
     Row(
@@ -75,14 +94,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     ) { uri ->
         if (uri != null) {
             exportScope.launch {
-                val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        val json = com.example.data.AnalyticsExporter.buildJson(context)
-                        (context.contentResolver.openOutputStream(uri)
-                            ?: throw java.io.IOException("Could not open the chosen file for writing"))
-                            .use { it.write(json.toByteArray()) }
-                    }.isSuccess
-                }
+                val ok = writePickedDocument(context, uri) { com.example.data.AnalyticsExporter.writeJson(context, it) }
                 android.widget.Toast.makeText(context, if (ok) (when (language) { "fa" -> "خروجی ذخیره شد"; "de" -> "Exportiert"; else -> "Exported" }) else (when (language) { "fa" -> "خروجی ناموفق بود"; "de" -> "Export fehlgeschlagen"; else -> "Export failed" }), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -104,21 +116,16 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     }
 
     // --- Full backup / restore: a complete JSON snapshot the user can save to a folder and re-import ---
-    var pendingImportJson by remember { mutableStateOf<String?>(null) }
+    // The picked file, restored only after the user confirms. Read by streaming at that point: holding a
+    // multi-year backup as one String here (and again while parsing it) is what ran restores out of memory.
+    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var showDeleteAll by remember { mutableStateOf(false) }
     val backupExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
             exportScope.launch {
-                val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        val json = com.example.data.BackupManager.buildBackupJson(context)
-                        (context.contentResolver.openOutputStream(uri)
-                            ?: throw java.io.IOException("Could not open the chosen file for writing"))
-                            .use { it.write(json.toByteArray()) }
-                    }.isSuccess
-                }
+                val ok = writePickedDocument(context, uri) { com.example.data.BackupManager.writeBackup(context, it) }
                 android.widget.Toast.makeText(context, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else if (language == "de") "Sicherung gespeichert" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else if (language == "de") "Sicherung fehlgeschlagen" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -126,53 +133,37 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     val backupImportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            exportScope.launch {
-                val json = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching {
-                        context.contentResolver.openInputStream(uri)?.use { stream ->
-                            // Bounded WHILE reading: abort as soon as the cap is crossed, so a huge
-                            // file picked by mistake never gets fully loaded into memory first.
-                            // 64MB: far above any realistic library (years of heavy use), while
-                            // still bounded. Must comfortably exceed anything the app can EXPORT —
-                            // a backup Yadora created must always be importable again.
-                            val cap = 64_000_000
-                            val out = java.io.ByteArrayOutputStream()
-                            val buf = ByteArray(64 * 1024)
-                            while (true) {
-                                val n = stream.read(buf)
-                                if (n < 0) break
-                                require(out.size() + n <= cap) { "File too large to be a Yadora backup" }
-                                out.write(buf, 0, n)
-                            }
-                            out.toByteArray().decodeToString()
-                        }
-                    }.getOrNull()
-                }
-                if (json.isNullOrBlank()) {
-                    android.widget.Toast.makeText(context, if (language == "fa") "خواندن فایل ناموفق بود" else if (language == "de") "Datei konnte nicht gelesen werden" else "Couldn't read that file", android.widget.Toast.LENGTH_SHORT).show()
-                } else {
-                    pendingImportJson = json
-                }
-            }
-        }
+        if (uri != null) pendingImportUri = uri
     }
-    if (pendingImportJson != null) {
+    if (pendingImportUri != null) {
         AlertDialog(
-            onDismissRequest = { pendingImportJson = null },
+            onDismissRequest = { pendingImportUri = null },
             title = { Text(if (language == "fa") "بازیابی پشتیبان؟" else if (language == "de") "Sicherung wiederherstellen?" else "Restore backup?") },
             text = { Text(if (language == "fa") "همهٔ داده‌های فعلی با محتوای این فایل جایگزین می‌شود. این کار قابل بازگشت نیست." else if (language == "de") "Das ersetzt ALLE aktuellen Daten durch den Inhalt dieser Datei. Das lässt sich nicht rückgängig machen." else "This replaces ALL your current data with the contents of this file. This can't be undone.") },
             confirmButton = {
                 TextButton(onClick = {
-                    val json = pendingImportJson!!
-                    pendingImportJson = null
+                    val uri = pendingImportUri ?: return@TextButton
+                    pendingImportUri = null
                     exportScope.launch {
-                        val count = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            runCatching { com.example.data.BackupManager.restoreFromJson(context, json) }.getOrNull()
+                        // Streamed from the file, validated in full before anything is replaced, and not
+                        // cancellable half-way: a restore either completes or never touches the data. The
+                        // reminder re-arm and the widget refresh belong to the restore, so they run inside the
+                        // same block: leaving Settings mid-restore cancels this scope, and a cancelled
+                        // withContext throws on return, which used to skip them and leave the reminders armed
+                        // for the old data and the widget showing it.
+                        val count = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                            val restored = runCatching {
+                                (context.contentResolver.openInputStream(uri)
+                                    ?: throw java.io.IOException("Could not open the chosen file"))
+                                    .use { com.example.data.BackupManager.restoreFromStream(context, it) }
+                            }.getOrNull()
+                            if (restored != null) {
+                                runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
+                                runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
+                            }
+                            restored
                         }
                         if (count != null) {
-                            runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
-                            com.example.widget.DueWidgetProvider.updateAll(context)
                             android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: ${com.example.ui.i18n.PersianDate.faDigits(count)} مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
                         } else {
                             android.widget.Toast.makeText(context, if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup", android.widget.Toast.LENGTH_LONG).show()
@@ -180,7 +171,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     }
                 }) { Text(if (language == "fa") "بازیابی" else if (language == "de") "Wiederherstellen" else "Restore") }
             },
-            dismissButton = { TextButton(onClick = { pendingImportJson = null }) { Text(strings.cancel) } }
+            dismissButton = { TextButton(onClick = { pendingImportUri = null }) { Text(strings.cancel) } }
         )
     }
 
@@ -1079,6 +1070,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 // The pilot: a pseudonymous id (no name, no account) so several people's files can be pooled,
                 // and a one-tap share to whatever app the file should go through (a chat, e-mail, a drive).
                 val researchId = remember { com.example.data.ResearchId.get(context) }
+                // One export at a time: a second tap while the first is still writing used to race on the
+                // same file, and the app receiving the share could read a file being rewritten under it.
+                var sharing by remember { mutableStateOf(false) }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = when (language) {
@@ -1091,8 +1085,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
+                    enabled = !sharing,
                     onClick = {
+                        sharing = true
                         exportScope.launch {
+                          try {
                             val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                 runCatching { com.example.data.AnalyticsExporter.writeShareableFile(context) }.getOrNull()
                             }
@@ -1118,6 +1115,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             }
+                          } finally {
+                            sharing = false
+                          }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()

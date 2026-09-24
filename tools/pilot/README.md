@@ -8,6 +8,7 @@ simulation results.
 |---|---|
 | `analyze.py` | Reads research exports (Settings → Share research data), replays every review, writes `report.md`, `summary.json`, CSVs, and a pooled refit when there is enough data. |
 | `simulate.py` | The identical-twins simulation: a year of study, Yadora vs review without a schedule at equal time, across learner types, rating honesty, missed days, cramming and retention targets. |
+| `experiments.py` | One scheduling choice at a time against its alternatives: queue order under a binding limit, the relearn step, the first-study cap, the maximum interval, a difficulty-adaptive target. Workload-changing choices are compared at equal time. |
 | `yadora_model.py` | FSRS-6 and Yadora's scheduling rules, transcribed from the Kotlin sources. Both tools use it. |
 | `test_yadora_model.py` | Checks the transcription against the py-fsrs 6.3.1 goldens the app is tested with, and against kotlin-stdlib's RNG (`kotlin_fuzz_reference.json`) for the interval fuzz. |
 | `test_analyze.py` | Runs `analyze.py` on `fixtures/sample_export.json`, a real app export, and checks every log replays exactly and that tampering is caught. |
@@ -16,6 +17,7 @@ simulation results.
 python3 tools/pilot/analyze.py exports/ --out pilot_report
 python3 tools/pilot/simulate.py                      # ~2 minutes; --quick for a smoke test
 python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json
+python3 tools/pilot/experiments.py                   # ~15 minutes; --quick, --only order,relearn,cap,maxivl,adaptive
 python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py
 ```
 

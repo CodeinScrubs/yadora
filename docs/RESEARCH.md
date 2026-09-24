@@ -108,7 +108,60 @@ The advantage of scheduling at equal time peaks at 0.90, the default. Higher tar
 knowledge at a steep price: 0.95 gives +2.2 points for 1.5× the reviews, 0.97 gives +3.2 points for
 2.2×. That matches the Settings guide, so the default stays.
 
-### 2.4 What the simulation cannot tell
+### 2.4 The remaining scheduling choices, tested one at a time
+
+`tools/pilot/experiments.py` changes one policy knob at a time on the Yadora twin. Every result below is
+6 seeds over a year (three years for the interval cap), except the difficulty-adaptive sweep, which used
+4 seeds.
+
+A knob that changes the workload is judged **at equal time**: its retention target is swept, and
+knowledge is read at the review count the current policy spends at 0.90. A knob that doesn't is compared
+directly, with the daily limit genuinely binding.
+
+**Queue order, when the daily limit binds.** This is what gets today's slots after a holiday or under
+overload. The limit fixes the workload, so final knowledge is compared directly:
+
+| order | heavy load (6 new/day, limit 15) | holiday, then limit 20 | forgets 2× faster, limit 15 |
+|---|---|---|---|
+| **Yadora priority score** | 85.4% | 94.5% | 82.1% |
+| earliest due first | 85.5% | 94.8% | 82.2% |
+| lowest recall first | 84.4% | 94.8% | 80.9% |
+| most overdue relative to interval | 84.3% | 94.7% | 81.1% |
+| highest recall first | 78.7% | 94.5% | 76.8% |
+
+Yadora's order is as good as the best alternative, and much better than "highest recall first", which some
+apps use for backlogs. No change.
+
+**The other knobs, at equal time:**
+
+| choice | options, final knowledge (and year average) | verdict |
+|---|---|---|
+| Relearn step after Forgot | **1 day 95.0% (95.0)** · 2 days 95.1% (95.2) · FSRS's own post-lapse interval 95.1% (95.3) | within noise; keep 1 day, the sensible next-day check after restudying |
+| First-study cap, honest ratings | **5 d 95.0% (95.0)** · 3 d 94.9% (94.9) · 7 d 95.0% (95.1) · none 94.9% (95.1) | no difference |
+| First-study cap, 40% of first ratings a grade too high | **5 d 95.0% (95.1)** · 3 d 94.7% (94.9) · 7 d 95.1% (95.1) · none 94.8% (94.8) | the cap is a cheap guard against overconfidence; keep 5 d |
+| Maximum interval, three years | **365 d 95.6% (95.2)** · 180 d 96.2% (95.2) · none 95.0% (95.1) | same average knowledge; no cap is slightly worse; keep 365 d |
+
+**Difficulty-adaptive retention (evaluated, not adopted).** FSRS's equations make a review of a hard topic
+buy less stability, so optimal-control work on spaced repetition (SSP-MMC) targets lower retention for
+harder items. Tested as target = base + slope × (D − 5.5) / 4.5:
+
+| slope | year-average knowledge vs flat | hardest quarter of topics at the quiz | worst tenth of topics |
+|---|---|---|---|
+| −0.02 | +0.2 to +0.4 points | −0.5 to −0.7 points | about unchanged |
+| −0.04 | +0.1 to +0.6 | −1.5 to −1.9 | −1.0 to −1.5 |
+| −0.06 / −0.08 | smaller or negative | −2 to −4 | −3 to −5 |
+
+The results are the same across the default, fast, slow and overconfident learners. The best version buys
+about 0.3 points (≈6% less forgetting at equal time) by letting the hardest topics slip a little, and for a
+medical student those are often the high-yield ones. That is a product trade-off rather than a free gain,
+so the target stays flat until the owner decides and the pilot's own data can weigh it. The reverse
+direction, higher targets for harder topics, is clearly worse (−0.9 points).
+
+**Conclusion.** Within the model, every scheduling choice Yadora makes is at or within noise of the best
+alternative tested. The one alternative with a measurable gain comes with a trade-off the owner should
+choose.
+
+### 2.5 What the simulation cannot tell
 
 - True memory is FSRS-6. It is the best available model, but its heavy tail makes unreviewed forgetting
   mild: under it, an unreviewed Medium topic is still ~50% recalled after six months. If whole medical

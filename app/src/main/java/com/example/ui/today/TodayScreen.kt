@@ -558,7 +558,8 @@ fun TodayScreen(
                                     )
                                     // Review ahead (ReviewAhead): for spare time and the weeks before an exam.
                                     // Offered only when a rated topic is waiting; honest about the cost.
-                                    if (allUpcoming.any { it.reviewCount > 0 }) {
+                                    val endOfDay = remember(allUpcoming) { DayBounds.endOf(System.currentTimeMillis()) }
+                                    if (allUpcoming.any { ReviewAhead.isCandidate(it, endOfDay) }) {
                                         Spacer(modifier = Modifier.height(10.dp))
                                         OutlinedButton(onClick = onReviewAhead, shape = RoundedCornerShape(percent = 50)) {
                                             Text(when (strings.languageCode) { "fa" -> "مرور جلوتر از برنامه"; "de" -> "Vorausarbeiten"; else -> "Review ahead" })

@@ -3,6 +3,7 @@ package com.example.data
 import android.content.Context
 import androidx.room.withTransaction
 import com.example.MedReviewApplication
+import com.example.data.JsonStreams.jsonValue
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -63,13 +64,29 @@ object AnalyticsExporter {
      * Earlier exports there are removed first, so a stale file can never be the one that gets shared.
      */
     suspend fun writeShareableFile(context: Context): java.io.File {
-        val json = buildJson(context)
         val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
-        return java.io.File(dir, fileName(context)).apply { writeText(json) }
+        val file = java.io.File(dir, fileName(context))
+        try {
+            file.outputStream().use { writeJson(context, it) }
+        } catch (t: Throwable) {
+            // A half-written file is never shared, but it should not sit in the cache either.
+            file.delete()
+            throw t
+        }
+        return file
     }
 
-    suspend fun buildJson(context: Context): String {
+    /** [writeJson] into a String, for tests and other small callers. */
+    suspend fun buildJson(context: Context): String =
+        java.io.ByteArrayOutputStream().also { writeJson(context, it) }.toString(Charsets.UTF_8.name())
+
+    /**
+     * The export, written straight to [out] as compact JSON. The small blocks are built as objects; the three
+     * long arrays (topics, reviews, events) are streamed one record at a time ([JsonStreams]), so memory
+     * stays the size of the entities however long the history. The caller owns and closes [out].
+     */
+    suspend fun writeJson(context: Context, out: java.io.OutputStream) {
         val app = context.applicationContext as MedReviewApplication
         val unitDao = app.database.studyUnitDao()
         val logDao = app.database.reviewLogDao()
@@ -249,9 +266,14 @@ object AnalyticsExporter {
             })
         })
 
-        val unitsArr = JSONArray()
+        // Everything above is small; stream it out, then the long arrays record by record.
+        val w = android.util.JsonWriter(java.io.OutputStreamWriter(java.io.BufferedOutputStream(out), Charsets.UTF_8))
+        w.beginObject()
+        root.keys().forEach { k -> w.name(k); w.jsonValue(root.opt(k)) }
+
+        w.name("studyUnits").beginArray()
         for (u in units) {
-            unitsArr.put(JSONObject().apply {
+            w.jsonValue(JSONObject().apply {
                 put("id", u.id)
                 put("studyType", u.studyType)
                 put("subjectId", u.subjectId ?: JSONObject.NULL)
@@ -284,7 +306,7 @@ object AnalyticsExporter {
                 put("titleLength", u.title.trim().length)
             })
         }
-        root.put("studyUnits", unitsArr)
+        w.endArray()
 
         // ADHERENCE: when was this review actually DUE, and how late was it answered?
         // Nothing stores that directly, but it is exactly reconstructable: a review answers the date
@@ -306,24 +328,40 @@ object AnalyticsExporter {
         // The event log already records every such action; joining them here means the analysis does
         // not have to reimplement the join (and get it subtly wrong).
         val deferralTypes = setOf("PROCRASTINATE", "PROCRASTINATE_ALL", "REDISTRIBUTE")
+        // Sorted event times per topic, plus the bulk actions (no unit id: they moved every due topic, so
+        // they count for whatever was due at the time), each counted in a window by binary search. The old
+        // join scanned every event for every review: fine for a pilot, but on a multi-year history (~20k
+        // reviews, ~20k events) it took seconds of phone time.
+        val deferrals = events.filter { it.type in deferralTypes }
+        val bulkDeferralTimes = deferrals.filter { it.unitId == null }.map { it.at }.sorted()
+        val unitDeferralTimes = deferrals.filter { it.unitId != null }.groupBy({ it.unitId!! }, { it.at })
+            .mapValues { (_, times) -> times.sorted() }
+        fun countIn(sorted: List<Long>, from: Long, to: Long): Int {
+            if (sorted.isEmpty() || from > to) return 0
+            // First index with time >= from, and first index with time > to: the count of [from, to].
+            fun firstAtLeast(t: Long): Int {
+                var lo = 0; var hi = sorted.size
+                while (lo < hi) { val mid = (lo + hi) ushr 1; if (sorted[mid] < t) lo = mid + 1 else hi = mid }
+                return lo
+            }
+            val upper = if (to == Long.MAX_VALUE) sorted.size else firstAtLeast(to + 1)
+            return upper - firstAtLeast(from)
+        }
         val deferralsByLog = HashMap<Long, Int>(logs.size)
         for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
             val ordered = unitLogs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
             var windowStart = unitStudiedAt[unitId] ?: 0L
+            val ownTimes = unitDeferralTimes[unitId].orEmpty()
             for (l in ordered) {
-                deferralsByLog[l.id] = events.count { e ->
-                    e.type in deferralTypes && e.at in windowStart..l.reviewedAt &&
-                        // PROCRASTINATE_ALL / REDISTRIBUTE are bulk actions with no unit id: they
-                        // moved every due topic, so they count for whatever was due at the time.
-                        (e.unitId == null || e.unitId == unitId)
-                }
+                deferralsByLog[l.id] = countIn(bulkDeferralTimes, windowStart, l.reviewedAt) +
+                    countIn(ownTimes, windowStart, l.reviewedAt)
                 windowStart = l.reviewedAt
             }
         }
 
-        val logsArr = JSONArray()
+        w.name("reviewLogs").beginArray()
         for (l in logs) {
-            logsArr.put(JSONObject().apply {
+            w.jsonValue(JSONObject().apply {
                 put("id", l.id) // join key: STUDY_ACTION events carry the log id in `detail`
                 val scheduledFor = scheduledForByLog[l.id]
                 put("scheduledForAt", scheduledFor ?: JSONObject.NULL)
@@ -373,7 +411,7 @@ object AnalyticsExporter {
                 put("sessionKind", l.sessionKind ?: JSONObject.NULL)
             })
         }
-        root.put("reviewLogs", logsArr)
+        w.endArray()
 
         // SELF-CHECK. The export states where the database disagrees with itself, so a problem is
         // visible in the file rather than having to be suspected and hunted for. Every one of these
@@ -432,7 +470,8 @@ object AnalyticsExporter {
                 flag("SEED_ORDERING", u.id, "multiple FIRST_STUDY rows and the earliest log is not one of them")
             }
         }
-        root.put("consistency", JSONObject().apply {
+        w.name("consistency")
+        w.jsonValue(JSONObject().apply {
             put("checkedUnits", units.size)
             put("checkedLogs", logs.size)
             put("issueCount", issues.length())
@@ -444,18 +483,19 @@ object AnalyticsExporter {
             )
         })
 
-        val eventsArr = JSONArray()
+        w.name("eventLogs").beginArray()
         for (e in events) {
-            eventsArr.put(JSONObject().apply {
+            w.jsonValue(JSONObject().apply {
                 put("at", e.at)
                 put("type", e.type)
                 put("unitId", e.unitId ?: JSONObject.NULL)
                 put("detail", e.detail ?: JSONObject.NULL)
             })
         }
-        root.put("eventLogs", eventsArr)
-        root.put("fieldGuide", fieldGuide())
-
-        return root.toString(2)
+        w.endArray()
+        w.name("fieldGuide")
+        w.jsonValue(fieldGuide())
+        w.endObject()
+        w.flush()
     }
 }

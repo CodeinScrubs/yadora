@@ -176,6 +176,7 @@ class Row:
     duration_ms: int
     lapses_before: int
     merged: bool
+    decay: float = -ym.DEFAULT_WEIGHTS[20]   # the curve shape of this log's own weight set
     stability_before: Optional[float] = None
     difficulty_before: Optional[float] = None
     stability_after: Optional[float] = None
@@ -199,9 +200,8 @@ class Row:
         if self.predicted is None or not (0 < self.predicted <= 1):
             return None
         k = ym.safe_scale(self.calibration_scale if self.calibration_scale > 0 else 1.0)
-        decay = -0.1542  # defaults; the exact set's decay is used in replay-based figures
-        ratio = self.predicted ** (1.0 / decay) - 1.0
-        return (1.0 + ratio / k) ** decay
+        ratio = self.predicted ** (1.0 / self.decay) - 1.0
+        return (1.0 + ratio / k) ** self.decay
 
 
 def local_day(ms: int, tz) -> dt.date:
@@ -369,6 +369,7 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
                 duration_ms=int(log.get("reviewDurationMs", -1)),
                 lapses_before=lapses,
                 merged=uid in merged,
+                decay=-(sets.get(sid) or ym.DEFAULT_WEIGHTS)[20],
             )
             if rp:
                 row.stability_before = rp["before"].stability if rp["before"] else None

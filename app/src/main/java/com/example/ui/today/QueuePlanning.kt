@@ -38,6 +38,16 @@ object ReviewAhead {
     const val SESSION_SIZE = 20
 
     /**
+     * Can [unit] be reviewed ahead? Rated, active, not due today (today's plan owns those), and not deferred
+     * by the learner: "Not today" and "Spread out" are the learner's own choice, and offering that topic
+     * again the same evening (first, even: a deferred topic is overdue on the model's clock) contradicted it.
+     * Today shows the button only when some topic passes, so the session is never empty.
+     */
+    fun isCandidate(unit: StudyUnitEntity, endOfToday: Long): Boolean =
+        unit.reviewCount > 0 && unit.deletedAt == null && !unit.archived && unit.deferredUntil == null &&
+            unit.nextReviewAt > endOfToday
+
+    /**
      * @param active non-archived, non-deleted topics.
      * @param recall the model's current recall probability for a topic, or null when it cannot be computed
      *   (such a topic is left out rather than guessed at).
@@ -50,7 +60,7 @@ object ReviewAhead {
     ): List<StudyUnitEntity> {
         val endOfToday = DayBounds.endOf(now)
         return active.asSequence()
-            .filter { it.reviewCount > 0 && it.deletedAt == null && !it.archived && it.nextReviewAt > endOfToday }
+            .filter { isCandidate(it, endOfToday) }
             .mapNotNull { u -> recall(u)?.takeIf { it.isFinite() }?.let { u to it } }
             .sortedWith(compareBy<Pair<StudyUnitEntity, Double>>({ it.second }, { it.first.nextReviewAt }, { it.first.id }))
             .take(limit.coerceAtLeast(0))

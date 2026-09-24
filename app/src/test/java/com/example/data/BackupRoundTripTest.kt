@@ -205,9 +205,9 @@ class BackupRoundTripTest {
             )
         )
 
-        // Tamper a rating into garbage — pretty-printed JSON makes the field targetable.
+        // Tamper a rating into garbage (the backup is compact JSON: no space after the colon).
         val json = BackupManager.buildBackupJson(context)
-        val bad = json.replace("\"memoryRating\": \"Good\"", "\"memoryRating\": \"WAT\"")
+        val bad = json.replace("\"memoryRating\":\"Good\"", "\"memoryRating\":\"WAT\"")
         assertTrue("tampering must have applied", bad != json)
 
         val result = runCatching { BackupManager.restoreFromJson(context, bad) }
@@ -234,7 +234,7 @@ class BackupRoundTripTest {
             )
         )
         val json = BackupManager.buildBackupJson(context)
-        val bad = json.replace("\"keyPointsRecalled\": 2", "\"keyPointsRecalled\": 5")
+        val bad = json.replace("\"keyPointsRecalled\":2", "\"keyPointsRecalled\":5")
         assertTrue("tampering must have applied", bad != json)
 
         assertTrue("an impossible score must be rejected", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
@@ -259,14 +259,14 @@ class BackupRoundTripTest {
             )
         )
         val json = BackupManager.buildBackupJson(context)
-        val bad = json.replace("\"questionsCorrect\": 8", "\"questionsCorrect\": 12")
+        val bad = json.replace("\"questionsCorrect\":8", "\"questionsCorrect\":12")
         assertTrue("tampering must have applied", bad != json)
 
         assertTrue("an impossible score must be rejected", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
         assertEquals(8, db.reviewLogDao().getLogsForUnit(unitId).first().single().questionsCorrect)
 
         // An unknown method name from a newer build is dropped, not fatal.
-        val newer = json.replace("\"reviewMethods\": \"Questions\"", "\"reviewMethods\": \"Questions,Hologram\"")
+        val newer = json.replace("\"reviewMethods\":\"Questions\"", "\"reviewMethods\":\"Questions,Hologram\"")
         assertTrue("tampering must have applied", newer != json)
         BackupManager.restoreFromJson(context, newer)
         assertEquals("Questions", db.reviewLogDao().getLogsForUnit(unitId).first().single().reviewMethods)

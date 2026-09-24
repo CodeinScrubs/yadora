@@ -23,8 +23,13 @@ reviews from a friend's topics is exactly the downside the standard forbids.
 
 ## Setup (week 0)
 
-1. Build from a tagged commit (`:app:assembleRelease`, signed) or share the debug APK. Every participant
-   runs the same build, and the build is written down (it is also in every export).
+1. **Distribute one signed build through Google Play's internal or closed testing track.** Build it from a
+   tagged commit with a higher `versionCode`. Every participant runs the same build, and the build is
+   written down (it is also in every export). Do not hand out a debug APK, or an APK signed with any other
+   key. Android refuses to update an app in place when the signing certificate changes, so moving to the
+   Play version later would mean uninstalling, and uninstalling deletes the pilot data. If a sideloaded
+   build is unavoidable, participants must export a full backup (Settings → Export full backup) before
+   switching, then restore it.
 2. On each phone:
    - finish onboarding, including the REMINDERS step: grant notifications and exact alarms;
    - on Samsung, Xiaomi, Huawei, Oppo and Vivo, set Yadora's battery use to unrestricted;

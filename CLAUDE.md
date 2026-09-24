@@ -565,7 +565,35 @@ These were decided deliberately. Re-suggesting them wastes a session:
   With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.7%). It reads NO
   exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
   honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
-  (their first rating belongs on the study day) and topics due today stay with today's plan.
+  (their first rating belongs on the study day), topics due today stay with today's plan, and topics the
+  learner DEFERRED ("Not today", "Spread out") are left out too: offering one again the same evening
+  (first, since it is overdue on the model's clock) contradicted the learner's own choice.
+  `ReviewAhead.isCandidate` is the one rule, used by the queue and by the Today button, so the button
+  never opens an empty session.
+- **Scheduling choices are checked against their alternatives by simulation** (`tools/pilot/experiments.py`,
+  results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: Yadora's priority
+  score is as good as the best alternative (earliest-due), and "highest recall first" is 4–7 points worse.
+  The relearn step (1 d vs 2 d vs FSRS's post-lapse interval), the first-study cap (3/5/7 d/none) and the
+  maximum interval (180/365/none over three years) are all within noise of each other at EQUAL TIME;
+  the cap is worth ~0.3 points when first ratings are overconfident. A DIFFICULTY-ADAPTIVE target (lower
+  for harder topics) buys ~0.2–0.4 points at equal time but costs the hardest quarter of topics
+  0.5–0.7 points. It is NOT adopted: that is the owner's trade-off to make, ideally with pilot data. Do not
+  ship it silently, and do not re-run these experiments as if they were open questions.
+- **Backup, restore and the research export STREAM** (`data/JsonStreams`, 2026-09-24). They used to build
+  one org.json tree and one String. Measured on a multi-year history (3,300 topics, ~20,000 reviews): a
+  backup cost ~141 MB of live heap, and a restore held the file text, its parsed tree AND a full safety
+  backup at once. That is past a phone's heap exactly when the data matters most. Now records are written
+  one at a time, and read one at a time straight into entities: ~15 MB to write, ~9 MB to restore. The
+  output is compact JSON with the same fields. Every older build's backup still restores: pretty-printed,
+  whole doubles as integers, with or without a byte-order mark (`BackupStreamingTest` pins it). Restore
+  validates the WHOLE file before it writes the safety copy or touches the database. Settings runs the
+  write and the restore NonCancellable, so leaving the screen can never leave a truncated backup the
+  user believes is complete; a write that fails part-way deletes the file it was writing (the picked
+  document, or the half-written share file), and the restore's reminder re-arm and widget refresh run
+  inside the same non-cancellable block, because a cancelled `withContext` throws on return and used to
+  skip them. The import holds the picked URI, not the file's text. The export's
+  per-review deferral count is a binary search over sorted event times, not a scan of every event for
+  every review. "Delete all data" also removes `cache/exports/`.
 - **Pilot research data never feeds the scheduler** (DB v10, analytics export v12, backup v9). Each log
   can carry how the learner reviewed (`reviewMethods`: Questions / Reading / Lecture / Other, optional,
   several allowed, reset for every topic so no remembered choice is recorded as a new one), an optional

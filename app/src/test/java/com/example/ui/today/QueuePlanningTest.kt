@@ -183,12 +183,25 @@ class QueuePlanningTest {
 
     // --- ReviewAhead: not yet due, weakest first ---
 
-    private fun ahead(id: Long, reviews: Int, dueInDays: Int, archived: Boolean = false, deleted: Boolean = false) =
+    private fun ahead(id: Long, reviews: Int, dueInDays: Int, archived: Boolean = false, deleted: Boolean = false, deferred: Boolean = false) =
         com.example.data.local.entity.StudyUnitEntity(
             id = id, title = "a$id", studyType = "Topic", reviewCount = reviews, state = "Building",
-            studiedAt = now - 30 * day, nextReviewAt = now + dueInDays * day, modelDueAt = now + dueInDays * day,
+            studiedAt = now - 30 * day, nextReviewAt = now + dueInDays * day,
+            // A deferral: the model's own date already passed, the learner moved it to a later day.
+            modelDueAt = if (deferred) now - 2 * day else now + dueInDays * day,
+            deferredUntil = if (deferred) now + dueInDays * day else null,
             archived = archived, deletedAt = if (deleted) now - day else null,
         )
+
+    @Test fun review_ahead_respects_the_learners_own_deferral() {
+        // Tapped "Not today" this morning: overdue on the model's clock, so it would sort FIRST by recall.
+        val deferred = ahead(1, reviews = 3, dueInDays = 1, deferred = true)
+        val other = ahead(2, reviews = 3, dueInDays = 6)
+        val order = ReviewAhead.order(listOf(deferred, other), now, recall = { if (it.id == 1L) 0.5 else 0.9 })
+        assertEquals("not today means not today", listOf(2L), order.map { it.id })
+        assertFalse(ReviewAhead.isCandidate(deferred, DayBounds.endOf(now)))
+        assertTrue(ReviewAhead.isCandidate(other, DayBounds.endOf(now)))
+    }
 
     @Test fun review_ahead_offers_the_weakest_not_yet_due_topics_first() {
         val recall = mapOf(1L to 0.95, 2L to 0.81, 3L to 0.88, 4L to 0.70, 5L to 0.60, 6L to 0.50, 7L to 0.40)

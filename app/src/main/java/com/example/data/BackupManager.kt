@@ -8,7 +8,9 @@ import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.data.local.entity.SubjectEntity
 import com.example.data.local.entity.SystemEntity
-import org.json.JSONArray
+import com.example.data.JsonStreams.field
+import com.example.data.JsonStreams.forEachRecord
+import com.example.data.JsonStreams.readValue
 import org.json.JSONObject
 
 /**
@@ -46,7 +48,12 @@ object BackupManager {
     private val SETTINGS_FLOAT_KEYS = listOf("daily_review_limit", "desired_retention")
     private val SETTINGS_LONG_KEYS = listOf("exam_date")
 
-    suspend fun buildBackupJson(context: Context): String {
+    /**
+     * The backup, written straight to [out] as compact JSON, one record at a time ([JsonStreams]): memory stays
+     * the size of the entities however long the history. Same fields as ever, so every older build's restore
+     * reads it. The caller owns and closes [out].
+     */
+    suspend fun writeBackup(context: Context, out: java.io.OutputStream) {
         val db = (context.applicationContext as MedReviewApplication).database
         // ONE transaction = one moment in time: reading each table separately could interleave with
         // a concurrent write (receiver, purge) and produce an internally inconsistent backup.
@@ -69,185 +76,290 @@ object BackupManager {
             events = db.eventLogDao().getAll()
         }
 
-        val root = JSONObject()
-        root.put("backupVersion", BACKUP_VERSION)
-        root.put("exportedAt", System.currentTimeMillis())
+        val w = android.util.JsonWriter(java.io.OutputStreamWriter(java.io.BufferedOutputStream(out), Charsets.UTF_8))
+        w.beginObject()
+        w.field("backupVersion", BACKUP_VERSION)
+        w.field("exportedAt", System.currentTimeMillis())
 
-        root.put("subjects", JSONArray().apply {
-            for (s in subjects) put(JSONObject().apply {
-                put("id", s.id); put("name", s.name)
-                put("colorHex", s.colorHex ?: JSONObject.NULL); put("createdAt", s.createdAt)
-            })
-        })
-        root.put("systems", JSONArray().apply {
-            for (s in systems) put(JSONObject().apply {
-                put("id", s.id); put("name", s.name)
-                put("colorHex", s.colorHex ?: JSONObject.NULL); put("createdAt", s.createdAt)
-            })
-        })
-        root.put("studyUnits", JSONArray().apply {
-            for (u in units) put(JSONObject().apply {
-                put("id", u.id); put("title", u.title)
-                put("subjectId", u.subjectId ?: JSONObject.NULL); put("systemId", u.systemId ?: JSONObject.NULL)
-                put("studyType", u.studyType); put("recallPrompt", u.recallPrompt ?: JSONObject.NULL)
-                put("notes", u.notes ?: JSONObject.NULL); put("source", u.source ?: JSONObject.NULL)
-                put("highYield", u.highYield); put("state", u.state)
-                put("difficulty", u.difficulty); put("stability", u.stability); put("retrievability", u.retrievability)
-                put("createdAt", u.createdAt); put("updatedAt", u.updatedAt); put("studiedAt", u.studiedAt)
-                put("lastReviewedAt", u.lastReviewedAt ?: JSONObject.NULL); put("nextReviewAt", u.nextReviewAt)
-                put("currentIntervalDays", u.currentIntervalDays); put("reviewCount", u.reviewCount)
-                put("lapseCount", u.lapseCount); put("archived", u.archived)
-                put("modelDueAt", u.modelDueAt); put("deferredUntil", u.deferredUntil ?: JSONObject.NULL)
-                put("deletedAt", u.deletedAt ?: JSONObject.NULL)
-                put("understandingDueAt", u.understandingDueAt ?: JSONObject.NULL)
-                put("memoryModel", u.memoryModel)
-                put("keyPoints", u.keyPoints ?: JSONObject.NULL)
-                put("parameterSetId", u.parameterSetId)
-            })
-        })
-        root.put("reviewLogs", JSONArray().apply {
-            for (l in logs) put(JSONObject().apply {
-                put("id", l.id); put("studyUnitId", l.studyUnitId); put("reviewedAt", l.reviewedAt)
-                put("memoryRating", l.memoryRating); put("understandingRating", l.understandingRating)
-                put("previousIntervalDays", l.previousIntervalDays); put("nextIntervalDays", l.nextIntervalDays)
-                put("previousState", l.previousState); put("nextState", l.nextState)
-                put("retrievabilityAtReview", l.retrievabilityAtReview); put("elapsedDays", l.elapsedDays)
-                put("logType", l.logType)
-                put("initialDifficulty", l.initialDifficulty ?: JSONObject.NULL)
-                put("reviewDurationMs", l.reviewDurationMs); put("wasImportantAtReview", l.wasImportantAtReview)
-                put("desiredRetentionAtReview", l.desiredRetentionAtReview); put("schedulerVersion", l.schedulerVersion)
-                put("schedulerPolicyVersion", l.schedulerPolicyVersion)
-                put("understandingFactorAtReview", l.understandingFactorAtReview)
-                put("calibrationScaleAtReview", l.calibrationScaleAtReview)
-                put("keyPointsTotal", l.keyPointsTotal); put("keyPointsRecalled", l.keyPointsRecalled)
-                put("parameterSetId", l.parameterSetId)
-                put("reviewMethods", l.reviewMethods ?: JSONObject.NULL)
-                put("questionsCorrect", l.questionsCorrect); put("questionsTotal", l.questionsTotal)
-                put("sessionKind", l.sessionKind ?: JSONObject.NULL)
-            })
-        })
-        root.put("memoryParameterSets", JSONArray().apply {
-            for (s in parameterSets) put(JSONObject().apply {
-                put("id", s.id); put("createdAt", s.createdAt); put("status", s.status); put("weights", s.weights)
-                put("comparedWithSetId", s.comparedWithSetId); put("availableReviews", s.availableReviews)
-                put("trainReviews", s.trainReviews); put("testReviews", s.testReviews)
-                put("currentLogLoss", s.currentLogLoss); put("candidateLogLoss", s.candidateLogLoss)
-                put("currentRmseBins", s.currentRmseBins); put("candidateRmseBins", s.candidateRmseBins)
-                put("currentAuc", s.currentAuc); put("candidateAuc", s.candidateAuc); put("zScore", s.zScore)
-                put("activatedAt", s.activatedAt ?: JSONObject.NULL); put("retiredAt", s.retiredAt ?: JSONObject.NULL)
-            })
-        })
-        root.put("eventLogs", JSONArray().apply {
-            for (e in events) put(JSONObject().apply {
-                put("id", e.id); put("at", e.at); put("type", e.type)
-                put("unitId", e.unitId ?: JSONObject.NULL); put("detail", e.detail ?: JSONObject.NULL)
-            })
-        })
+        w.name("subjects").beginArray()
+        for (s in subjects) {
+            w.beginObject()
+            w.field("id", s.id).field("name", s.name).field("colorHex", s.colorHex).field("createdAt", s.createdAt)
+            w.endObject()
+        }
+        w.endArray()
+        w.name("systems").beginArray()
+        for (s in systems) {
+            w.beginObject()
+            w.field("id", s.id).field("name", s.name).field("colorHex", s.colorHex).field("createdAt", s.createdAt)
+            w.endObject()
+        }
+        w.endArray()
+        w.name("studyUnits").beginArray()
+        for (u in units) {
+            w.beginObject()
+            w.field("id", u.id).field("title", u.title)
+            w.field("subjectId", u.subjectId).field("systemId", u.systemId)
+            w.field("studyType", u.studyType).field("recallPrompt", u.recallPrompt)
+            w.field("notes", u.notes).field("source", u.source)
+            w.field("highYield", u.highYield).field("state", u.state)
+            w.field("difficulty", u.difficulty).field("stability", u.stability).field("retrievability", u.retrievability)
+            w.field("createdAt", u.createdAt).field("updatedAt", u.updatedAt).field("studiedAt", u.studiedAt)
+            w.field("lastReviewedAt", u.lastReviewedAt).field("nextReviewAt", u.nextReviewAt)
+            w.field("currentIntervalDays", u.currentIntervalDays).field("reviewCount", u.reviewCount)
+            w.field("lapseCount", u.lapseCount).field("archived", u.archived)
+            w.field("modelDueAt", u.modelDueAt).field("deferredUntil", u.deferredUntil)
+            w.field("deletedAt", u.deletedAt)
+            w.field("understandingDueAt", u.understandingDueAt)
+            w.field("memoryModel", u.memoryModel)
+            w.field("keyPoints", u.keyPoints)
+            w.field("parameterSetId", u.parameterSetId)
+            w.endObject()
+        }
+        w.endArray()
+        w.name("reviewLogs").beginArray()
+        for (l in logs) {
+            w.beginObject()
+            w.field("id", l.id).field("studyUnitId", l.studyUnitId).field("reviewedAt", l.reviewedAt)
+            w.field("memoryRating", l.memoryRating).field("understandingRating", l.understandingRating)
+            w.field("previousIntervalDays", l.previousIntervalDays).field("nextIntervalDays", l.nextIntervalDays)
+            w.field("previousState", l.previousState).field("nextState", l.nextState)
+            w.field("retrievabilityAtReview", l.retrievabilityAtReview).field("elapsedDays", l.elapsedDays)
+            w.field("logType", l.logType)
+            w.field("initialDifficulty", l.initialDifficulty)
+            w.field("reviewDurationMs", l.reviewDurationMs).field("wasImportantAtReview", l.wasImportantAtReview)
+            w.field("desiredRetentionAtReview", l.desiredRetentionAtReview).field("schedulerVersion", l.schedulerVersion)
+            w.field("schedulerPolicyVersion", l.schedulerPolicyVersion)
+            w.field("understandingFactorAtReview", l.understandingFactorAtReview)
+            w.field("calibrationScaleAtReview", l.calibrationScaleAtReview)
+            w.field("keyPointsTotal", l.keyPointsTotal).field("keyPointsRecalled", l.keyPointsRecalled)
+            w.field("parameterSetId", l.parameterSetId)
+            w.field("reviewMethods", l.reviewMethods)
+            w.field("questionsCorrect", l.questionsCorrect).field("questionsTotal", l.questionsTotal)
+            w.field("sessionKind", l.sessionKind)
+            w.endObject()
+        }
+        w.endArray()
+        w.name("memoryParameterSets").beginArray()
+        for (s in parameterSets) {
+            w.beginObject()
+            w.field("id", s.id).field("createdAt", s.createdAt).field("status", s.status).field("weights", s.weights)
+            w.field("comparedWithSetId", s.comparedWithSetId).field("availableReviews", s.availableReviews)
+            w.field("trainReviews", s.trainReviews).field("testReviews", s.testReviews)
+            w.field("currentLogLoss", s.currentLogLoss).field("candidateLogLoss", s.candidateLogLoss)
+            w.field("currentRmseBins", s.currentRmseBins).field("candidateRmseBins", s.candidateRmseBins)
+            w.field("currentAuc", s.currentAuc).field("candidateAuc", s.candidateAuc).field("zScore", s.zScore)
+            w.field("activatedAt", s.activatedAt).field("retiredAt", s.retiredAt)
+            w.endObject()
+        }
+        w.endArray()
+        w.name("eventLogs").beginArray()
+        for (e in events) {
+            w.beginObject()
+            w.field("id", e.id).field("at", e.at).field("type", e.type)
+            w.field("unitId", e.unitId).field("detail", e.detail)
+            w.endObject()
+        }
+        w.endArray()
 
         // The user's study setup, so a restore on a new phone brings back reminder time, language,
         // retention target, exam countdown, etc. — not just the topics.
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-        root.put("settings", JSONObject().apply {
-            SETTINGS_STRING_KEYS.forEach { k -> sp.getString(k, null)?.let { put(k, it) } }
-            SETTINGS_BOOL_KEYS.forEach { k -> if (sp.contains(k)) put(k, sp.getBoolean(k, false)) }
-            SETTINGS_INT_KEYS.forEach { k -> if (sp.contains(k)) put(k, sp.getInt(k, 0)) }
-            SETTINGS_FLOAT_KEYS.forEach { k -> if (sp.contains(k)) put(k, sp.getFloat(k, 0f).toDouble()) }
-            SETTINGS_LONG_KEYS.forEach { k -> if (sp.contains(k)) put(k, sp.getLong(k, 0L)) }
-        })
-        return root.toString(2)
+        w.name("settings").beginObject()
+        SETTINGS_STRING_KEYS.forEach { k -> sp.getString(k, null)?.let { w.field(k, it) } }
+        SETTINGS_BOOL_KEYS.forEach { k -> if (sp.contains(k)) w.field(k, sp.getBoolean(k, false)) }
+        SETTINGS_INT_KEYS.forEach { k -> if (sp.contains(k)) w.field(k, sp.getInt(k, 0)) }
+        SETTINGS_FLOAT_KEYS.forEach { k -> if (sp.contains(k)) w.field(k, sp.getFloat(k, 0f).toDouble()) }
+        SETTINGS_LONG_KEYS.forEach { k -> if (sp.contains(k)) w.field(k, sp.getLong(k, 0L)) }
+        w.endObject()
+
+        w.endObject()
+        w.flush()
     }
 
-    /** Replace ALL data with the backup's contents. Returns the number of study units restored. */
-    suspend fun restoreFromJson(context: Context, json: String): Int {
+    /** [writeBackup] into a String, for tests and other small callers. */
+    suspend fun buildBackupJson(context: Context): String =
+        java.io.ByteArrayOutputStream().also { writeBackup(context, it) }.toString(Charsets.UTF_8.name())
+
+    /** Far above any backup the app can write (years of heavy use are ~15 MB), still bounded. */
+    const val MAX_BACKUP_BYTES = 512L * 1024 * 1024
+
+    /** [restoreFromStream] from a String, for tests and other small callers. */
+    suspend fun restoreFromJson(context: Context, json: String): Int =
+        restoreFromStream(context, json.byteInputStream(Charsets.UTF_8))
+
+    /**
+     * Replace ALL data with the backup read from [input]. Returns the number of study units restored.
+     *
+     * The file is read record by record straight into entities ([JsonStreams]) and validated in full BEFORE
+     * anything current is touched. Only then is a safety copy of the current data written, and the
+     * database replaced in one transaction. The caller owns and closes [input].
+     */
+    suspend fun restoreFromStream(context: Context, input: java.io.InputStream): Int {
         val db = (context.applicationContext as MedReviewApplication).database
-        val root = JSONObject(json)
-        require(root.has("studyUnits")) { "This file is not a Yadora backup." }
 
-        // Safety net: restore is all-or-nothing, so before touching anything, snapshot the CURRENT
-        // data to a private file. If the user imports the wrong backup, their real data is still
-        // recoverable from files/last_before_restore_backup.json.
-        // ABORT restore if the safety copy can't be created (e.g. storage full): destroying the
-        // only copy of the user's data without a recovery net is never acceptable. Temp + rename so
-        // a crash mid-write can't leave a truncated safety file that LOOKS valid.
-        run {
-            val emergency = buildBackupJson(context)
-            val tmp = context.filesDir.resolve("last_before_restore_backup.json.tmp")
-            tmp.writeText(emergency)
-            check(tmp.length() > 0L) { "Safety copy could not be written" }
-            val dest = context.filesDir.resolve("last_before_restore_backup.json")
-            if (dest.exists()) dest.delete()
-            check(tmp.renameTo(dest)) { "Safety copy could not be finalized" }
-        }
+        // Strict validation: a damaged backup must ABORT the restore, not be silently coerced into
+        // fake-plausible history (e.g. every corrupt rating becoming "Good" would poison FSRS replay
+        // and analytics). The thrown message surfaces as "Restore failed — invalid backup".
+        val validMemory = setOf("Forgot", "Hard", "Good", "Easy")
+        val validUnderstanding = setOf("Confused", "Partial", "Clear", "NotAsked") // NotAsked = skipped question (Forgot fast-commit)
 
-        val subjectsArr = root.optJSONArray("subjects") ?: JSONArray()
-        val systemsArr = root.optJSONArray("systems") ?: JSONArray()
-        val unitsArr = root.optJSONArray("studyUnits") ?: JSONArray()
-        val logsArr = root.optJSONArray("reviewLogs") ?: JSONArray()
+        var sawUnits = false
+        var fileVersion = 1
+        val subjects = ArrayList<SubjectEntity>()
+        val systems = ArrayList<SystemEntity>()
+        val units = ArrayList<StudyUnitEntity>()
+        val parameterSets = ArrayList<com.example.data.local.entity.MemoryParameterSetEntity>()
+        val logs = ArrayList<ReviewLogEntity>()
+        val events = ArrayList<com.example.data.local.entity.EventLogEntity>()
+        var settings: JSONObject? = null
 
-        val subjects = (0 until subjectsArr.length()).map { i ->
-            val o = subjectsArr.getJSONObject(i)
-            SubjectEntity(
-                id = o.getLong("id"), name = o.getString("name"),
-                colorHex = o.strOrNull("colorHex"), createdAt = o.optLong("createdAt", System.currentTimeMillis())
-            )
+        val text = java.io.PushbackReader(
+            java.io.InputStreamReader(java.io.BufferedInputStream(JsonStreams.Bounded(input, MAX_BACKUP_BYTES)), Charsets.UTF_8),
+        )
+        // A byte-order mark (a file re-saved by a Windows text editor) is not JSON; skip it rather than fail.
+        text.read().let { first -> if (first >= 0 && first != 0xFEFF) text.unread(first) }
+        val reader = android.util.JsonReader(text)
+        reader.beginObject()
+        while (reader.hasNext()) {
+            when (reader.nextName()) {
+                "backupVersion" -> fileVersion = (reader.readValue() as? Number)?.toInt() ?: 1
+                "subjects" -> reader.forEachRecord { _, o ->
+                    subjects += SubjectEntity(
+                        id = o.getLong("id"), name = o.getString("name"),
+                        colorHex = o.strOrNull("colorHex"), createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                    )
+                }
+                "systems" -> reader.forEachRecord { _, o ->
+                    systems += SystemEntity(
+                        id = o.getLong("id"), name = o.getString("name"),
+                        colorHex = o.strOrNull("colorHex"), createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                    )
+                }
+                "studyUnits" -> {
+                    sawUnits = true
+                    reader.forEachRecord { _, o ->
+                        units += StudyUnitEntity(
+                            id = o.getLong("id"), title = o.optString("title", ""),
+                            subjectId = o.longOrNull("subjectId"), systemId = o.longOrNull("systemId"),
+                            studyType = o.optString("studyType", "Other"), recallPrompt = o.strOrNull("recallPrompt"),
+                            notes = o.strOrNull("notes"), source = o.strOrNull("source"),
+                            highYield = o.optBoolean("highYield", false), state = o.optString("state", "New"),
+                            difficulty = o.optDouble("difficulty", 5.0), stability = o.optDouble("stability", 1.0),
+                            retrievability = o.optDouble("retrievability", 1.0),
+                            createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+                            updatedAt = o.optLong("updatedAt", System.currentTimeMillis()),
+                            studiedAt = o.optLong("studiedAt", System.currentTimeMillis()),
+                            lastReviewedAt = o.longOrNull("lastReviewedAt"),
+                            nextReviewAt = o.optLong("nextReviewAt", System.currentTimeMillis()),
+                            currentIntervalDays = o.optDouble("currentIntervalDays", 0.0),
+                            reviewCount = o.optInt("reviewCount", 0), lapseCount = o.optInt("lapseCount", 0),
+                            archived = o.optBoolean("archived", false),
+                            // Pre-v5 backups: the effective date was the only date — same backfill the migration uses.
+                            modelDueAt = o.optLong("modelDueAt", o.optLong("nextReviewAt", System.currentTimeMillis())),
+                            deferredUntil = o.longOrNull("deferredUntil"),
+                            deletedAt = o.longOrNull("deletedAt"),
+                            understandingDueAt = o.longOrNull("understandingDueAt"),
+                            // Pre-v6 files predate the model split, and everything in them was FSRS-5 by
+                            // definition. Falling back to the entity default would claim the same thing, but
+                            // saying it explicitly keeps the intent obvious at the restore site.
+                            memoryModel = o.optString("memoryModel", "FSRS-5").ifBlank { "FSRS-5" },
+                            // Pre-v7 files have no key points; absent reads as none, the same as the migration.
+                            keyPoints = o.strOrNull("keyPoints"),
+                            // Pre-v8 files: everything was computed by the published defaults, set 0.
+                            parameterSetId = o.optLong("parameterSetId", 0L),
+                        )
+                    }
+                }
+                // The personal weight sets, validated like everything else: a set that ever scheduled must
+                // decode to 21 weights inside the reference bounds, or replaying the topics on it would be
+                // impossible.
+                "memoryParameterSets" -> reader.forEachRecord { _, o ->
+                    parameterSets += com.example.data.local.entity.MemoryParameterSetEntity(
+                        id = o.optLong("id", 0L), createdAt = o.optLong("createdAt", 0L), status = o.optString("status", ""),
+                        weights = o.optString("weights", ""), comparedWithSetId = o.optLong("comparedWithSetId", 0L),
+                        availableReviews = o.optInt("availableReviews", 0), trainReviews = o.optInt("trainReviews", 0),
+                        testReviews = o.optInt("testReviews", 0),
+                        currentLogLoss = o.optDouble("currentLogLoss", -1.0), candidateLogLoss = o.optDouble("candidateLogLoss", -1.0),
+                        currentRmseBins = o.optDouble("currentRmseBins", -1.0), candidateRmseBins = o.optDouble("candidateRmseBins", -1.0),
+                        currentAuc = o.optDouble("currentAuc", -1.0), candidateAuc = o.optDouble("candidateAuc", -1.0),
+                        zScore = o.optDouble("zScore", 0.0),
+                        activatedAt = o.longOrNull("activatedAt"), retiredAt = o.longOrNull("retiredAt"),
+                    )
+                }
+                "reviewLogs" -> reader.forEachRecord { i, o ->
+                    val memory = o.optString("memoryRating", "")
+                    val understanding = o.optString("understandingRating", "")
+                    val unitRef = o.optLong("studyUnitId", -1L)
+                    require(memory in validMemory) { "Damaged backup: invalid memory rating '$memory' (log ${i + 1})" }
+                    require(understanding in validUnderstanding) { "Damaged backup: invalid understanding rating '$understanding' (log ${i + 1})" }
+                    // A score is either absent (-1/-1) or a real count of ticked points out of at least one shown.
+                    val kpTotal = o.optInt("keyPointsTotal", -1)
+                    val kpRecalled = o.optInt("keyPointsRecalled", -1)
+                    require((kpTotal == -1 && kpRecalled == -1) || (kpTotal >= 1 && kpRecalled in 0..kpTotal)) {
+                        "Damaged backup: invalid key-point score $kpRecalled/$kpTotal (log ${i + 1})"
+                    }
+                    val logSetId = o.optLong("parameterSetId", 0L)
+                    // v9 research fields. Absent in older files = not recorded. A question score is either absent or
+                    // a real count; methods and session kind are re-encoded so only known names are stored.
+                    val qCorrect = o.optInt("questionsCorrect", -1)
+                    val qTotal = o.optInt("questionsTotal", -1)
+                    require((qCorrect == -1 && qTotal == -1) || com.example.domain.model.QuestionScore.isValid(qCorrect, qTotal)) {
+                        "Damaged backup: invalid question score $qCorrect/$qTotal (log ${i + 1})"
+                    }
+                    val methods = com.example.domain.model.ReviewMethod.encode(
+                        com.example.domain.model.ReviewMethod.decode(o.strOrNull("reviewMethods"))
+                    )
+                    val sessionKind = o.strOrNull("sessionKind")?.takeIf { k ->
+                        com.example.domain.model.SessionKind.entries.any { it.name == k }
+                    }
+                    logs += ReviewLogEntity(
+                        id = o.optLong("id", 0L), studyUnitId = unitRef,
+                        reviewedAt = o.optLong("reviewedAt", System.currentTimeMillis()),
+                        memoryRating = memory,
+                        understandingRating = understanding,
+                        previousIntervalDays = o.optDouble("previousIntervalDays", 0.0),
+                        nextIntervalDays = o.optDouble("nextIntervalDays", 0.0),
+                        previousState = o.optString("previousState", "New"),
+                        nextState = o.optString("nextState", "New"),
+                        // Absent in older backups → the same "unknown" sentinels pre-v4 rows use.
+                        retrievabilityAtReview = o.optDouble("retrievabilityAtReview", -1.0),
+                        elapsedDays = o.optDouble("elapsedDays", -1.0),
+                        logType = o.optString("logType", "UNKNOWN"),
+                        initialDifficulty = o.strOrNull("initialDifficulty"),
+                        reviewDurationMs = o.optLong("reviewDurationMs", -1L),
+                        wasImportantAtReview = o.optInt("wasImportantAtReview", -1),
+                        desiredRetentionAtReview = o.optDouble("desiredRetentionAtReview", -1.0),
+                        schedulerVersion = o.optString("schedulerVersion", ""),
+                        schedulerPolicyVersion = o.optString("schedulerPolicyVersion", ""),
+                        understandingFactorAtReview = o.optDouble("understandingFactorAtReview", -1.0),
+                        calibrationScaleAtReview = o.optDouble("calibrationScaleAtReview", -1.0),
+                        keyPointsTotal = kpTotal,
+                        keyPointsRecalled = kpRecalled,
+                        parameterSetId = logSetId,
+                        reviewMethods = methods,
+                        questionsCorrect = qCorrect,
+                        questionsTotal = qTotal,
+                        sessionKind = sessionKind,
+                    )
+                }
+                // v1 backups have no eventLogs array; that's fine — restore just clears the table.
+                "eventLogs" -> reader.forEachRecord { _, o ->
+                    events += com.example.data.local.entity.EventLogEntity(
+                        id = o.optLong("id", 0L),
+                        at = o.optLong("at", System.currentTimeMillis()),
+                        type = o.optString("type", "UNKNOWN"),
+                        unitId = o.longOrNull("unitId"),
+                        detail = o.strOrNull("detail")
+                    )
+                }
+                "settings" -> settings = reader.readValue() as? JSONObject
+                else -> reader.skipValue()
+            }
         }
-        val systems = (0 until systemsArr.length()).map { i ->
-            val o = systemsArr.getJSONObject(i)
-            SystemEntity(
-                id = o.getLong("id"), name = o.getString("name"),
-                colorHex = o.strOrNull("colorHex"), createdAt = o.optLong("createdAt", System.currentTimeMillis())
-            )
-        }
-        val units = (0 until unitsArr.length()).map { i ->
-            val o = unitsArr.getJSONObject(i)
-            StudyUnitEntity(
-                id = o.getLong("id"), title = o.optString("title", ""),
-                subjectId = o.longOrNull("subjectId"), systemId = o.longOrNull("systemId"),
-                studyType = o.optString("studyType", "Other"), recallPrompt = o.strOrNull("recallPrompt"),
-                notes = o.strOrNull("notes"), source = o.strOrNull("source"),
-                highYield = o.optBoolean("highYield", false), state = o.optString("state", "New"),
-                difficulty = o.optDouble("difficulty", 5.0), stability = o.optDouble("stability", 1.0),
-                retrievability = o.optDouble("retrievability", 1.0),
-                createdAt = o.optLong("createdAt", System.currentTimeMillis()),
-                updatedAt = o.optLong("updatedAt", System.currentTimeMillis()),
-                studiedAt = o.optLong("studiedAt", System.currentTimeMillis()),
-                lastReviewedAt = o.longOrNull("lastReviewedAt"),
-                nextReviewAt = o.optLong("nextReviewAt", System.currentTimeMillis()),
-                currentIntervalDays = o.optDouble("currentIntervalDays", 0.0),
-                reviewCount = o.optInt("reviewCount", 0), lapseCount = o.optInt("lapseCount", 0),
-                archived = o.optBoolean("archived", false),
-                // Pre-v5 backups: the effective date was the only date — same backfill the migration uses.
-                modelDueAt = o.optLong("modelDueAt", o.optLong("nextReviewAt", System.currentTimeMillis())),
-                deferredUntil = o.longOrNull("deferredUntil"),
-                deletedAt = o.longOrNull("deletedAt"),
-                understandingDueAt = o.longOrNull("understandingDueAt"),
-                // Pre-v6 files predate the model split, and everything in them was FSRS-5 by
-                // definition. Falling back to the entity default would claim the same thing, but
-                // saying it explicitly keeps the intent obvious at the restore site.
-                memoryModel = o.optString("memoryModel", "FSRS-5").ifBlank { "FSRS-5" },
-                // Pre-v7 files have no key points; absent reads as none, the same as the migration.
-                keyPoints = o.strOrNull("keyPoints"),
-                // Pre-v8 files: everything was computed by the published defaults, set 0.
-                parameterSetId = o.optLong("parameterSetId", 0L),
-            )
-        }
-        // The personal weight sets, validated like everything else: a set that ever scheduled must decode
-        // to 21 weights inside the reference bounds, or replaying the topics on it would be impossible.
-        val setsArr = root.optJSONArray("memoryParameterSets") ?: JSONArray()
-        val parameterSets = (0 until setsArr.length()).map { i ->
-            val o = setsArr.getJSONObject(i)
-            com.example.data.local.entity.MemoryParameterSetEntity(
-                id = o.optLong("id", 0L), createdAt = o.optLong("createdAt", 0L), status = o.optString("status", ""),
-                weights = o.optString("weights", ""), comparedWithSetId = o.optLong("comparedWithSetId", 0L),
-                availableReviews = o.optInt("availableReviews", 0), trainReviews = o.optInt("trainReviews", 0),
-                testReviews = o.optInt("testReviews", 0),
-                currentLogLoss = o.optDouble("currentLogLoss", -1.0), candidateLogLoss = o.optDouble("candidateLogLoss", -1.0),
-                currentRmseBins = o.optDouble("currentRmseBins", -1.0), candidateRmseBins = o.optDouble("candidateRmseBins", -1.0),
-                currentAuc = o.optDouble("currentAuc", -1.0), candidateAuc = o.optDouble("candidateAuc", -1.0),
-                zScore = o.optDouble("zScore", 0.0),
-                activatedAt = o.longOrNull("activatedAt"), retiredAt = o.longOrNull("retiredAt"),
-            )
-        }
+        reader.endObject()
+        require(sawUnits) { "This file is not a Yadora backup." }
+
         require(parameterSets.all { it.id > 0 }) { "Damaged backup: memory model with invalid id" }
         require(parameterSets.map { it.id }.toSet().size == parameterSets.size) { "Damaged backup: duplicate memory model ids" }
         val statuses = setOf(
@@ -269,7 +381,6 @@ object BackupManager {
             require(u.parameterSetId in usableSetIds) { "Damaged backup: topic ${i + 1} references a missing memory model" }
         }
         // Whole-file preflight: reject structurally corrupt topics BEFORE any current data is deleted.
-        val fileVersion = root.optInt("backupVersion", 1)
         require(fileVersion in 1..BACKUP_VERSION) { "This backup was made by a NEWER Yadora version ($fileVersion) — update the app first." }
         require(units.map { it.id }.toSet().size == units.size) { "Damaged backup: duplicate topic ids" }
         require(subjects.map { it.id }.toSet().size == subjects.size) { "Damaged backup: duplicate subject ids" }
@@ -301,86 +412,31 @@ object BackupManager {
             require(u.nextReviewAt > 0L && u.studiedAt > 0L) { "Damaged backup: invalid dates (topic ${i + 1})" }
         }
 
-        // Strict validation: a damaged backup must ABORT the restore, not be silently coerced into
-        // fake-plausible history (e.g. every corrupt rating becoming "Good" would poison FSRS replay
-        // and analytics). The thrown message surfaces as "Restore failed — invalid backup".
-        val validMemory = setOf("Forgot", "Hard", "Good", "Easy")
-        val validUnderstanding = setOf("Confused", "Partial", "Clear", "NotAsked") // NotAsked = skipped question (Forgot fast-commit)
+        // Every log must resolve to a topic and to a weight set in this same file. Checked after the whole
+        // file is read: the arrays can come in any order.
         val unitIds = units.mapTo(HashSet()) { it.id }
-        val logs = (0 until logsArr.length()).map { i ->
-            val o = logsArr.getJSONObject(i)
-            val memory = o.optString("memoryRating", "")
-            val understanding = o.optString("understandingRating", "")
-            val unitRef = o.optLong("studyUnitId", -1L)
-            require(memory in validMemory) { "Damaged backup: invalid memory rating '$memory' (log ${i + 1})" }
-            require(understanding in validUnderstanding) { "Damaged backup: invalid understanding rating '$understanding' (log ${i + 1})" }
-            require(unitRef in unitIds) { "Damaged backup: review log ${i + 1} references missing topic $unitRef" }
-            // A score is either absent (-1/-1) or a real count of ticked points out of at least one shown.
-            val kpTotal = o.optInt("keyPointsTotal", -1)
-            val kpRecalled = o.optInt("keyPointsRecalled", -1)
-            require((kpTotal == -1 && kpRecalled == -1) || (kpTotal >= 1 && kpRecalled in 0..kpTotal)) {
-                "Damaged backup: invalid key-point score $kpRecalled/$kpTotal (log ${i + 1})"
-            }
-            val logSetId = o.optLong("parameterSetId", 0L)
-            require(logSetId in usableSetIds) { "Damaged backup: review log ${i + 1} references a missing memory model" }
-            // v9 research fields. Absent in older files = not recorded. A question score is either absent or
-            // a real count; methods and session kind are re-encoded so only known names are stored.
-            val qCorrect = o.optInt("questionsCorrect", -1)
-            val qTotal = o.optInt("questionsTotal", -1)
-            require((qCorrect == -1 && qTotal == -1) || com.example.domain.model.QuestionScore.isValid(qCorrect, qTotal)) {
-                "Damaged backup: invalid question score $qCorrect/$qTotal (log ${i + 1})"
-            }
-            val methods = com.example.domain.model.ReviewMethod.encode(
-                com.example.domain.model.ReviewMethod.decode(o.strOrNull("reviewMethods"))
-            )
-            val sessionKind = o.strOrNull("sessionKind")?.takeIf { k ->
-                com.example.domain.model.SessionKind.entries.any { it.name == k }
-            }
-            ReviewLogEntity(
-                id = o.optLong("id", 0L), studyUnitId = unitRef,
-                reviewedAt = o.optLong("reviewedAt", System.currentTimeMillis()),
-                memoryRating = memory,
-                understandingRating = understanding,
-                previousIntervalDays = o.optDouble("previousIntervalDays", 0.0),
-                nextIntervalDays = o.optDouble("nextIntervalDays", 0.0),
-                previousState = o.optString("previousState", "New"),
-                nextState = o.optString("nextState", "New"),
-                // Absent in older backups → the same "unknown" sentinels pre-v4 rows use.
-                retrievabilityAtReview = o.optDouble("retrievabilityAtReview", -1.0),
-                elapsedDays = o.optDouble("elapsedDays", -1.0),
-                logType = o.optString("logType", "UNKNOWN"),
-                initialDifficulty = o.strOrNull("initialDifficulty"),
-                reviewDurationMs = o.optLong("reviewDurationMs", -1L),
-                wasImportantAtReview = o.optInt("wasImportantAtReview", -1),
-                desiredRetentionAtReview = o.optDouble("desiredRetentionAtReview", -1.0),
-                schedulerVersion = o.optString("schedulerVersion", ""),
-                schedulerPolicyVersion = o.optString("schedulerPolicyVersion", ""),
-                understandingFactorAtReview = o.optDouble("understandingFactorAtReview", -1.0),
-                calibrationScaleAtReview = o.optDouble("calibrationScaleAtReview", -1.0),
-                keyPointsTotal = kpTotal,
-                keyPointsRecalled = kpRecalled,
-                parameterSetId = logSetId,
-                reviewMethods = methods,
-                questionsCorrect = qCorrect,
-                questionsTotal = qTotal,
-                sessionKind = sessionKind,
-            )
+        logs.forEachIndexed { i, l ->
+            require(l.studyUnitId in unitIds) { "Damaged backup: review log ${i + 1} references missing topic ${l.studyUnitId}" }
+            require(l.parameterSetId in usableSetIds) { "Damaged backup: review log ${i + 1} references a missing memory model" }
         }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.
         require(logs.map { it.id }.toSet().size == logs.size) { "Damaged backup: duplicate review-log ids" }
         require(logs.all { it.id > 0 }) { "Damaged backup: review log with invalid id" }
 
-        // v1 backups have no eventLogs array; that's fine — restore just clears the table.
-        val eventsArr = root.optJSONArray("eventLogs") ?: JSONArray()
-        val events = (0 until eventsArr.length()).map { i ->
-            val o = eventsArr.getJSONObject(i)
-            com.example.data.local.entity.EventLogEntity(
-                id = o.optLong("id", 0L),
-                at = o.optLong("at", System.currentTimeMillis()),
-                type = o.optString("type", "UNKNOWN"),
-                unitId = o.longOrNull("unitId"),
-                detail = o.strOrNull("detail")
-            )
+        // Safety net: restore is all-or-nothing, so before touching anything, snapshot the CURRENT
+        // data to a private file. If the user imports the wrong backup, their real data is still
+        // recoverable from files/last_before_restore_backup.json.
+        // ABORT restore if the safety copy can't be created (e.g. storage full): destroying the
+        // only copy of the user's data without a recovery net is never acceptable. Temp + rename so
+        // a crash mid-write can't leave a truncated safety file that LOOKS valid. Streamed to disk,
+        // like every backup, so a long history cannot run the restore out of memory here.
+        run {
+            val tmp = context.filesDir.resolve("last_before_restore_backup.json.tmp")
+            tmp.outputStream().use { writeBackup(context, it) }
+            check(tmp.length() > 0L) { "Safety copy could not be written" }
+            val dest = context.filesDir.resolve("last_before_restore_backup.json")
+            if (dest.exists()) dest.delete()
+            check(tmp.renameTo(dest)) { "Safety copy could not be finalized" }
         }
 
         db.withTransaction {
@@ -402,7 +458,7 @@ object BackupManager {
 
         // Restore the study setup too (v3+ backups; older files simply have no settings object).
         // Language/theme apply fully on the next app start; the caller already re-arms the reminder.
-        root.optJSONObject("settings")?.let { s ->
+        settings?.let { s ->
             val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
             val e = sp.edit()
             SETTINGS_STRING_KEYS.forEach { k -> if (s.has(k)) e.putString(k, s.optString(k)) }
@@ -512,6 +568,8 @@ object BackupManager {
         runCatching { context.filesDir.resolve("crash.log").delete() }
         runCatching { context.filesDir.resolve("last_before_restore_backup.json").delete() }
         runCatching { context.filesDir.resolve("last_before_restore_backup.json.tmp").delete() }
+        // The last research export written for sharing (subject names, device model, every review's timing).
+        runCatching { context.cacheDir.resolve("exports").deleteRecursively() }
         runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
     }
 
