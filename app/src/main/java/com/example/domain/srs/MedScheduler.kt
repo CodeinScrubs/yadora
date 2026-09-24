@@ -138,7 +138,11 @@ object MedScheduler {
      */
     const val MAX_INTERVAL_DAYS = 365.0
 
-    /** Ceiling on how many lapses [priorityScore] will count, so old history can't outrank importance. */
+    /**
+     * Ceiling on how many lapses the Library's "weakest first" sort counts: lapseCount never decays, so
+     * uncapped, one bad stretch years ago would outrank a topic that is weak right now. (The review queue
+     * no longer counts lapses at all; see [priorityScore].)
+     */
     const val MAX_SCORED_LAPSES = 5
 
     /**
@@ -801,12 +805,24 @@ object MedScheduler {
      * Ordering score for the due queue and the overdue-redistribution plan. Higher = review sooner /
      * recover first. SINGLE source of truth for "which items matter most": the review-session daily cap
      * and the Today redistribution both call this, so their notion of priority can never drift apart.
-     * Weights are deliberately coarse and additive: importance dominates, then how weak/overdue it is.
+     *
+     * Two terms: IMPORTANCE first (the learner's own Important flag, worth 20 days of lateness), then
+     * LATENESS on the model's clock, uncapped so nothing can starve. The order only matters when more
+     * is due than the day allows (the daily limit, a backlog, the Spread-out plan); otherwise every due
+     * topic is reviewed today whatever the order.
+     *
+     * What is deliberately NOT in it (2026-09-24, `tools/pilot/experiments.py`, docs/RESEARCH.md 2.4):
+     * the old bonuses for weak states (NeedsRelearn +80, Learning +40, Building +20) and for past lapses
+     * (+10 each, up to 5). With the limit binding they spent the day's slots on topics a review
+     * strengthens least — low stability, a history of lapses — while stronger topics slid further past
+     * due. In five simulated backlogs (heavy load, over-confident first ratings, a holiday, fast and
+     * slow forgetters; 16 paired seeds each) lateness alone knew more on average through the year in
+     * all five (+0.12 to +0.55 points) and at the one-year quiz in four (+0.12 to +0.32; the fifth equal
+     * within noise), never less. Both bonuses cost; the lapse term more in most worlds. Lateness alone
+     * also beat lowest-recall-first, highest-recall-first and lateness relative to the interval.
      */
     fun priorityScore(
         highYield: Boolean,
-        state: String,
-        lapseCount: Int,
         /**
          * The MEMORY MODEL's own due date, not the effective one.
          *
@@ -833,20 +849,6 @@ object MedScheduler {
     ): Double {
         var score = 0.0
         if (highYield) score += 100.0
-        score += when (state) {
-            "NeedsRelearn" -> 80.0
-            "Learning" -> 40.0
-            "Building" -> 20.0
-            else -> 0.0
-        }
-        // Lapses matter, but they are HISTORY and never decay — a topic that was hard a year ago
-        // still carries every lapse it ever had. Uncapped, `lapseCount * 10` eventually exceeds the
-        // high-yield weight (100) on its own, so a now-Strong topic with an ugly past would outrank
-        // a genuinely important one forever, contradicting this function's own "importance
-        // dominates" contract. Capped at 5 lapses (50 points) it stays a meaningful tie-breaker
-        // below importance, while the still-uncapped overdue term below keeps anything neglected
-        // rising until it is actually seen.
-        score += minOf(lapseCount, MAX_SCORED_LAPSES) * 10.0
         val modelReference = if (modelDueAt > 0L) modelDueAt else effectiveDueAt
         val dueReference = understandingDueAt?.takeIf { it > 0L }?.let { minOf(modelReference, it) } ?: modelReference
         val overdueDays = (now - dueReference) / 86400000.0

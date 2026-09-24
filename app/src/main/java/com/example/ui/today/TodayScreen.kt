@@ -136,11 +136,11 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             if (overdueList.isEmpty()) return@launch
             
             val now = System.currentTimeMillis()
-            // Highest-priority first (same score the review queue uses) so DAY 1 gets the important ones
-            // (high-yield, needs-relearn, recent forgot, most overdue) instead of a blind round-robin.
+            // Highest-priority first (same score the review queue uses) so DAY 1 gets the Important topics and
+            // then the longest-overdue ones, instead of a blind round-robin.
             val prioritized = overdueList.sortedByDescending { u ->
                 com.example.domain.srs.MedScheduler.priorityScore(
-                    u.highYield, u.state, u.lapseCount, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
+                    u.highYield, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
                 )
             }
             val total = prioritized.size

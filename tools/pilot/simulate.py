@@ -158,11 +158,15 @@ def on_holiday(sc: Scenario, day: int) -> bool:
 
 
 def priority(t: Topic, day: int) -> float:
-    """MedScheduler.priorityScore without high-yield (not simulated)."""
+    """MedScheduler.priorityScore without high-yield (not simulated): lateness on the model's clock."""
+    return max(day - t.model_due, 0.0) * 5.0
+
+
+def priority_before_2026_09_24(t: Topic, day: int) -> float:
+    """The score Yadora used until 2026-09-24, kept so experiments.py can show why it changed."""
     score = {"NeedsRelearn": 80.0, "Learning": 40.0, "Building": 20.0}.get(t.state, 0.0)
     score += min(t.lapses, 5) * 10.0
-    overdue = day - t.model_due
-    return score + max(overdue, 0.0) * 5.0
+    return score + priority(t, day)
 
 
 def mastery(s: float, forgot: bool) -> str:

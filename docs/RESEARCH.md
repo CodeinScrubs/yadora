@@ -50,26 +50,26 @@ seeds per row, mean ± sd, one year:
 
 | scenario | Yadora twin | other twin | gain | Yadora wins | average over the year (Yadora / other) |
 |---|---|---|---|---|---|
-| other twin reviews at random | 95.1% | 88.3% | **+6.8** | 8/8 | 95.5% / 90.1% |
-| other twin reviews what was studied recently | 95.1% | 89.9% | **+5.2** | 8/8 | 95.5% / 91.1% |
-| other twin cycles, oldest first (the disciplined no-app student) | 95.1% | 90.3% | **+4.8** | 8/8 | 95.5% / 91.9% |
-| learner forgets 2× faster than the model assumes | 95.1% | 87.2% | **+7.9** | 8/8 | 95.3% / 88.8% |
-| learner forgets 2× slower | 94.8% | 89.2% | **+5.6** | 8/8 | 95.4% / 90.9% |
-| 30% of forgotten reviews rated Hard (inflated ratings) | 92.5% | 86.3% | **+6.2** | 8/8 | 93.2% / 88.0% |
-| skips 30% of days | 95.1% | 88.3% | **+6.8** | 8/8 | 95.3% / 89.7% |
-| 3-week holiday mid-year | 95.2% | 88.8% | **+6.4** | 8/8 | 95.4% / 90.2% |
-| all at once: forgets 2× faster, 30% inflated, skips 30%, disciplined other twin | 92.4% | 86.7% | **+5.7** | 8/8 | 92.9% / 88.2% |
-| heavy load: 6 new topics a day, daily limit 30 | 93.3% | 85.8% | **+7.5** | 8/8 | 94.8% / 89.0% |
+| other twin reviews at random | 95.0% | 88.4% | **+6.6** | 8/8 | 95.3% / 89.8% |
+| other twin reviews what was studied recently | 95.0% | 89.8% | **+5.2** | 8/8 | 95.3% / 90.8% |
+| other twin cycles, oldest first (the disciplined no-app student) | 95.0% | 90.1% | **+4.9** | 8/8 | 95.3% / 91.6% |
+| learner forgets 2× faster than the model assumes | 95.1% | 87.6% | **+7.5** | 8/8 | 95.3% / 88.7% |
+| learner forgets 2× slower | 94.9% | 89.2% | **+5.7** | 8/8 | 95.5% / 91.1% |
+| 30% of forgotten reviews rated Hard (inflated ratings) | 92.4% | 86.1% | **+6.3** | 8/8 | 93.2% / 87.9% |
+| skips 30% of days | 95.0% | 88.1% | **+6.9** | 8/8 | 95.3% / 89.5% |
+| 3-week holiday mid-year | 95.0% | 88.0% | **+7.0** | 8/8 | 95.2% / 89.6% |
+| all at once: forgets 2× faster, 30% inflated, skips 30%, disciplined other twin | 92.3% | 86.1% | **+6.2** | 8/8 | 92.7% / 88.2% |
+| heavy load: 6 new topics a day, daily limit 30 | 93.8% | 85.9% | **+7.9** | 8/8 | 95.1% / 89.1% |
 
-Put as forgetting, the Yadora twin forgets 4.9% of the year's topics. The random-review twin forgets
-11.7% and the disciplined cycler 9.7%. That is **about half the forgetting for the same hours**.
+Put as forgetting, the Yadora twin forgets 5.0% of the year's topics. The random-review twin forgets
+11.6% and the disciplined cycler 9.9%. That is **about half the forgetting for the same hours**.
 
 ### 2.1 The one way the other twin can win, and what closed it
 
 If the other twin saves **all** review time for a four-week cram right before an **announced** exam, they
-score higher on that day: 98.3% vs 95.1%, or 96.8% when only half is saved. But the cram needs **199**
+score higher on that day: 98.3% vs 95.0%, or 96.6% when only half is saved. But the cram needs **193**
 (or 100) topic reviews a day for four weeks, which is not humanly possible for real medical topics. And
-the crammer's knowledge averages **66.6%** over the year (84.8% for half), against Yadora's 95.5%. In
+the crammer's knowledge averages **66.5%** over the year (84.7% for half), against Yadora's 95.3%. In
 clinical terms, the crammer knows it on exam day and not the rest of the year.
 
 The realistic version gives both twins the same daily hours all year and the same final push: 30 topics
@@ -85,7 +85,7 @@ decision that the exam date feeds nothing stands.
 ### 2.2 What inflated ratings cost
 
 Rating 30% of forgotten reviews as Hard still leaves the Yadora twin ahead of the other twin at equal
-time. But it costs the learner 2.6 points of absolute knowledge (95.1 → 92.5%), because the scheduler
+time. But it costs the learner 2.6 points of absolute knowledge (95.0 → 92.4%), because the scheduler
 stretches intervals on topics that had actually been lost. At 60% the cost is 7.3 points. **Honest "Forgot"
 ratings are worth more than any parameter in this document.** The review screen already asks what the
 learner had *before* rereading, and each button says what it means. The pilot now checks ratings against
@@ -97,40 +97,53 @@ Same twins, the Yadora twin at different targets, the other twin given the same 
 
 | target | Yadora twin | other twin | gain | reviews per topic per year |
 |---|---|---|---|---|
-| 0.80 | 89.7% | 83.8% | +5.8 | 3.6 |
-| 0.85 | 92.3% | 86.0% | +6.3 | 4.4 |
-| **0.90** | **95.1%** | 88.3% | **+6.8** | 5.9 |
-| 0.93 | 96.5% | 90.2% | +6.3 | 7.3 |
-| 0.95 | 97.3% | 91.7% | +5.6 | 9.0 |
-| 0.97 | 98.3% | 94.2% | +4.1 | 13.1 |
+| 0.80 | 89.7% | 84.1% | +5.6 | 3.7 |
+| 0.85 | 92.5% | 86.3% | +6.3 | 4.5 |
+| **0.90** | **95.0%** | 88.4% | **+6.6** | 5.7 |
+| 0.93 | 96.5% | 90.4% | +6.0 | 7.3 |
+| 0.95 | 97.4% | 91.7% | +5.7 | 9.2 |
+| 0.97 | 98.4% | 94.4% | +4.0 | 13.0 |
 
 The advantage of scheduling at equal time peaks at 0.90, the default. Higher targets buy absolute
-knowledge at a steep price: 0.95 gives +2.2 points for 1.5× the reviews, 0.97 gives +3.2 points for
-2.2×. That matches the Settings guide, so the default stays.
+knowledge at a steep price: 0.95 gives +2.4 points for 1.6× the reviews, 0.97 gives +3.4 points for
+2.3×. That matches the Settings guide, so the default stays.
 
 ### 2.4 The remaining scheduling choices, tested one at a time
 
-`tools/pilot/experiments.py` changes one policy knob at a time on the Yadora twin. Every result below is
-6 seeds over a year (three years for the interval cap), except the difficulty-adaptive sweep, which used
-4 seeds.
+`tools/pilot/experiments.py` changes one policy knob at a time on the Yadora twin. The queue order is
+compared on 16 paired seeds; every other result below is 6 seeds over a year (three years for the interval
+cap), except the difficulty-adaptive sweep, which used 4 seeds.
 
 A knob that changes the workload is judged **at equal time**: its retention target is swept, and
 knowledge is read at the review count the current policy spends at 0.90. A knob that doesn't is compared
 directly, with the daily limit genuinely binding.
 
-**Queue order, when the daily limit binds.** This is what gets today's slots after a holiday or under
-overload. The limit fixes the workload, so final knowledge is compared directly:
+**Queue order, when the daily limit binds.** This decides which due topics get today's slots after a
+holiday or under overload. The limit fixes the workload, so knowledge is compared directly. Every order
+runs on the same 16 seeds (the same classes and first ratings), so the differences are paired. The first
+row is Yadora's final quiz (with the year's average in brackets); the other rows are the paired difference
+from it in points, final (year average). Standard errors are 0.03–0.22.
 
-| order | heavy load (6 new/day, limit 15) | holiday, then limit 20 | forgets 2× faster, limit 15 |
-|---|---|---|---|
-| **Yadora priority score** | 85.4% | 94.5% | 82.1% |
-| earliest due first | 85.5% | 94.8% | 82.2% |
-| lowest recall first | 84.4% | 94.8% | 80.9% |
-| most overdue relative to interval | 84.3% | 94.7% | 81.1% |
-| highest recall first | 78.7% | 94.5% | 76.8% |
+| order | heavy load (6 new/day, limit 15) | holiday, then limit 20 | forgets 2× faster | forgets 2× slower | heavy load, 40% overconfident first ratings |
+|---|---|---|---|---|---|
+| **Yadora: Important first, then most overdue** | **85.4% (90.6)** | **94.9% (95.1)** | **82.4% (88.7)** | **92.2% (94.3)** | **85.1% (90.4)** |
+| Yadora before 2026-09-24: + bonuses for weak states and past lapses | −0.26 (−0.45) | −0.12 (−0.12) | −0.32 (−0.55) | −0.25 (−0.23) | −0.05 (−0.43) |
+| lowest recall first | −1.20 (−0.80) | +0.05 (−0.04) | −1.55 (−0.97) | −1.39 (−0.49) | −1.40 (−0.97) |
+| most overdue relative to interval | −1.26 (−0.83) | −0.04 (−0.07) | −1.25 (−0.81) | −1.72 (−0.67) | −1.22 (−0.83) |
+| highest recall first | −6.93 (−4.34) | −0.15 (−0.05) | −5.62 (−3.79) | −5.14 (−1.97) | −6.66 (−4.44) |
 
-Yadora's order is as good as the best alternative, and much better than "highest recall first", which some
-apps use for backlogs. No change.
+(Both forgetting-rate worlds: 5 new topics a day, limit 15.)
+
+**This changed the app.** Yadora's score used to add bonuses for weak states (just forgotten +80,
+learning +40, building +20) and +10 per past lapse. Under a backlog those spent the day's slots on the
+topics a review strengthens least, while stronger topics slid further past due. Without them the queue
+knew more through the year in all five worlds (+0.12 to +0.55 points) and at the one-year quiz in four
+(+0.12 to +0.32; the fifth is equal within noise). It never knew less. Both bonuses cost knowledge; in
+most worlds the lapse term cost more. So the queue is now Important first, then the most overdue
+(`MedScheduler.priorityScore`). A topic that was just forgotten still comes back on its relearn date,
+but under a backlog it waits its turn behind older debt instead of jumping ahead. Nothing changes on a
+day whose reviews all fit, which is most days at the default limit of 50. "Highest recall first", which
+some apps use for backlogs, is clearly the worst.
 
 **The other knobs, at equal time:**
 
@@ -157,9 +170,10 @@ medical student those are often the high-yield ones. That is a product trade-off
 so the target stays flat until the owner decides and the pilot's own data can weigh it. The reverse
 direction, higher targets for harder topics, is clearly worse (−0.9 points).
 
-**Conclusion.** Within the model, every scheduling choice Yadora makes is at or within noise of the best
-alternative tested. The one alternative with a measurable gain comes with a trade-off the owner should
-choose.
+**Conclusion.** Within the model, every scheduling choice Yadora makes is now at or within noise of the
+best alternative tested. One was not: the queue order, which changed (above). The one remaining
+alternative with a measurable gain, the difficulty-adaptive target, comes with a trade-off the owner
+should choose.
 
 ### 2.5 What the simulation cannot tell
 
@@ -193,6 +207,9 @@ choose.
    have stored exactly the elapsed days, the prediction and the interval the rules produce. On a real app
    export (`PilotExportFixtureTest`), all 208 logs match. Any mismatch in a friend's file is a bug on that
    phone, found without the phone.
+5. **Queue order: Important first, then the most overdue** (§2.4). The bonuses for weak states and past
+   lapses are gone: under a backlog they spent the day's slots where a review buys least, and every
+   simulated backlog knew more without them.
 
 ## 4. Considered and not changed
 
@@ -200,7 +217,8 @@ choose.
   model keeps its strict held-out gate.
 - **Expanding vs uniform spacing, and within-day interleaving**: the evidence says schedule shape matters
   little, and interleaving helps with discriminating similar categories, not with ordering whole-topic
-  reviews. Priority order stays.
+  reviews. (Which due topics come first under a backlog is a different question; §2.4 tested it and
+  changed it.)
 - **Using the question score in scheduling**: not until the pilot shows how it relates to self-ratings (D6).
 - **Exam-date interval compression**: a settled decision. Review ahead gives the learner the same power
   without the exam date touching the schedule.

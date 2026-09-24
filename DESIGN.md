@@ -228,9 +228,11 @@ genuinely worth considering for v2. Kept here so they aren't lost:
   consistent finding is that optimal gaps scale with the desired retention interval. Today one
   global retention target serves everyone; a per-topic horizon would feed
   `desiredRetentionOverride`, which the scheduler ALREADY accepts per review. Medium.
-- **Risk-per-minute queue refinement**: divide `priorityScore` by expected review minutes (user's
-  observed median) so limited time buys the most retention. Needs per-topic duration estimates —
-  the `reviewDurationMs` data being logged since v4 is exactly this. Medium.
+- ~~**Risk-per-minute queue refinement**: divide `priorityScore` by expected review minutes.~~
+  Withdrawn 2026-09-23: a review is done however the learner likes, mostly outside the app, so the
+  seconds a topic sits open measure nothing (the same reason Today shows no time estimate). The queue
+  order itself was re-tested by simulation on 2026-09-24 and is now simply Important first, then the
+  most overdue (CLAUDE.md).
 - **Validation note**: an external FSRS-6 workload analysis (unverified simulation, but consistent
   with known FSRS workload curves) puts the efficient retention band at ~0.88–0.92, with ~0.92 for
   critical items. Yadora's shipped defaults (0.90 standard / 0.93 important) sit essentially inside
@@ -342,7 +344,8 @@ verified individually instead.
 **Rejected:**
 - *Multiple `FIRST_STUDY` rows corrupt replay* — real, but already fixed this session (see the
   one-seed-per-history rule in CLAUDE.md). The audit's snapshot predates it.
-- *Lifetime lapse count dominates priority* — already fixed (`MAX_SCORED_LAPSES`).
+- *Lifetime lapse count dominates priority* — fixed then (`MAX_SCORED_LAPSES`); since 2026-09-24 the
+  queue does not count lapses at all (simulation: the lapse term cost knowledge under a backlog).
 - *Optimistic concurrency / `rowVersion`* — the failure needs two live review screens for one topic.
   Android runs single-task, and `launchSingleTop` now prevents stacking the destination. A schema
   migration on a shipped DB is not justified by that reachability.

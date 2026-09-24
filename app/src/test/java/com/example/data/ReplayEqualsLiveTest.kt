@@ -385,7 +385,7 @@ class ReplayEqualsLiveTest {
             val due = repo.getDueUnits(now).first()
             assertTrue("an overdue topic must stay in the queue", due.any { it.id == unitId })
             due.forEach { u ->
-                MedScheduler.priorityScore(u.highYield, u.state, u.lapseCount, u.nextReviewAt, now)
+                MedScheduler.priorityScore(u.highYield, u.nextReviewAt, now)
                 MedScheduler.retrievability(30.0, u.stability, MedScheduler.MemoryModel.of(u.memoryModel))
             }
             // The review screen projects before displaying — a pure read that must not persist.

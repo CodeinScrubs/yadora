@@ -518,10 +518,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   stays on its old model until a real review commits. `NeglectedTopicTest` sweeps neglect from one
   day to a century across every state/rating/understanding combination (finite, bounded, ordered,
   never throws), and `ReplayEqualsLiveTest` pins the row as byte-identical after repeated reads.
-- **`priorityScore`'s lapse term is capped** at `MAX_SCORED_LAPSES` (5). `lapseCount`
-  only ever grows, so uncapped it eventually outweighed high-yield (100) and let an
-  old struggle permanently outrank a genuinely important topic. The overdue term is
-  deliberately left uncapped so nothing can starve.
+- **The queue order is IMPORTANT FIRST, THEN THE MOST OVERDUE, and nothing else** (`priorityScore`,
+  2026-09-24). Important adds 100 (= 20 days of lateness); lateness adds 5 per day on the model's clock,
+  uncapped so nothing can starve. The score used to add +80/+40/+20 for NeedsRelearn/Learning/Building
+  and +10 per lapse (capped at 5). With the daily limit binding, those bonuses spent the day's slots on
+  the topics a review strengthens least while stronger ones slid further past due. In five simulated
+  backlogs (16 paired seeds each; `experiments.py --only order`) lateness alone knew more through the
+  year in all five (+0.12 to +0.55 points) and at the one-year quiz in four (+0.12 to +0.32; the fifth
+  equal within noise), never less; both bonuses cost, the lapse term more in most worlds. So a topic
+  that just lapsed is not jumped ahead of older debt: its relearn step is a due DATE, and under a backlog
+  it waits its turn like every other due topic. `MAX_SCORED_LAPSES` now caps only the Library's "weakest first" sort. The order
+  matters only when more is due than the day allows; it is not replayed, so no POLICY bump. Do not add
+  weakness or lapse bonuses back without a simulation that beats this.
 - **Retention is clamped on read** (`MedScheduler.safeRetention`), not just on write.
   Prefs store a `Float` and FSRS consumes a `Double`, so even a value clamped to
   exactly `0.99` reads back fractionally outside the band `FsrsParameters` accepts —
@@ -554,10 +562,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
   a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
   Use it, extended if needed, rather than reasoning from one worked example when a policy number is
-  on the table. Results as of 2026-09-24 are in `docs/RESEARCH.md` §2: Yadora ahead by 4.6–7.9 points
-  in every realistic scenario (8/8 seeds), about half the forgetting of the other twin at equal time;
-  the only loss is an announced-exam cram needing 100–199 topic reviews a day; and the equal-time
-  advantage peaks at the 0.90 default target.
+  on the table. Results as of 2026-09-24 (re-run after the queue-order change) are in `docs/RESEARCH.md`
+  §2: Yadora ahead by 4.5–7.9 points in every realistic scenario (8/8 seeds), about half the forgetting
+  of the other twin at equal time; the only loss is an announced-exam cram needing 96–193 topic reviews
+  a day; and the equal-time advantage peaks at the 0.90 default target.
 - **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
   today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
   be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
@@ -571,8 +579,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   `ReviewAhead.isCandidate` is the one rule, used by the queue and by the Today button, so the button
   never opens an empty session.
 - **Scheduling choices are checked against their alternatives by simulation** (`tools/pilot/experiments.py`,
-  results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: Yadora's priority
-  score is as good as the best alternative (earliest-due), and "highest recall first" is 4–7 points worse.
+  results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: most overdue first
+  (see the queue-order entry above) beat the old weakness/lapse bonuses, lowest recall first and lateness
+  relative to the interval; "highest recall first" is 4–7 points worse.
   The relearn step (1 d vs 2 d vs FSRS's post-lapse interval), the first-study cap (3/5/7 d/none) and the
   maximum interval (180/365/none over three years) are all within noise of each other at EQUAL TIME;
   the cap is worth ~0.3 points when first ratings are overconfident. A DIFFICULTY-ADAPTIVE target (lower

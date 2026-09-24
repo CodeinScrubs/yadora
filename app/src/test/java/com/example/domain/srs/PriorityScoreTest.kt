@@ -11,60 +11,59 @@ class PriorityScoreTest {
     private val day = 86_400_000L
 
     @Test fun high_yield_dominates_ordinary_items() {
-        val hy = MedScheduler.priorityScore(highYield = true, state = "New", lapseCount = 0, modelDueAt = now, now = now)
-        val normal = MedScheduler.priorityScore(highYield = false, state = "Building", lapseCount = 3, modelDueAt = now - 2 * day, now = now)
-        assertTrue("high-yield ($hy) outranks a non-high-yield item ($normal)", hy > normal)
-    }
-
-    @Test fun state_weights_are_ordered_relearn_gt_learning_gt_building_gt_other() {
-        fun s(state: String) = MedScheduler.priorityScore(false, state, 0, now, now)
-        assertTrue(s("NeedsRelearn") > s("Learning"))
-        assertTrue(s("Learning") > s("Building"))
-        assertTrue(s("Building") > s("Strong"))
-        assertEquals("unknown/Strong state adds nothing", 0.0, s("Strong"), 1e-9)
-    }
-
-    @Test fun more_lapses_raise_the_score() {
-        val few = MedScheduler.priorityScore(false, "New", 1, now, now)
-        val many = MedScheduler.priorityScore(false, "New", 5, now, now)
-        assertEquals("each lapse adds 10", 40.0, many - few, 1e-9)
+        val hy = MedScheduler.priorityScore(highYield = true, modelDueAt = now, now = now)
+        val normal = MedScheduler.priorityScore(highYield = false, modelDueAt = now - 2 * day, now = now)
+        assertTrue("high-yield ($hy) outranks a non-high-yield item two days overdue ($normal)", hy > normal)
+        assertEquals("Important is worth 20 days of lateness", 100.0, hy - MedScheduler.priorityScore(false, now, now), 1e-9)
     }
 
     @Test fun more_overdue_raises_the_score_but_future_due_does_not() {
-        val onTime = MedScheduler.priorityScore(false, "New", 0, now, now)
-        val overdue5 = MedScheduler.priorityScore(false, "New", 0, now - 5 * day, now)
-        val future = MedScheduler.priorityScore(false, "New", 0, now + 5 * day, now)
+        val onTime = MedScheduler.priorityScore(false, now, now)
+        val overdue5 = MedScheduler.priorityScore(false, now - 5 * day, now)
+        val future = MedScheduler.priorityScore(false, now + 5 * day, now)
         assertEquals("5 days overdue adds 25", 25.0, overdue5 - onTime, 1e-9)
         assertEquals("not-yet-due items get no overdue bonus", 0.0, future, 1e-9)
     }
 
-    @Test fun lapse_history_can_never_outrank_importance() {
-        // lapseCount only ever grows, so an uncapped lapse term would eventually exceed the
-        // high-yield weight and let a topic that struggled long ago — but is Strong now — permanently
-        // outrank a genuinely important one, contradicting this function's "importance dominates"
-        // contract. A pathological lapse history must still lose to a plain high-yield item.
-        val scarredButStrong = MedScheduler.priorityScore(false, "Strong", lapseCount = 50, modelDueAt = now, now = now)
-        val important = MedScheduler.priorityScore(true, "Strong", lapseCount = 0, modelDueAt = now, now = now)
-        assertTrue("high-yield ($important) still outranks 50 old lapses ($scarredButStrong)", important > scarredButStrong)
+    /**
+     * The queue is Important first, then the most overdue, and NOTHING about a topic's past.
+     *
+     * The score used to add +80/+40/+20 for NeedsRelearn/Learning/Building and +10 per lapse (up to 5). With
+     * the daily limit binding, that spent the day's slots on the topics a review strengthens least, while
+     * stronger ones slid further past due: in five simulated backlogs (tools/pilot/experiments.py) it knew
+     * less through the year every time (0.12-0.55 points). A topic that just lapsed and one that never did,
+     * due on the same day, are now exactly as urgent; the one due EARLIER goes first.
+     */
+    @Test fun a_topics_state_and_lapse_history_do_not_reorder_the_queue() {
+        fun unit(id: Long, state: String, lapses: Int, dueDaysAgo: Int) = com.example.data.local.entity.StudyUnitEntity(
+            id = id, title = "t$id", studyType = "Topic", state = state, lapseCount = lapses, reviewCount = 3,
+            stability = 5.0, difficulty = 5.0, studiedAt = now - 60 * day,
+            nextReviewAt = now - dueDaysAgo * day, modelDueAt = now - dueDaysAgo * day,
+        )
+        val strugglingDueYesterday = unit(1, "NeedsRelearn", lapses = 5, dueDaysAgo = 1)
+        val strongDueLastWeek = unit(2, "Strong", lapses = 0, dueDaysAgo = 7)
+        val learningDueThreeDaysAgo = unit(3, "Learning", lapses = 2, dueDaysAgo = 3)
+        val plan = com.example.ui.today.DailyPlan.plan(
+            due = listOf(strugglingDueYesterday, learningDueThreeDaysAgo, strongDueLastWeek),
+            reviewsDoneToday = 0, dailyLimit = 2, now = now,
+        )
+        assertEquals("the longest overdue first, whatever its history", listOf(2L, 3L), plan.reviews.map { it.id })
+        assertEquals(1, plan.heldBack)
     }
 
-    @Test fun the_lapse_term_stops_growing_past_the_cap() {
-        val atCap = MedScheduler.priorityScore(false, "New", MedScheduler.MAX_SCORED_LAPSES, now, now)
-        val wayPastCap = MedScheduler.priorityScore(false, "New", MedScheduler.MAX_SCORED_LAPSES + 40, now, now)
-        assertEquals("lapses beyond the cap add nothing", atCap, wayPastCap, 1e-9)
-    }
-
-    @Test fun a_neglected_topic_still_keeps_rising_regardless_of_the_lapse_cap() {
-        // The cap must not make anything starve: the overdue term stays uncapped, so a topic nobody
-        // reviews keeps climbing until it is actually seen.
-        val justDue = MedScheduler.priorityScore(false, "Strong", 0, now, now)
-        val longNeglected = MedScheduler.priorityScore(false, "Strong", 0, now - 90 * day, now)
+    @Test fun a_neglected_topic_still_keeps_rising() {
+        // The overdue term is uncapped so nothing can starve: a topic nobody reviews keeps climbing until
+        // it is actually seen, past any importance bonus.
+        val justDue = MedScheduler.priorityScore(false, now, now)
+        val longNeglected = MedScheduler.priorityScore(false, now - 90 * day, now)
         assertTrue("90 days overdue outranks just-due", longNeglected > justDue)
+        val importantJustDue = MedScheduler.priorityScore(true, now, now)
+        assertTrue("and, past 20 days, an Important topic that is merely due", longNeglected > importantJustDue)
     }
 
     @Test fun score_is_pure_and_deterministic() {
-        val a = MedScheduler.priorityScore(true, "Learning", 2, now - day, now)
-        val b = MedScheduler.priorityScore(true, "Learning", 2, now - day, now)
+        val a = MedScheduler.priorityScore(true, now - day, now)
+        val b = MedScheduler.priorityScore(true, now - day, now)
         assertEquals(a, b, 0.0)
     }
 
@@ -84,11 +83,11 @@ class PriorityScoreTest {
 
         // Same topic, same model date a month ago. One was ignored; one was deferred every day.
         val ignored = MedScheduler.priorityScore(
-            highYield = false, state = "Building", lapseCount = 0,
+            highYield = false,
             modelDueAt = now - 30 * day, now = now, effectiveDueAt = now - 30 * day,
         )
         val deferredDaily = MedScheduler.priorityScore(
-            highYield = false, state = "Building", lapseCount = 0,
+            highYield = false,
             modelDueAt = now - 30 * day, now = now, effectiveDueAt = now, // reset to "due today"
         )
         assertEquals("a deferral cannot lower real urgency", ignored, deferredDaily, 1e-9)
@@ -101,11 +100,11 @@ class PriorityScoreTest {
         val day = 86400000L
         val now = System.currentTimeMillis()
         val fallback = MedScheduler.priorityScore(
-            highYield = false, state = "Building", lapseCount = 0,
+            highYield = false,
             modelDueAt = 0L, now = now, effectiveDueAt = now - 2 * day,
         )
         val direct = MedScheduler.priorityScore(
-            highYield = false, state = "Building", lapseCount = 0,
+            highYield = false,
             modelDueAt = now - 2 * day, now = now,
         )
         assertEquals("epoch-0 must not be read as 1970", direct, fallback, 1e-9)
@@ -124,21 +123,21 @@ class PriorityScoreTest {
         val reviewedAt = now - 20 * day
         val memoryDue = reviewedAt + 50 * day
         val repairDue = reviewedAt + 3 * day
-        val memoryOnly = MedScheduler.priorityScore(false, "Building", 0, modelDueAt = memoryDue, now = now)
+        val memoryOnly = MedScheduler.priorityScore(false, modelDueAt = memoryDue, now = now)
         val withRepair = MedScheduler.priorityScore(
-            false, "Building", 0, modelDueAt = memoryDue, now = now,
+            false, modelDueAt = memoryDue, now = now,
             effectiveDueAt = repairDue, understandingDueAt = repairDue,
         )
         assertEquals("17 days of unanswered repair add 85 points", 85.0, withRepair - memoryOnly, 1e-6)
 
         val deferredToTomorrow = MedScheduler.priorityScore(
-            false, "Building", 0, modelDueAt = memoryDue, now = now,
+            false, modelDueAt = memoryDue, now = now,
             effectiveDueAt = now + day, understandingDueAt = repairDue,
         )
         assertEquals("tapping Not today must not hide the owed repair", withRepair, deferredToTomorrow, 1e-9)
 
         val repairNotYetDue = MedScheduler.priorityScore(
-            false, "Building", 0, modelDueAt = memoryDue, now = now,
+            false, modelDueAt = memoryDue, now = now,
             effectiveDueAt = now + 2 * day, understandingDueAt = now + 2 * day,
         )
         assertEquals("a repair that is not due yet adds nothing", memoryOnly, repairNotYetDue, 1e-9)

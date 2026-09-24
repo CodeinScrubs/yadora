@@ -81,7 +81,8 @@ object ReviewAhead {
  * a study that already happened, and its schedule is counted from the moment it is rated. Holding it
  * behind the limit would push that anchor to another day, so every first rating is offered, first.
  *
- * Reviews are ordered by [MedScheduler.priorityScore], the same score the backlog plan uses.
+ * Reviews are ordered by [MedScheduler.priorityScore] (Important first, then the most overdue), the same
+ * score the backlog plan uses.
  */
 object DailyPlan {
 
@@ -119,9 +120,7 @@ object DailyPlan {
     ): Plan {
         val ordered = due.sortedWith(
             compareByDescending<StudyUnitEntity> {
-                MedScheduler.priorityScore(
-                    it.highYield, it.state, it.lapseCount, it.modelDueAt, now, it.nextReviewAt, it.understandingDueAt,
-                )
+                MedScheduler.priorityScore(it.highYield, it.modelDueAt, now, it.nextReviewAt, it.understandingDueAt)
             }.thenBy { it.nextReviewAt }.thenBy { it.id },
         )
         val (firstRatings, reviews) = ordered.partition { isFirstRating(it) }

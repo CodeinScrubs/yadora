@@ -15,9 +15,9 @@ simulation results.
 
 ```
 python3 tools/pilot/analyze.py exports/ --out pilot_report
-python3 tools/pilot/simulate.py                      # ~2 minutes; --quick for a smoke test
+python3 tools/pilot/simulate.py                      # ~3 minutes; --quick for a smoke test
 python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json
-python3 tools/pilot/experiments.py                   # ~15 minutes; --quick, --only order,relearn,cap,maxivl,adaptive
+python3 tools/pilot/experiments.py                   # ~30 minutes; --quick, --only order,relearn,cap,maxivl,adaptive
 python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py
 ```
 

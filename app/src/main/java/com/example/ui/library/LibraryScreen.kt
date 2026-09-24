@@ -119,8 +119,8 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         result = when (sort) {
             LibrarySort.DUE -> result.sortedBy { it.nextReviewAt }
             LibrarySort.TITLE -> result.sortedBy { it.title.lowercase() }
-            // Lapses count only up to the same cap priorityScore uses: lapseCount never decays, so an
-            // uncapped term let one bad stretch years ago outrank a topic that is weak right now.
+            // Lapses count only up to MAX_SCORED_LAPSES: lapseCount never decays, so an uncapped term let
+            // one bad stretch years ago outrank a topic that is weak right now.
             LibrarySort.WEAKNESS -> result.sortedByDescending {
                 minOf(it.lapseCount, com.example.domain.srs.MedScheduler.MAX_SCORED_LAPSES) * 10 +
                     (when (it.state) { "NeedsRelearn" -> 50; "Learning" -> 20; else -> 0 })

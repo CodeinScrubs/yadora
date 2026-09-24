@@ -1,15 +1,17 @@
 """
 Policy experiments: is each remaining scheduling choice the best available? Simulated, not argued.
 
-  python3 tools/pilot/experiments.py            # all experiments (~10 minutes)
+  python3 tools/pilot/experiments.py            # all experiments (~30 minutes; the queue order alone ~15)
   python3 tools/pilot/experiments.py --quick    # fewer seeds, shorter horizon
 
 Uses the same learner and memory model as simulate.py (FSRS-6 true memory, honest ratings unless stated)
 and a Yadora twin whose policy knobs can be changed one at a time:
 
   1. ORDER. Which due topics get today's slots when the daily limit binds (after a holiday, under a heavy
-     load): Yadora's priority score, lowest predicted recall first, highest first, most overdue relative to
-     the interval, or earliest due. The limit fixes the workload, so knowledge is compared directly.
+     load): Yadora's order (Important first, then the most overdue; without the Important flag, which is not
+     simulated, that is earliest-due), the score Yadora used before 2026-09-24 (plus bonuses for weak states
+     and past lapses), lowest predicted recall first, highest first, or most overdue relative to the
+     interval. The limit fixes the workload, so knowledge is compared directly, on paired seeds.
   2. RELEARN. After "Forgot", come back in 1 day (Yadora), in 2, or at FSRS's own post-lapse interval.
   3. FIRST-STUDY CAP. The first interval capped at 5 days (Yadora), 3, 7, or not at all. Tested with
      honest first ratings AND with over-confident ones (the judgment-of-learning illusion the cap exists for).
@@ -34,13 +36,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 import yadora_model as ym  # noqa: E402
 from simulate import (  # noqa: E402
     FIRST_GRADES, REVIEW_HOUR_FRACTION, SUCCESS_GRADES, Topic, TrueMemory, knowledge, mastery, pick, priority,
+    priority_before_2026_09_24,
 )
 
 
 @dataclass
 class Policy:
     name: str = "Yadora"
-    order: str = "yadora"            # yadora | r_asc | r_desc | overdue_rel | due
+    order: str = "yadora"            # yadora | previous | r_asc | r_desc | overdue_rel | due (= yadora here)
     relearn_days: Optional[float] = 1.0   # None = FSRS's own post-lapse interval at the target
     first_cap: Optional[float] = 5.0      # None = no cap
     max_interval: float = 365.0
@@ -121,6 +124,8 @@ def run(p: Policy, w: World, seed: int):
             due = [t for t in topics if t.due_day <= day and t.last_day < day]
             if p.order == "yadora":
                 due.sort(key=lambda t: (-priority(t, day), t.model_due, t.tid))
+            elif p.order == "previous":
+                due.sort(key=lambda t: (-priority_before_2026_09_24(t, day), t.model_due, t.tid))
             elif p.order == "r_asc":
                 due.sort(key=lambda t: (sched.retrievability(day - t.last_day, t.s), t.tid))
             elif p.order == "r_desc":
@@ -195,21 +200,43 @@ def main():
 
     if "order" in only:
         print("## 1. Queue order when the daily limit binds\n")
-        # Worlds where the limit really binds: more due than the day allows, for weeks at a time.
+        # Worlds where the limit really binds: more due than the day allows, for weeks at a time. Every order
+        # runs on the SAME seeds (the same classes and first ratings), and the table reports the paired
+        # difference from Yadora's order with its standard error, so a small but real gap is visible.
+        order_seeds = 4 if args.quick else max(seeds, 16)
         worlds = [
             ("heavy load: 6 new/day, limit 15", World(days=days, new_per_study_day=6, daily_limit=15)),
             ("3-week holiday, then limit 20", World(days=days, daily_limit=20, holiday=(days // 2, 21))),
             ("learner forgets 2x faster, 5 new/day, limit 15", World(days=days, new_per_study_day=5, daily_limit=15, k_true=0.5)),
+            ("learner forgets 2x slower, 5 new/day, limit 15", World(days=days, new_per_study_day=5, daily_limit=15, k_true=2.0)),
+            ("heavy load, 40% of first ratings one grade too high", World(days=days, new_per_study_day=6, daily_limit=15, first_overconfident=0.4)),
         ]
-        orders = [("Yadora priority score", "yadora"), ("lowest recall first", "r_asc"), ("highest recall first", "r_desc"),
-                  ("most overdue relative to interval", "overdue_rel"), ("earliest due first", "due")]
+        orders = [("Yadora: most overdue first", "yadora"),
+                  ("before 2026-09-24: + weak-state and lapse bonuses", "previous"),
+                  ("lowest recall first", "r_asc"), ("highest recall first", "r_desc"),
+                  ("most overdue relative to interval", "overdue_rel")]
+
+        def paired(xs, ys):
+            d = [100 * (x - y) for x, y in zip(xs, ys)]
+            se = statistics.stdev(d) / math.sqrt(len(d)) if len(d) > 1 else float("nan")
+            return f"{statistics.fmean(d):+.2f} ± {se:.2f}"
+
         for wname, w in worlds:
-            print(f"**{wname}**\n")
-            print("| order | final quiz | average over the year | reviews |")
-            print("|---|---|---|---|")
+            runs = {o: [run(Policy(order=o), w, 900 + s) for s in range(order_seeds)] for _, o in orders}
+            ref = runs["yadora"]
+            print(f"**{wname}** ({order_seeds} paired seeds)\n")
+            print("| order | final quiz | vs Yadora | average over the year | vs Yadora | reviews |")
+            print("|---|---|---|---|---|---|")
             for oname, o in orders:
-                f, m, n, _ = mean_run(Policy(order=o), w, seeds)
-                print(f"| {oname} | {pct(f)} | {pct(m)} | {n:.0f} |")
+                rs = runs[o]
+                f = statistics.fmean(r[0] for r in rs)
+                m = statistics.fmean(r[1] for r in rs)
+                n = statistics.fmean(r[2] for r in rs)
+                if o == "yadora":
+                    print(f"| {oname} | {pct(f)} | | {pct(m)} | | {n:.0f} |")
+                else:
+                    print(f"| {oname} | {pct(f)} | {paired([r[0] for r in rs], [r[0] for r in ref])} | "
+                          f"{pct(m)} | {paired([r[1] for r in rs], [r[1] for r in ref])} | {n:.0f} |")
             print()
 
     base_world = World(days=days)
