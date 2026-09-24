@@ -943,6 +943,30 @@ fun AddUnitScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )
+                            // How this review was done, when the learner said (pilot research data).
+                            val methods = com.example.domain.model.ReviewMethod.decode(log.reviewMethods)
+                            val hasScore = com.example.domain.model.QuestionScore.isValid(log.questionsCorrect, log.questionsTotal)
+                            if (methods.isNotEmpty() || hasScore) {
+                                val fa = strings.languageCode == "fa"
+                                val methodText = methods.joinToString(" · ") { m ->
+                                    when (m) {
+                                        com.example.domain.model.ReviewMethod.Questions -> when (strings.languageCode) { "fa" -> "تست و سؤال"; "de" -> "Fragen"; else -> "Questions" }
+                                        com.example.domain.model.ReviewMethod.Reading -> when (strings.languageCode) { "fa" -> "خواندن"; "de" -> "Lesen"; else -> "Reading" }
+                                        com.example.domain.model.ReviewMethod.Lecture -> when (strings.languageCode) { "fa" -> "کلاس یا ویدیو"; "de" -> "Vorlesung / Video"; else -> "Lecture / video" }
+                                        com.example.domain.model.ReviewMethod.Other -> when (strings.languageCode) { "fa" -> "روش دیگر"; "de" -> "Anders"; else -> "Other" }
+                                    }
+                                }
+                                val scoreText = if (hasScore) {
+                                    val raw = "${log.questionsCorrect}/${log.questionsTotal}"
+                                    if (fa) com.example.ui.i18n.PersianDate.faDigits(raw) else raw
+                                } else null
+                                Text(
+                                    text = listOfNotNull(methodText.ifBlank { null }, scoreText).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
                         }
                     }
                 }

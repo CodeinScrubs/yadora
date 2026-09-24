@@ -60,6 +60,10 @@ class AnalyticsExportConsistencyTest {
                 logType = "RECALL",
                 schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
                 understandingFactorAtReview = 1.0,
+                reviewMethods = "Questions,Reading",
+                questionsCorrect = 14,
+                questionsTotal = 20,
+                sessionKind = "PLAN",
             )
         )
 
@@ -86,7 +90,15 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 11, json.getInt("exportVersion"))
+        assertEquals("export version", 12, json.getInt("exportVersion"))
+        // v12: pooled pilot exports must be told apart without names, and the id must be stable.
+        val participant = json.getString("participantId")
+        assertTrue("pseudonymous participant id: $participant", ResearchId.isWellFormed(participant))
+        assertEquals("the same id on every export", participant, JSONObject(AnalyticsExporter.buildJson(app)).getString("participantId"))
+        val guide = json.getJSONObject("fieldGuide")
+        for (key in listOf("recallOutcome", "firstStudy", "retrievabilityAtReview", "reviewMethods", "sessionKind", "times")) {
+            assertTrue("the file explains $key", guide.getString(key).isNotBlank())
+        }
         assertTrue("the fit attempts are exported", json.has("memoryParameterSets"))
         assertEquals("with no personal model the defaults schedule", 0L, json.getJSONObject("policy").getLong("activeParameterSetId"))
 
@@ -152,6 +164,15 @@ class AnalyticsExportConsistencyTest {
             assertTrue("log carries the calibration scale it was scheduled with", log.has("calibrationScaleAtReview"))
             assertTrue("log carries its key-point score", log.has("keyPointsTotal") && log.has("keyPointsRecalled"))
             assertTrue("log names its weight set", log.has("parameterSetId"))
+            assertTrue("log says how the review was done", log.has("reviewMethods") && log.has("sessionKind"))
+            assertTrue("log carries the question score slot", log.has("questionsCorrect") && log.has("questionsTotal"))
+            if (log.getLong("id") == logId) {
+                val methods = log.getJSONArray("reviewMethods")
+                assertEquals("methods exported as names", listOf("Questions", "Reading"), (0 until methods.length()).map { methods.getString(it) })
+                assertEquals(14, log.getInt("questionsCorrect"))
+                assertEquals(20, log.getInt("questionsTotal"))
+                assertEquals("PLAN", log.getString("sessionKind"))
+            }
             // v4 adherence: without these, analysis cannot tell a bad interval apart from a late user.
             assertTrue("log carries the date it was answering", log.has("scheduledForAt"))
             assertTrue("log carries lateness", log.has("daysLate"))
@@ -192,6 +213,8 @@ class AnalyticsExportConsistencyTest {
             assertTrue("but never the prompt text itself", !u.has("recallPrompt"))
             assertTrue("unit says how many key points it has", u.has("keyPointCount"))
             assertTrue("but never the points themselves", !u.has("keyPoints"))
+            assertTrue("size proxies without content", u.has("notesLength") && u.has("hasSource") && u.has("titleLength"))
+            assertTrue("never the title, notes or source themselves", !u.has("title") && !u.has("notes") && !u.has("source"))
             if (u.getLong("id") == id3) {
                 assertEquals("deferredUntil visible in export", now + day, u.getLong("deferredUntil"))
                 assertEquals("model's date untouched by deferral", now, u.getLong("modelDueAt"))
@@ -199,6 +222,28 @@ class AnalyticsExportConsistencyTest {
             }
         }
         assertTrue("deferred topic present in export", sawDeferred)
+    }
+
+    /**
+     * Settings -> "Share research data" writes the export to cache/exports/ and hands it out through the
+     * FileProvider. A path the provider does not serve crashes at the tap ("Failed to find configured
+     * root"), and a stale earlier file sitting next to the new one could be the one that gets sent.
+     */
+    @Test
+    fun `the shareable export lands where the FileProvider serves it, alone`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<MedReviewApplication>()
+        val first = AnalyticsExporter.writeShareableFile(app)
+        val second = AnalyticsExporter.writeShareableFile(app)
+        val dir = java.io.File(app.cacheDir, "exports")
+        assertEquals("only the newest export is there to be shared", listOf(second.name), dir.listFiles()!!.map { it.name })
+        assertTrue(
+            "named after the participant and the day: ${second.name}",
+            Regex("""yadora_research_YD-[A-Z0-9]{4}-[A-Z0-9]{4}_\d{4}-\d{2}-\d{2}\.json""").matches(second.name),
+        )
+        assertEquals("same name both times on one day", first.name, second.name)
+        assertEquals("a complete export", 12, JSONObject(second.readText()).getInt("exportVersion"))
+        val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", second)
+        assertEquals("content", uri.scheme)
     }
 
     /**

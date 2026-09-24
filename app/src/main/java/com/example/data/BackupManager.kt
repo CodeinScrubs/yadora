@@ -33,11 +33,14 @@ object BackupManager {
     // v8: the personal memory model — every fitted weight set (memoryParameterSets) and which set each
     // topic and review belongs to (parameterSetId). Without them a restore would put every personal-set
     // topic on weights the file no longer holds.
-    const val BACKUP_VERSION = 8
+    // v9: what each review consisted of (review_logs.reviewMethods / questionsCorrect / questionsTotal /
+    // sessionKind) and the pseudonymous research id, so a pilot participant who restores onto a new phone
+    // keeps one identity and loses none of the pilot data.
+    const val BACKUP_VERSION = 9
 
     // The user-preference keys worth carrying across devices (deliberately excludes transient state
     // like last_notif_shown_at).
-    private val SETTINGS_STRING_KEYS = listOf("app_language", "theme_mode", "accent_color", "calendar_format", "exam_name")
+    private val SETTINGS_STRING_KEYS = listOf("app_language", "theme_mode", "accent_color", "calendar_format", "exam_name", ResearchId.PREF_KEY)
     private val SETTINGS_BOOL_KEYS = listOf("language_selected", "daily_reminder", "sound_enabled", "vibration_enabled", "alarm_enabled", "alarm_silenced", PersonalModelWorker.PREF_ENABLED)
     private val SETTINGS_INT_KEYS = listOf("reminder_hour", "reminder_minute")
     private val SETTINGS_FLOAT_KEYS = listOf("daily_review_limit", "desired_retention")
@@ -118,6 +121,9 @@ object BackupManager {
                 put("calibrationScaleAtReview", l.calibrationScaleAtReview)
                 put("keyPointsTotal", l.keyPointsTotal); put("keyPointsRecalled", l.keyPointsRecalled)
                 put("parameterSetId", l.parameterSetId)
+                put("reviewMethods", l.reviewMethods ?: JSONObject.NULL)
+                put("questionsCorrect", l.questionsCorrect); put("questionsTotal", l.questionsTotal)
+                put("sessionKind", l.sessionKind ?: JSONObject.NULL)
             })
         })
         root.put("memoryParameterSets", JSONArray().apply {
@@ -317,6 +323,19 @@ object BackupManager {
             }
             val logSetId = o.optLong("parameterSetId", 0L)
             require(logSetId in usableSetIds) { "Damaged backup: review log ${i + 1} references a missing memory model" }
+            // v9 research fields. Absent in older files = not recorded. A question score is either absent or
+            // a real count; methods and session kind are re-encoded so only known names are stored.
+            val qCorrect = o.optInt("questionsCorrect", -1)
+            val qTotal = o.optInt("questionsTotal", -1)
+            require((qCorrect == -1 && qTotal == -1) || com.example.domain.model.QuestionScore.isValid(qCorrect, qTotal)) {
+                "Damaged backup: invalid question score $qCorrect/$qTotal (log ${i + 1})"
+            }
+            val methods = com.example.domain.model.ReviewMethod.encode(
+                com.example.domain.model.ReviewMethod.decode(o.strOrNull("reviewMethods"))
+            )
+            val sessionKind = o.strOrNull("sessionKind")?.takeIf { k ->
+                com.example.domain.model.SessionKind.entries.any { it.name == k }
+            }
             ReviewLogEntity(
                 id = o.optLong("id", 0L), studyUnitId = unitRef,
                 reviewedAt = o.optLong("reviewedAt", System.currentTimeMillis()),
@@ -341,6 +360,10 @@ object BackupManager {
                 keyPointsTotal = kpTotal,
                 keyPointsRecalled = kpRecalled,
                 parameterSetId = logSetId,
+                reviewMethods = methods,
+                questionsCorrect = qCorrect,
+                questionsTotal = qTotal,
+                sessionKind = sessionKind,
             )
         }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.

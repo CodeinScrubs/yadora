@@ -241,6 +241,8 @@ fun TodayScreen(
     onNavigateToSettings: () -> Unit,
     /** Today's limit is used up and the learner wants to keep going: a session without the limit. */
     onReviewMoreAnyway: () -> Unit = {},
+    /** Nothing is due and the learner wants to study anyway: not-yet-due topics, weakest first (ReviewAhead). */
+    onReviewAhead: () -> Unit = {},
 ) {
     val viewModel: TodayViewModel = viewModel(factory = TodayViewModelFactory(repository))
     
@@ -554,6 +556,25 @@ fun TodayScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
+                                    // Review ahead (ReviewAhead): for spare time and the weeks before an exam.
+                                    // Offered only when a rated topic is waiting; honest about the cost.
+                                    if (allUpcoming.any { it.reviewCount > 0 }) {
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        OutlinedButton(onClick = onReviewAhead, shape = RoundedCornerShape(percent = 50)) {
+                                            Text(when (strings.languageCode) { "fa" -> "مرور جلوتر از برنامه"; "de" -> "Vorausarbeiten"; else -> "Review ahead" })
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = when (strings.languageCode) {
+                                                "fa" -> "مباحثی که هنوز موعدشان نرسیده، از ضعیف‌ترین. پیش از امتحان مفید است؛ مرورِ زودتر از موعد، حافظه را کمتر از مرورِ به‌موقع تقویت می‌کند."
+                                                "de" -> "Noch nicht fällige Themen, die schwächsten zuerst. Nützlich vor einer Prüfung; eine frühe Wiederholung stärkt das Gedächtnis weniger als eine pünktliche."
+                                                else -> "Topics not due yet, weakest first. Useful before an exam; an early review strengthens memory less than one on time."
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                    }
                                 }
                             }
                         }

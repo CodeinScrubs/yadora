@@ -1020,7 +1020,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 // Honest scope: countdown only. The exam date is decorative BY DESIGN (settled decision):
                 // it never compresses intervals, so the copy must not promise that it will one day.
                 Text(
-                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی بیشتر پیش از امتحان، هدف به‌خاطرسپاری را بالا ببر." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für mehr Prüfungsreife das Behaltensziel erhöhen." else "Only a countdown on the screens — it doesn't change your review schedule. To be more exam-ready, raise the retention target.",
+                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی بیشتر: از چند ماه قبل هدف به‌خاطرسپاری را بالا ببر، و در هفته‌های آخر، بعد از مرورهای هر روز، «مرور جلوتر از برنامه» را در صفحهٔ امروز بزن (ضعیف‌ترین مباحث اول)." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für mehr Prüfungsreife: Monate vorher das Behaltensziel erhöhen und in den letzten Wochen nach den fälligen Wiederholungen auf „Heute“ „Vorausarbeiten“ nutzen (die schwächsten Themen zuerst)." else "Only a countdown on the screens — it doesn't change your review schedule. To be more exam-ready: raise the retention target months ahead, and in the last weeks, after each day's reviews, use Review ahead on Today (weakest topics first).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1072,13 +1072,61 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 }
                 Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = if (language == "fa") "خروجی تحلیلی برای بهبود الگوریتم (نه پشتیبان‌گیری): بدون عنوان و یادداشت مباحث، اما شامل نام درس‌ها/مجموعه‌ها و مشخصات دستگاه." else if (language == "de") "Analyse-Export zur Verbesserung des Algorithmus (keine Sicherung): ohne Thementitel oder Notizen, aber mit deinen Fachnamen und dem Gerätemodell." else "Analytics export for tuning the algorithm (not a backup): no topic titles or notes, but it does include your subject/collection names and device model.",
+                    text = if (language == "fa") "دادهٔ پژوهشی برای بهبود الگوریتم (نه پشتیبان‌گیری): بدون عنوان و یادداشت مباحث، اما شامل نام درس‌ها/مجموعه‌ها و مشخصات دستگاه." else if (language == "de") "Forschungsdaten zur Verbesserung des Algorithmus (keine Sicherung): ohne Thementitel oder Notizen, aber mit deinen Fachnamen und dem Gerätemodell." else "Research data for tuning the algorithm (not a backup): no topic titles or notes, but it does include your subject/collection names and device model.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // The pilot: a pseudonymous id (no name, no account) so several people's files can be pooled,
+                // and a one-tap share to whatever app the file should go through (a chat, e-mail, a drive).
+                val researchId = remember { com.example.data.ResearchId.get(context) }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = when (language) {
+                        "fa" -> "شناسهٔ پژوهشی تو: $researchId — تصادفی است و به اسم یا گوشی‌ات ربطی ندارد."
+                        "de" -> "Deine Forschungs-ID: $researchId — zufällig, ohne Bezug zu deinem Namen oder Gerät."
+                        else -> "Your research ID: $researchId — random, not linked to your name or phone."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(onClick = { exportLauncher.launch("yadora_analytics.json") }, modifier = Modifier.fillMaxWidth()) {
-                    Text(when (language) { "fa" -> "استخراج تحلیل‌ها / لاگ‌ها"; "de" -> "Analysen / Logs extrahieren"; else -> "Extract analytics / logs" })
+                Button(
+                    onClick = {
+                        exportScope.launch {
+                            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching { com.example.data.AnalyticsExporter.writeShareableFile(context) }.getOrNull()
+                            }
+                            val shared = file != null && runCatching {
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "application/json"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    putExtra(android.content.Intent.EXTRA_SUBJECT, "Yadora research data $researchId")
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(
+                                    android.content.Intent.createChooser(
+                                        send,
+                                        when (language) { "fa" -> "ارسال دادهٔ پژوهشی"; "de" -> "Forschungsdaten senden"; else -> "Send research data" },
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }.isSuccess
+                            if (!shared) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    when (language) { "fa" -> "ارسال ناموفق بود"; "de" -> "Senden fehlgeschlagen"; else -> "Couldn't share the file" },
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(when (language) { "fa" -> "ارسال دادهٔ پژوهشی"; "de" -> "Forschungsdaten senden"; else -> "Share research data" })
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(onClick = { exportLauncher.launch(com.example.data.AnalyticsExporter.fileName(context)) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(when (language) { "fa" -> "ذخیرهٔ دادهٔ پژوهشی در فایل"; "de" -> "Forschungsdaten als Datei speichern"; else -> "Save research data to a file" })
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))

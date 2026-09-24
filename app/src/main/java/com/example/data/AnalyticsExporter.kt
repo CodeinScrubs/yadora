@@ -19,6 +19,56 @@ import org.json.JSONObject
  */
 object AnalyticsExporter {
 
+    /**
+     * What the fields mean, inside the file. An export gets handed to a person or an AI months later,
+     * without the source; the traps below (which rows are recalls, which clock a date is on, which model a
+     * prediction came from) are exactly the ones that make an analysis silently wrong.
+     */
+    private fun fieldGuide(): JSONObject = JSONObject().apply {
+        put("purpose", "One learner's Yadora history for analysing and tuning the scheduler. Yadora schedules WHEN to review a " +
+            "topic; the review itself is done by any method, mostly outside the app. No topic titles, notes, prompts or key points.")
+        put("times", "Epoch milliseconds (UTC). Local dates need environment.timeZoneId. Day counts on FSRS-6 logs are whole LOCAL calendar days.")
+        put("recallOutcome", "reviewLogs with logType RECALL: memoryRating Forgot = failure, Hard/Good/Easy = success. It is the " +
+            "learner's own answer to 'How much did you still remember?' (before rereading), asked after the review.")
+        put("firstStudy", "logType FIRST_STUDY: the rating given right after first studying the topic. memoryRating Easy/Good/Hard " +
+            "there means topic difficulty Easy/Medium/Hard (initialDifficulty), NOT a recall. The schedule counts from this moment. " +
+            "A later FIRST_STUDY row on the same topic (only after a merge) is a re-exposure, never a recall.")
+        put("retrievabilityAtReview", "The memory model's predicted recall probability at the moment of the review, on the log's own " +
+            "model (schedulerVersion) and weight set (parameterSetId; 0 = published FSRS-6 defaults), BEFORE the per-user " +
+            "calibration. Pool predictions only within one (schedulerVersion, parameterSetId).")
+        put("calibrationScaleAtReview", "The per-user multiplier applied to the memory interval when this review was scheduled " +
+            "(1 = none). Calibrated recall = (1 + ((p^(1/decay)) - 1) / scale)^decay with decay = -w20 of the log's weight set.")
+        put("intervals", "nextIntervalDays is the MEMORY interval actually scheduled (after calibration, caps and +-5% fuzz). The topic " +
+            "can return sooner through the understanding repair clock (understandingRating Partial/Confused) or later through a user " +
+            "deferral (deferralsBeforeThisReview).")
+        put("adherence", "scheduledForAt / daysLate are reconstructed from the previous review's MEMORY date; exact only when " +
+            "deferralsBeforeThisReview = 0. A negative daysLate is either an early review (sessionKind TOPIC or AHEAD) or the " +
+            "understanding repair clock bringing the topic back before its memory date (previous understandingRating Partial or " +
+            "Confused); tools/pilot/analyze.py reconstructs the date that actually applied.")
+        put("reviewMethods", "Optional, several allowed: Questions (question bank, past papers, flashcards), Reading, Lecture, Other. " +
+            "Empty = not said. questionsCorrect/questionsTotal: optional score for that review, -1 = not recorded.")
+        put("sessionKind", "PLAN = today's plan within the daily limit, EXTRA = 'review more anyway', TOPIC = one topic opened on purpose, " +
+            "AHEAD = 'review ahead' (not yet due, weakest first). Null = logged before v12.")
+        put("understandingRating", "'How well do you understand it now?' Confused / Partial / Clear; NotAsked after Forgot.")
+        put("consistency", "consistency.issues lists broken invariants: each one is a bug report, not a statistic. Empty is expected.")
+        put("tools", "tools/pilot/analyze.py in the Yadora repository reads one or many of these files and writes a report.")
+    }
+
+    /** "yadora_research_YD-K7PM-3QXA_2026-09-24.json": who and when, readable in a chat or a folder. */
+    fun fileName(context: Context, today: java.time.LocalDate = java.time.LocalDate.now()): String =
+        "yadora_research_${ResearchId.get(context)}_$today.json"
+
+    /**
+     * Writes the export to cache/exports/ (the one directory the FileProvider exposes) and returns it.
+     * Earlier exports there are removed first, so a stale file can never be the one that gets shared.
+     */
+    suspend fun writeShareableFile(context: Context): java.io.File {
+        val json = buildJson(context)
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        return java.io.File(dir, fileName(context)).apply { writeText(json) }
+    }
+
     suspend fun buildJson(context: Context): String {
         val app = context.applicationContext as MedReviewApplication
         val unitDao = app.database.studyUnitDao()
@@ -68,7 +118,13 @@ object AnalyticsExporter {
         // the learner still had when they came back to it. The key-point rating cap is retired, so every
         // new log records keyPointsTotal/keyPointsRecalled = -1 (older logs keep their scores), and the
         // daily limit counts the reviews already done today (dailyLimitIsPerDay).
-        root.put("exportVersion", 11)
+        // v12: the pilot. A pseudonymous participant id (ResearchId) so several people's exports can be pooled
+        // and told apart without names; per log how the learner reviewed (reviewMethods), an optional
+        // question score (questionsCorrect/questionsTotal) and which kind of session logged it
+        // (sessionKind: PLAN / EXTRA / TOPIC / AHEAD); per topic content-free size proxies (notesLength,
+        // hasSource); and a fieldGuide, so the file explains itself to whoever -- or whatever -- reads it.
+        root.put("exportVersion", 12)
+        root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
         root.put("appVersionCode", com.example.BuildConfig.VERSION_CODE)
@@ -222,6 +278,10 @@ object AnalyticsExporter {
                 put("hasRecallPrompt", !u.recallPrompt.isNullOrBlank())
                 put("keyPointCount", com.example.domain.srs.KeyPoints.parse(u.keyPoints).size)
                 put("parameterSetId", u.parameterSetId)
+                // Size proxies without content: how much the learner wrote down, and whether a source is named.
+                put("notesLength", u.notes?.trim()?.length ?: 0)
+                put("hasSource", !u.source.isNullOrBlank())
+                put("titleLength", u.title.trim().length)
             })
         }
         root.put("studyUnits", unitsArr)
@@ -305,6 +365,12 @@ object AnalyticsExporter {
                 put("keyPointsTotal", l.keyPointsTotal)
                 put("keyPointsRecalled", l.keyPointsRecalled)
                 put("parameterSetId", l.parameterSetId)
+                put("reviewMethods", JSONArray().apply {
+                    com.example.domain.model.ReviewMethod.decode(l.reviewMethods).forEach { put(it.name) }
+                })
+                put("questionsCorrect", l.questionsCorrect)
+                put("questionsTotal", l.questionsTotal)
+                put("sessionKind", l.sessionKind ?: JSONObject.NULL)
             })
         }
         root.put("reviewLogs", logsArr)
@@ -327,6 +393,9 @@ object AnalyticsExporter {
             .mapTo(HashSet()) { it.id } + 0L
         for (l in logs) {
             if (l.studyUnitId !in unitIdSet) flag("ORPHAN_LOG", l.studyUnitId, "log ${l.id} references a topic not in this export")
+            if (!(l.questionsCorrect == -1 && l.questionsTotal == -1) &&
+                !com.example.domain.model.QuestionScore.isValid(l.questionsCorrect, l.questionsTotal)
+            ) flag("BAD_QUESTION_SCORE", l.studyUnitId, "log ${l.id} has ${l.questionsCorrect}/${l.questionsTotal}")
             if (l.parameterSetId !in usableSetIds) flag("UNKNOWN_PARAMETER_SET", l.studyUnitId, "log ${l.id} names weight set ${l.parameterSetId}")
         }
         for (u in units) {
@@ -385,6 +454,7 @@ object AnalyticsExporter {
             })
         }
         root.put("eventLogs", eventsArr)
+        root.put("fieldGuide", fieldGuide())
 
         return root.toString(2)
     }

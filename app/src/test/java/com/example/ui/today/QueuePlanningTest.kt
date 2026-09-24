@@ -180,4 +180,42 @@ class QueuePlanningTest {
         assertEquals(23, c.get(Calendar.HOUR_OF_DAY))
         assertEquals(999, c.get(Calendar.MILLISECOND))
     }
+
+    // --- ReviewAhead: not yet due, weakest first ---
+
+    private fun ahead(id: Long, reviews: Int, dueInDays: Int, archived: Boolean = false, deleted: Boolean = false) =
+        com.example.data.local.entity.StudyUnitEntity(
+            id = id, title = "a$id", studyType = "Topic", reviewCount = reviews, state = "Building",
+            studiedAt = now - 30 * day, nextReviewAt = now + dueInDays * day, modelDueAt = now + dueInDays * day,
+            archived = archived, deletedAt = if (deleted) now - day else null,
+        )
+
+    @Test fun review_ahead_offers_the_weakest_not_yet_due_topics_first() {
+        val recall = mapOf(1L to 0.95, 2L to 0.81, 3L to 0.88, 4L to 0.70, 5L to 0.60, 6L to 0.50, 7L to 0.40)
+        val units = listOf(
+            ahead(1, reviews = 2, dueInDays = 5),
+            ahead(2, reviews = 3, dueInDays = 20),
+            ahead(3, reviews = 1, dueInDays = 3),
+            ahead(4, reviews = 0, dueInDays = 4),                 // never rated: its first rating belongs to its study day
+            ahead(5, reviews = 2, dueInDays = 0),                 // due today: today's plan owns it
+            ahead(6, reviews = 2, dueInDays = 9, archived = true),
+            ahead(7, reviews = 2, dueInDays = 9, deleted = true),
+        )
+        val order = ReviewAhead.order(units, now, recall = { recall[it.id] })
+        assertEquals("rated, not due today, active; lowest recall first", listOf(2L, 3L, 1L), order.map { it.id })
+    }
+
+    @Test fun review_ahead_leaves_out_what_it_cannot_predict_and_respects_the_limit() {
+        val units = (1L..30L).map { ahead(it, reviews = 2, dueInDays = 2 + it.toInt()) }
+        val order = ReviewAhead.order(units, now, recall = { u -> if (u.id == 3L) null else if (u.id == 4L) Double.NaN else 1.0 - u.id / 100.0 }, limit = 5)
+        assertEquals(5, order.size)
+        assertFalse("no prediction, no offer", order.any { it.id == 3L || it.id == 4L })
+        assertEquals("weakest first", listOf(30L, 29L, 28L, 27L, 26L), order.map { it.id })
+        assertTrue("a zero limit offers nothing", ReviewAhead.order(units, now, recall = { 0.5 }, limit = 0).isEmpty())
+    }
+
+    @Test fun review_ahead_breaks_ties_by_date_then_id() {
+        val units = listOf(ahead(9, 2, 10), ahead(8, 2, 10), ahead(7, 2, 4))
+        assertEquals(listOf(7L, 8L, 9L), ReviewAhead.order(units, now, recall = { 0.9 }).map { it.id })
+    }
 }

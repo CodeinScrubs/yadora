@@ -22,3 +22,10 @@ debug.keystore
 # retired scheduler if anyone had uploaded it. Build and sign from a tagged commit instead.
 app/release/
 *.aab
+
+# Pilot data is participants' private study history: never commit it. analyze.py writes pilot_report/ by
+# default, and exports arrive as yadora_research_<id>_<date>.json.
+__pycache__/
+pilot_report/
+yadora_research_*.json
+/exports/

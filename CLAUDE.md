@@ -13,6 +13,7 @@ Requires Android Studio's bundled JDK:
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:testDebugUnitTest   # unit tests
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:assembleDebug        # debug APK
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew :app:lintDebug            # lint (keep 0 errors)
+python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py              # research toolkit
 ```
 
 (PowerShell: `$env:JAVA_HOME="C:/Program Files/Android/Android Studio/jbr"` first.) The bundled JDK is
@@ -104,6 +105,11 @@ real phone before every release.
   safety net.
 - Manual DI: `MedReviewApplication` builds the DB + repository; the repository is
   passed down through composables.
+- `tools/pilot/` — the research toolkit (standard-library Python): `yadora_model.py` (FSRS-6 + the
+  interval rules, transcribed and checked against the py-fsrs goldens and kotlin-stdlib's RNG),
+  `analyze.py` (reads research exports, replays every review, writes the pilot report) and `simulate.py`
+  (the identical-twins simulation). `docs/RESEARCH.md` holds the evidence and results, `docs/PILOT.md`
+  the pilot protocol and its pre-registered decision rules, `docs/PILOT_GUIDE_FA.md` the participant guide.
 
 ## Settled decisions — do NOT re-propose these
 
@@ -173,8 +179,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/…/8_9`, currently DB v9,
-  `exportSchema=true`, schemas 2–9 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
+- **Room migrations are additive only** (`MIGRATION_1_2/…/9_10`, currently DB v10,
+  `exportSchema=true`, schemas 2–10 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
   Never `fallbackToDestructiveMigration`.
 - **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
   query uses; `modelDueAt` = the memory model's own date; `deferredUntil` = set
@@ -544,9 +550,41 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Behaviour changes are simulated before they are argued.** A two-year simulated student
   (honest ratings drawn from a true memory that may forget faster or slower than the defaults,
   a daily limit, a holiday, the Spread-Out button) found the Partial loop and the leech spiral
-  that code reading missed. The simulator lives with the independent Python reference used for
-  the differential test; rebuild it from `MedScheduler`'s rules rather than reasoning from one
-  worked example when a policy number is on the table.
+  that code reading missed. `tools/pilot/simulate.py` is the committed simulator: the owner's
+  identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
+  a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
+  Use it, extended if needed, rather than reasoning from one worked example when a policy number is
+  on the table. Results as of 2026-09-24 are in `docs/RESEARCH.md` §2: Yadora ahead by 4.6–7.9 points
+  in every realistic scenario (8/8 seeds), about half the forgetting of the other twin at equal time;
+  the only loss is an announced-exam cram needing 100–199 topic reviews a day; and the equal-time
+  advantage peaks at the 0.90 default target.
+- **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
+  today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
+  be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
+  simulation found one losing case: an announced exam where the other twin saves time for a final push.
+  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.7%). It reads NO
+  exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
+  honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
+  (their first rating belongs on the study day) and topics due today stay with today's plan.
+- **Pilot research data never feeds the scheduler** (DB v10, analytics export v12, backup v9). Each log
+  can carry how the learner reviewed (`reviewMethods`: Questions / Reading / Lecture / Other, optional,
+  several allowed, reset for every topic so no remembered choice is recorded as a new one), an optional
+  question score (`questionsCorrect`/`questionsTotal`, kept only when it is a real count, else -1/-1), and
+  the session that logged it (`sessionKind`: PLAN / EXTRA / TOPIC / AHEAD). A first study records no
+  method or score. Nothing schedules from these fields until a pilot shows what they mean (docs/PILOT.md
+  D6, D7). The export also carries a pseudonymous research id (`data/ResearchId`, `YD-XXXX-XXXX`, random,
+  in the settings file so a JSON restore keeps it, cleared by "Delete all data"), content-free size
+  proxies (notes length, has source, title length) and a `fieldGuide` that explains the file to whoever
+  reads it cold. Settings → "Share research data" sends it through a FileProvider limited to
+  `cache/exports/`.
+- **The pilot toolkit is part of the scheduling contract.** `tools/pilot/yadora_model.py` transcribes
+  every rule that decides an interval, and `analyze.py` replays each exported review and demands the
+  stored elapsed days, prediction and interval come out EXACTLY (fuzz included). A mismatch in a
+  participant's file is a bug found without the phone. So a change to `Fsrs6.kt`, `MedScheduler`'s
+  interval rules or `RecallCalibration` must be made in `yadora_model.py` too.
+  `python3 tools/pilot/test_analyze.py` checks it against `tools/pilot/fixtures/sample_export.json`, a
+  REAL export written by `PilotExportFixtureTest` through the review screen's commit path. Regenerate
+  the fixture when the export format changes.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

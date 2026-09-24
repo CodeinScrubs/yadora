@@ -1,0 +1,162 @@
+# The two-month pilot: protocol, data and decision rules
+
+For the organiser, and for whoever — a person or an AI — analyses the data afterwards. Participants get
+the short Persian guide in [PILOT_GUIDE_FA.md](PILOT_GUIDE_FA.md). The reasoning behind the design is in
+[RESEARCH.md](RESEARCH.md).
+
+## What two months can and cannot answer
+
+**Can:**
+
+- whether every phone scheduled exactly what the rules say (the integrity replay);
+- whether friends use it as intended: first ratings on the study day, reviews near their dates, the backlog;
+- whether reported recall matches predicted recall, overall and at the first review;
+- whether memory ratings follow question scores;
+- whether learners forget faster or slower than the defaults assume;
+- whether a pooled refit predicts better;
+- which review methods hold up.
+
+**Cannot:** anything about intervals longer than ~2 months, and the twin claim itself (there is no control
+twin). The twin question is answered afterwards by rerunning `tools/pilot/simulate.py` on weights fitted to
+the pilot's own learners. A randomised control arm inside the app was rejected on purpose: withholding
+reviews from a friend's topics is exactly the downside the standard forbids.
+
+## Setup (week 0)
+
+1. Build from a tagged commit (`:app:assembleRelease`, signed) or share the debug APK. Every participant
+   runs the same build, and the build is written down (it is also in every export).
+2. On each phone:
+   - finish onboarding, including the REMINDERS step: grant notifications and exact alarms;
+   - on Samsung, Xiaomi, Huawei, Oppo and Vivo, set Yadora's battery use to unrestricted;
+   - send yourself a test reminder (Settings → Send a test reminder).
+3. **Keep the defaults**: retention target 0.90 and the default daily limit, unless the participant has a
+   reason. Nobody changes them mid-pilot; a change mid-way splits the data in two.
+4. Note each participant's research ID (Settings, next to "Share research data") against their name,
+   privately. The files themselves carry only the ID.
+5. Consent: tell participants what the file contains (below), and that they can see it before sending.
+
+## What participants do
+
+Everything is in the Persian guide. The essentials:
+
+- **One topic = one chunk studied in one sitting**: a lecture, a chapter or a UWorld block's subject. Give
+  it a one-line scope ("What does this topic cover?"). Very large topics make "remembered most of it" vague.
+- **Rate the first study the same day**, ideally straight after studying ("Save and rate now"). The
+  schedule counts from that moment.
+- **Review when Yadora says**, by any method. Then answer **how much you still had before you reread or
+  checked answers**, not how the session felt.
+- **"Forgot" is not failure.** It is the most useful answer the model gets. Rating a lost topic "Hard"
+  quietly stretches its intervals (RESEARCH.md §2.2).
+- Optionally tick how you reviewed, and if you did questions, the score. Ten seconds; it is what lets the
+  pilot tell methods apart and check the ratings.
+- "Not today" and missed days are fine. Deleting and re-adding a topic is not: it throws away its history.
+  Edit it instead.
+
+## Collecting data
+
+At **week 2** (a sanity check that catches phone-specific bugs early) and at **week 8**:
+Settings → **Share research data** → send the file to the organiser.
+
+The file (`yadora_research_YD-XXXX-XXXX_<date>.json`):
+
+- **Contains:** every review's timing, ratings, predictions and intervals; subject names; device model and
+  Android version; time zone; the last crash log; the research ID.
+- **Does not contain:** topic titles, notes, scope lines, key points or sources.
+
+It is sensitive, not anonymous: subject names and a device model can identify someone who knows them.
+Keep the files private and do not publish them.
+
+A full backup (Settings → Export full backup) is a different file: it contains titles and notes. The
+analysis refuses it.
+
+## Analysis
+
+```
+python3 tools/pilot/analyze.py path/to/exports/ --out pilot_report
+python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json   # only if the fit ran
+```
+
+Standard library only. `pilot_report/` gets:
+
+- `report.md`: the findings;
+- `summary.json`: the same numbers, machine-readable;
+- `reviews.csv`, `topics.csv`, `participants.csv`: tidy tables, UTF-8, open in Excel.
+
+The toolkit checks itself: `python3 tools/pilot/test_yadora_model.py` and `python3 tools/pilot/test_analyze.py`.
+
+## Decision rules (fixed before the data exists)
+
+Each rule gets one verdict:
+
+- **OK**: no change indicated.
+- **LOOK**: simulate a candidate change with `simulate.py` before arguing for it.
+- **BUG**: fix first and read nothing else.
+- **WAIT**: too little data.
+
+No rule authorises a change on its own: a LOOK is a reason to investigate, and anything listed as a
+settled decision in CLAUDE.md stays settled unless the owner reopens it.
+
+| id | question | threshold | if LOOK |
+|---|---|---|---|
+| D1 | Did every phone schedule exactly what the rules say? | 0 replay mismatches, 0 self-check issues | BUG. Find the phone, the build and the log in `report.md` §2. A time-zone change is the one benign cause. |
+| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300 | The per-user calibration is not keeping up. Check D4 before touching it. |
+| D3 | First review after a Hard / Medium / Easy first rating: close to predicted? | −7 to +5 points, n ≥ 60 per rating | Compare "implied S0" with the default. Simulate a first-study prior for topics, or a different cap, before changing either. |
+| D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
+| D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
+| D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
+| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points, n ≥ 100 each | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
+| D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
+| D9 | Are at least 80% of first ratings given on the study day? | ≥ 80%, n ≥ 50 | The first-rating flow is being skipped. Look at "Save and rate now" and the Today prompt. |
+| D10 | Are fewer than 40% of successful reviews answered Partial/Confused? | < 40%, n ≥ 100 | The repair clock is adding a lot of load. Check its backoff in simulation. |
+
+Why these thresholds:
+
+- D2 and D3 allow ~5–7 points, because two months of self-reported recall on whole topics cannot resolve
+  finer than that.
+- D5 uses exactly the gate the app applies to the personal model, so the pilot cannot adopt weights the app
+  itself would reject.
+- D6's 0.3 is a modest bar: questions and "how much of the topic" measure overlapping but different things.
+
+## Optional: a direct retention check at week 8
+
+This is the closest the pilot can come to the twin quiz without a control group. It happens outside the app:
+
+1. For each participant, draw 20 topics at random from those studied in weeks 1–4, using `topics.csv`
+   (look the titles up on their phone).
+2. For each topic, the participant writes how much they remember **now** (0–100%) and answers 5 questions
+   from a question bank on it, without reviewing first.
+3. Compare three things: the model's predicted recall today (`stability_after` of the topic's last review,
+   on the FSRS-6 curve), their estimate, and the question score.
+
+If predicted and measured recall agree, the simulated twin result stands on real data. Record the results
+next to the exports; the toolkit does not need them.
+
+## Handing the data to an AI
+
+Give it `report.md`, `summary.json`, `reviews.csv`, `topics.csv`, `CLAUDE.md`, `docs/RESEARCH.md` and this
+file, with this prompt:
+
+> You are analysing a two-month pilot of Yadora, an offline Android app that schedules WHEN medical
+> students review a topic (FSRS-6 plus a product layer), not a flashcard app. Read CLAUDE.md first,
+> especially "Settled decisions": do not propose anything listed there as rejected unless the data directly
+> contradicts the reason given. Then:
+>
+> 1. Check report.md §2 (integrity). Any mismatch is a bug: say which phone, build and log, and what code
+>    path could produce it.
+> 2. Go through decision rules D1–D10 in docs/PILOT.md. For every LOOK, use reviews.csv to test whether it
+>    holds per participant, or whether one person drives it.
+> 3. For any change you recommend, state the expected effect and how to test it with
+>    tools/pilot/simulate.py, and name the tests that must change (goldens, ReplayEqualsLiveTest,
+>    SchedulerInvariantsTest).
+> 4. Separate what the data shows, what it suggests, and what it cannot tell. Do not claim the algorithm
+>    is validated. The implementation can be verified; the predictions can only be calibrated against
+>    this data.
+
+## Timeline
+
+| when | what |
+|---|---|
+| week 0 | build tagged, installed, onboarding done, reminders tested, research IDs noted |
+| week 2 | first export from everyone → `analyze.py` → fix any D1 bug, reply to confusion |
+| weeks 3–8 | normal use; no setting changes |
+| week 8 | final export, optional retention check, full analysis, simulation on fitted weights |

@@ -115,6 +115,7 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     onNavigateToAdd = { navController.navigate(Screen.AddUnit) { launchSingleTop = true } },
                     onNavigateToReview = { unitId -> navController.navigate(Screen.ReviewSession(unitId)) { launchSingleTop = true } },
                     onReviewMoreAnyway = { navController.navigate(Screen.ReviewSession(-1L, ignoreLimit = true)) { launchSingleTop = true } },
+                    onReviewAhead = { navController.navigate(Screen.ReviewSession(-1L, ahead = true)) { launchSingleTop = true } },
                     onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) { launchSingleTop = true } },
                     onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
                 )
@@ -163,6 +164,7 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     repository = repository,
                     unitId = reviewSession.unitId,
                     ignoreLimit = reviewSession.ignoreLimit,
+                    ahead = reviewSession.ahead,
                     onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id)) { launchSingleTop = true } },
                     onFinish = { navController.popBackStack() }
                 )

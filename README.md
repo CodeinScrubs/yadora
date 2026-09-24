@@ -33,4 +33,19 @@ JVM unit tests cover the scheduler math, the py-fsrs golden vectors, replay == l
 
 From a plain terminal on Windows, point `JAVA_HOME` at Android Studio's bundled JDK first (see [CLAUDE.md](CLAUDE.md)).
 
+The research toolkit has its own checks (standard-library Python):
+
+```
+python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py
+```
+
+## Pilot and research
+
+[`docs/RESEARCH.md`](docs/RESEARCH.md) collects the evidence behind the scheduler and the results of the
+identical-twins simulation (`tools/pilot/simulate.py`). [`docs/PILOT.md`](docs/PILOT.md) is the protocol
+for a two-month pilot with pre-registered decision rules; participants get
+[`docs/PILOT_GUIDE_FA.md`](docs/PILOT_GUIDE_FA.md). Participants send Settings → *Share research data*
+(no titles or notes), and `python3 tools/pilot/analyze.py exports/ --out pilot_report` turns the files
+into a report.
+
 Every push and pull request to `main` runs the same gate on GitHub Actions ([`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml)): unit tests, lint, and debug + R8-minified release builds.

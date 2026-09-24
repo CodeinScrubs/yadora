@@ -127,13 +127,26 @@ class ReviewViewModel(
     private var sessionStarted = false
 
     /**
+     * Which kind of session this is, stamped on every log it writes (research data: an early review is a
+     * different measurement from an on-time one). Set once, when the session starts.
+     */
+    private var sessionKind = com.example.domain.model.SessionKind.PLAN
+
+    /**
      * @param unitId one topic to review now (from a Today card or the Library), or -1 for today's plan.
      * @param ignoreLimit the learner chose "review more anyway" after today's limit was used up.
+     * @param ahead "review ahead": topics not yet due, weakest first ([com.example.ui.today.ReviewAhead]).
      */
-    fun startSessionOnce(unitId: Long = -1L, ignoreLimit: Boolean = false) {
+    fun startSessionOnce(unitId: Long = -1L, ignoreLimit: Boolean = false, ahead: Boolean = false) {
         if (sessionStarted) return
         sessionStarted = true
-        loadNext(unitId, ignoreLimit)
+        sessionKind = when {
+            unitId != -1L -> com.example.domain.model.SessionKind.TOPIC
+            ahead -> com.example.domain.model.SessionKind.AHEAD
+            ignoreLimit -> com.example.domain.model.SessionKind.EXTRA
+            else -> com.example.domain.model.SessionKind.PLAN
+        }
+        loadNext(unitId, ignoreLimit, ahead)
     }
     
     private val _currentUnit = MutableStateFlow<StudyUnitEntity?>(null)
@@ -226,7 +239,7 @@ class ReviewViewModel(
         }
     }
 
-    fun loadNext(unitId: Long = -1L, ignoreLimit: Boolean = false) {
+    fun loadNext(unitId: Long = -1L, ignoreLimit: Boolean = false, ahead: Boolean = false) {
         viewModelScope.launch {
             if (dueUnits.isEmpty() && _currentUnit.value == null) {
                 // The per-user interval correction, refreshed once per session from the logs. Read
@@ -242,6 +255,12 @@ class ReviewViewModel(
                         dueUnits.add(unit)
                         advanceUnit()
                     }
+                } else if (ahead) {
+                    // Not yet due, weakest predicted recall first. Ordinary reviews in every other respect:
+                    // each one is scored by FSRS at its real elapsed time and rescheduled from there.
+                    dueUnits.clear()
+                    dueUnits.addAll(repository.reviewAheadQueue())
+                    advanceUnit()
                 } else {
                     val sharedPrefs = getApplication<android.app.Application>().getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
                     val limit = MedScheduler.safeDailyLimit(sharedPrefs.getFloat("daily_review_limit", 50f))
@@ -403,7 +422,16 @@ class ReviewViewModel(
      * rereading, a lecture, a video — so the memory rating is their own judgement of how much they still
      * had when they came back to it, never capped by anything the app scored.
      */
-    fun rateCurrentUnit(memoryRating: MemoryRating, understandingRating: UnderstandingRating, understandingAsked: Boolean = true) {
+    fun rateCurrentUnit(
+        memoryRating: MemoryRating,
+        understandingRating: UnderstandingRating,
+        understandingAsked: Boolean = true,
+        // Pilot research data, optional and never scheduled from: how the learner reviewed, and a question
+        // score if they entered one. Anything that is not a real count is stored as "not recorded".
+        methods: Set<com.example.domain.model.ReviewMethod> = emptySet(),
+        questionsCorrect: Int? = null,
+        questionsTotal: Int? = null,
+    ) {
         if (isProcessing) return
         val currentId = _currentUnit.value?.id ?: return
         isProcessing = true
@@ -489,6 +517,8 @@ class ReviewViewModel(
                 updatedAt = now
             )
 
+            val score = if (reviewNumber == 0) -1 to -1
+                else com.example.domain.model.QuestionScore.normalized(questionsCorrect, questionsTotal)
             val log = com.example.data.local.entity.ReviewLogEntity(
                 studyUnitId = unit.id,
                 reviewedAt = now,
@@ -527,6 +557,11 @@ class ReviewViewModel(
                 keyPointsRecalled = -1,
                 // v9: the weight set this prediction and interval came from.
                 parameterSetId = unit.parameterSetId,
+                // v10 research data. A first study is not a review, so it records no method or score.
+                reviewMethods = if (reviewNumber == 0) null else com.example.domain.model.ReviewMethod.encode(methods),
+                questionsCorrect = score.first,
+                questionsTotal = score.second,
+                sessionKind = sessionKind.name,
             )
             // Update the unit's schedule AND insert its log atomically (one Room transaction), then
             // remember the exact log id so Undo deletes precisely this log.
@@ -622,6 +657,8 @@ fun ReviewSessionScreen(
     unitId: Long = -1L,
     /** Today's limit was used up and the learner chose "review more anyway". */
     ignoreLimit: Boolean = false,
+    /** "Review ahead": topics not yet due, weakest first. */
+    ahead: Boolean = false,
     onNavigateToEdit: (Long) -> Unit,
     onFinish: () -> Unit
 ) {
@@ -629,8 +666,8 @@ fun ReviewSessionScreen(
     val application = context.applicationContext as android.app.Application
     val viewModel: ReviewViewModel = viewModel(factory = ReviewViewModelFactory(application, repository))
 
-    LaunchedEffect(unitId, ignoreLimit) {
-        viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit)
+    LaunchedEffect(unitId, ignoreLimit, ahead) {
+        viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead)
     }
 
     val currentUnitState by viewModel.currentUnit.collectAsStateWithLifecycle()
@@ -654,6 +691,21 @@ fun ReviewSessionScreen(
             restore = { name -> runCatching { MemoryRating.valueOf(name) }.getOrNull() },
         ),
     ) { mutableStateOf<MemoryRating?>(null) }
+
+    // Optional pilot research data for THIS topic: how the learner reviewed, and a question score. Reset for
+    // every topic (a remembered choice would record a method nobody picked), saved across rotation.
+    var reviewMethods by rememberSaveable(
+        currentUnitState,
+        stateSaver = androidx.compose.runtime.saveable.Saver<Set<com.example.domain.model.ReviewMethod>, String>(
+            save = { com.example.domain.model.ReviewMethod.encode(it).orEmpty() },
+            restore = { com.example.domain.model.ReviewMethod.decode(it) },
+        ),
+    ) { mutableStateOf(emptySet<com.example.domain.model.ReviewMethod>()) }
+    var questionsRight by rememberSaveable(currentUnitState) { mutableStateOf("") }
+    var questionsTotal by rememberSaveable(currentUnitState) { mutableStateOf("") }
+    // Only a Questions review carries a score; unticking Questions drops what was typed.
+    fun scoreOrNull(field: String): Int? =
+        if (com.example.domain.model.ReviewMethod.Questions in reviewMethods) field.trim().toIntOrNull() else null
 
     // Back steps BACKWARDS through the rating flow and cancels — nothing is committed to the DB until
     // the understanding rating is tapped. So leaving mid-rating (memory chosen, understanding not)
@@ -1093,6 +1145,16 @@ fun ReviewSessionScreen(
                     // A REVIEW. The learner reviews however they like, in or out of the app; what the
                     // memory model needs is how much of the topic they still had when they came back to
                     // it — FSRS's recall outcome — not how the review session felt afterwards.
+                    ReviewMethodPicker(
+                        languageCode = strings.languageCode,
+                        selected = reviewMethods,
+                        onToggle = { m -> reviewMethods = if (m in reviewMethods) reviewMethods - m else reviewMethods + m },
+                        right = questionsRight,
+                        onRight = { questionsRight = it.filter(Char::isDigit).take(3) },
+                        total = questionsTotal,
+                        onTotal = { questionsTotal = it.filter(Char::isDigit).take(3) },
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
                     Text(strings.memoryQuestion, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                     Text(
                         strings.memoryQuestionHint,
@@ -1113,7 +1175,12 @@ fun ReviewSessionScreen(
                                     // Forgot → relearn tomorrow regardless of understanding, so commit
                                     // now and skip that moot second question (less friction on a miss).
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    viewModel.rateCurrentUnit(MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false)
+                                    viewModel.rateCurrentUnit(
+                                        MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false,
+                                        methods = reviewMethods,
+                                        questionsCorrect = scoreOrNull(questionsRight),
+                                        questionsTotal = scoreOrNull(questionsTotal),
+                                    )
                                 } else {
                                     selectedMemory = rating
                                 }
@@ -1220,7 +1287,14 @@ fun ReviewSessionScreen(
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     // Read at tap time, not composition time: a Back gesture in the same
                                     // frame clears the choice before this button is gone, and `!!` crashed.
-                                    selectedMemory?.let { chosen -> viewModel.rateCurrentUnit(chosen, rating) }
+                                    selectedMemory?.let { chosen ->
+                                        viewModel.rateCurrentUnit(
+                                            chosen, rating,
+                                            methods = reviewMethods,
+                                            questionsCorrect = scoreOrNull(questionsRight),
+                                            questionsTotal = scoreOrNull(questionsTotal),
+                                        )
+                                    }
                                 },
                                 enabled = !viewModel.isProcessing,
                                 modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
@@ -1241,6 +1315,75 @@ fun ReviewSessionScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * "How did you review? (optional)": how the learner reviewed this topic, and a question score if they did
+ * questions. Pilot research data only. The rating does not depend on it and nothing schedules from it; it
+ * is what lets the logs later say whether one way of reviewing holds up better than another.
+ */
+@Composable
+private fun ReviewMethodPicker(
+    languageCode: String,
+    selected: Set<com.example.domain.model.ReviewMethod>,
+    onToggle: (com.example.domain.model.ReviewMethod) -> Unit,
+    right: String,
+    onRight: (String) -> Unit,
+    total: String,
+    onTotal: (String) -> Unit,
+) {
+    fun label(m: com.example.domain.model.ReviewMethod): String = when (m) {
+        com.example.domain.model.ReviewMethod.Questions -> when (languageCode) { "fa" -> "تست و سؤال"; "de" -> "Fragen"; else -> "Questions" }
+        com.example.domain.model.ReviewMethod.Reading -> when (languageCode) { "fa" -> "خواندن"; "de" -> "Lesen"; else -> "Reading" }
+        com.example.domain.model.ReviewMethod.Lecture -> when (languageCode) { "fa" -> "کلاس یا ویدیو"; "de" -> "Vorlesung / Video"; else -> "Lecture / video" }
+        com.example.domain.model.ReviewMethod.Other -> when (languageCode) { "fa" -> "روش دیگر"; "de" -> "Anders"; else -> "Other" }
+    }
+    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            when (languageCode) { "fa" -> "چطور مرور کردی؟ (اختیاری)"; "de" -> "Wie hast du wiederholt? (optional)"; else -> "How did you review? (optional)" },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        // Wraps instead of scrolling: on a phone the fourth chip was cut off at the edge, and an option
+        // that looks clipped reads as not being there.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        ) {
+            com.example.domain.model.ReviewMethod.entries.forEach { m ->
+                FilterChip(
+                    selected = m in selected,
+                    onClick = { onToggle(m) },
+                    label = { Text(label(m)) },
+                )
+            }
+        }
+        if (com.example.domain.model.ReviewMethod.Questions in selected) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
+                val numberKeyboard = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                )
+                OutlinedTextField(
+                    value = right, onValueChange = onRight, singleLine = true,
+                    label = { Text(when (languageCode) { "fa" -> "درست"; "de" -> "richtig"; else -> "right" }) },
+                    keyboardOptions = numberKeyboard,
+                    modifier = Modifier.width(96.dp),
+                )
+                Text(when (languageCode) { "fa" -> "از"; "de" -> "von"; else -> "out of" })
+                OutlinedTextField(
+                    value = total, onValueChange = onTotal, singleLine = true,
+                    label = { Text(when (languageCode) { "fa" -> "کل"; "de" -> "gesamt"; else -> "total" }) },
+                    keyboardOptions = numberKeyboard,
+                    modifier = Modifier.width(96.dp),
+                )
             }
         }
     }

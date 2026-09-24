@@ -25,7 +25,7 @@ import com.example.data.local.entity.SystemEntity
         EventLogEntity::class,
         MemoryParameterSetEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -176,8 +176,22 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9 → v10 (additive): what a review consisted of, for the pilot. How the learner reviewed, an
+         * optional question score, and which kind of session logged it. Existing rows get "not recorded"
+         * (NULL / -1), which is the truth: nobody was asked. Research data only — nothing schedules from it.
+         */
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN reviewMethods TEXT")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN questionsCorrect INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN questionsTotal INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN sessionKind TEXT")
+            }
+        }
+
         /** Every migration, in order — one list so no builder can forget the newest one. */
         val ALL_MIGRATIONS: Array<Migration>
-            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
     }
 }

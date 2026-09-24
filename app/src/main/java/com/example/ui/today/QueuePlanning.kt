@@ -20,6 +20,46 @@ object DayBounds {
 }
 
 /**
+ * REVIEW AHEAD: topics that are not due yet, the ones the model thinks are weakest first.
+ *
+ * For spare time and, above all, the weeks before an exam. The twin simulation in tools/pilot/simulate.py
+ * found the one case where a learner without a schedule beats Yadora on a single test: an ANNOUNCED exam,
+ * when they save their review time for a final push. With the same final push -- the same topics per day
+ * in the last four weeks -- a Yadora learner who spends it weakest-first comes out ahead again, and stays
+ * ahead all year. Before this, reviewing ahead meant opening topics one by one from the Library.
+ *
+ * It reads NO exam date and compresses no interval: every review it offers is an ordinary early review
+ * that FSRS scores honestly (a high predicted recall earns a small stability gain), and the next interval
+ * is computed from it like any other. Topics due today are left to today's plan, and never-rated topics
+ * are left out: their first rating belongs on the day they were studied.
+ */
+object ReviewAhead {
+    /** Topics per review-ahead session. The learner can start another. */
+    const val SESSION_SIZE = 20
+
+    /**
+     * @param active non-archived, non-deleted topics.
+     * @param recall the model's current recall probability for a topic, or null when it cannot be computed
+     *   (such a topic is left out rather than guessed at).
+     */
+    fun order(
+        active: List<StudyUnitEntity>,
+        now: Long,
+        recall: (StudyUnitEntity) -> Double?,
+        limit: Int = SESSION_SIZE,
+    ): List<StudyUnitEntity> {
+        val endOfToday = DayBounds.endOf(now)
+        return active.asSequence()
+            .filter { it.reviewCount > 0 && it.deletedAt == null && !it.archived && it.nextReviewAt > endOfToday }
+            .mapNotNull { u -> recall(u)?.takeIf { it.isFinite() }?.let { u to it } }
+            .sortedWith(compareBy<Pair<StudyUnitEntity, Double>>({ it.second }, { it.first.nextReviewAt }, { it.first.id }))
+            .take(limit.coerceAtLeast(0))
+            .map { it.first }
+            .toList()
+    }
+}
+
+/**
  * TODAY'S PLAN: which due topics today's session offers.
  *
  * The daily limit is a limit per DAY. It used to be applied per session: the queue took the top N due

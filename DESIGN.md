@@ -77,9 +77,15 @@ recall because time has elapsed since study.
 event. Elapsed time at the eventual review is still measured from `lastReviewedAt`, keeping the model honest.
 
 ### Exam handling
-An `Exam` (date + linked subjects/systems or tags) raises desired retention as the date approaches
-and forces a final review ~1–2 days before. "Coming before my exam" = linked units with
-`nextReviewAt ≤ examDate`.
+*Original plan, superseded:* an `Exam` (date + linked subjects/systems or tags) would raise desired
+retention as the date approached and force a final review ~1–2 days before.
+
+*As built:* the exam date is decorative by decision (CLAUDE.md); it drives the countdown and nothing else.
+Exam preparation is the learner's choice, not the schedule's: raise the retention target months ahead,
+and in the final weeks use **Review ahead** on Today (rated topics not yet due, weakest predicted recall
+first). The identical-twins simulation (`docs/RESEARCH.md` §2.1) shows why the latter matters: it is the
+one case where a learner without a schedule can win, by saving time for a final push, and a Yadora learner
+spending the same push weakest-first wins again.
 
 ### Weak-topic detection
 `weakness = f(lapseCount, recent Forgot/Hard rate, R below target, time overdue) × highYield weight` —

@@ -574,6 +574,27 @@ class MedReviewRepository(
         return com.example.ui.today.DailyPlan.plan(due, done, dailyLimit, now, ignoreLimit)
     }
 
+    /**
+     * "Review ahead" ([com.example.ui.today.ReviewAhead]): rated topics not due today, the lowest current
+     * recall first, read on each topic's OWN model and weight set. A topic whose recall cannot be computed
+     * is left out rather than guessed at. Reads no exam date.
+     */
+    suspend fun reviewAheadQueue(
+        now: Long = System.currentTimeMillis(),
+        limit: Int = com.example.ui.today.ReviewAhead.SESSION_SIZE,
+    ): List<StudyUnitEntity> = com.example.ui.today.ReviewAhead.order(
+        active = studyUnitDao.getAllActiveOnce(),
+        now = now,
+        recall = { u ->
+            runCatching {
+                val model = MedScheduler.MemoryModel.of(u.memoryModel)
+                val elapsed = MedScheduler.modelElapsedDays(u.lastReviewedAt ?: u.studiedAt, now, model)
+                MedScheduler.retrievability(elapsed, u.stability, model, u.parameterSetId)
+            }.getOrNull()
+        },
+        limit = limit,
+    )
+
     /** Reviews (first ratings excluded) committed since [since], live. */
     fun observeReviewsSince(since: Long): Flow<Int> = reviewLogDao.observeReviewsSince(since)
 

@@ -64,4 +64,12 @@ data class ReviewLogEntity(
     // published defaults, as for every row written before personal sets existed. The calibration and
     // the Progress card only pool rows of the set they describe.
     val parameterSetId: Long = 0,
+    // v10 — pilot research data. None of it feeds the scheduler.
+    /** How the learner reviewed: comma-separated [com.example.domain.model.ReviewMethod] names; null = not said. */
+    val reviewMethods: String? = null,
+    /** Questions answered right / answered in this review, when the learner entered a score; -1 = not recorded. */
+    val questionsCorrect: Int = -1,
+    val questionsTotal: Int = -1,
+    /** The session that produced this log: PLAN, EXTRA, TOPIC or AHEAD ([com.example.domain.model.SessionKind]); null before v10. */
+    val sessionKind: String? = null,
 )

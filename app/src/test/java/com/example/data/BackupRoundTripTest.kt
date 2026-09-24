@@ -134,9 +134,11 @@ class BackupRoundTripTest {
                 desiredRetentionAtReview = 0.93, schedulerVersion = "FSRS-5",
                 calibrationScaleAtReview = 0.83,
                 keyPointsTotal = 2, keyPointsRecalled = 1,
+                reviewMethods = "Questions,Lecture", questionsCorrect = 17, questionsTotal = 25, sessionKind = "AHEAD",
             )
         )
         db.eventLogDao().insert(EventLogEntity(type = "SNOOZE", detail = "test"))
+        val researchId = ResearchId.get(context)
 
         val json = BackupManager.buildBackupJson(context)
 
@@ -173,6 +175,15 @@ class BackupRoundTripTest {
         assertEquals("key points survive the round trip", "Light reactions make ATP\nCalvin cycle fixes CO2", unit.keyPoints)
         assertEquals("and so does a review's score against them", 2, log.keyPointsTotal)
         assertEquals(1, log.keyPointsRecalled)
+        assertEquals("v9: how the review was done survives", "Questions,Lecture", log.reviewMethods)
+        assertEquals("and its question score", 17, log.questionsCorrect)
+        assertEquals(25, log.questionsTotal)
+        assertEquals("and the kind of session", "AHEAD", log.sessionKind)
+        assertEquals(
+            "a pilot participant restoring onto a new phone stays one participant",
+            researchId,
+            context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE).getString(ResearchId.PREF_KEY, null),
+        )
 
         assertEquals("SNOOZE", db.eventLogDao().getAll().single().type)
         assertEquals("Physics", db.categoryDao().getAllSubjects().first().single().name)
@@ -229,6 +240,36 @@ class BackupRoundTripTest {
         assertTrue("an impossible score must be rejected", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
         assertEquals("Scored", db.studyUnitDao().getUnitById(unitId)!!.title)
         assertEquals(2, db.reviewLogDao().getLogsForUnit(unitId).first().single().keyPointsRecalled)
+    }
+
+    @Test
+    fun `a question score with more right than answered is rejected before any data is deleted`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val now = System.currentTimeMillis()
+
+        val unitId = db.studyUnitDao().insertUnit(
+            StudyUnitEntity(title = "Questions", studyType = "Topic", studiedAt = now, nextReviewAt = now)
+        )
+        db.reviewLogDao().insertLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now, memoryRating = "Good", understandingRating = "Clear",
+                previousIntervalDays = 1.0, nextIntervalDays = 3.0, previousState = "Learning", nextState = "Learning",
+                logType = "RECALL", reviewMethods = "Questions", questionsCorrect = 8, questionsTotal = 10,
+            )
+        )
+        val json = BackupManager.buildBackupJson(context)
+        val bad = json.replace("\"questionsCorrect\": 8", "\"questionsCorrect\": 12")
+        assertTrue("tampering must have applied", bad != json)
+
+        assertTrue("an impossible score must be rejected", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
+        assertEquals(8, db.reviewLogDao().getLogsForUnit(unitId).first().single().questionsCorrect)
+
+        // An unknown method name from a newer build is dropped, not fatal.
+        val newer = json.replace("\"reviewMethods\": \"Questions\"", "\"reviewMethods\": \"Questions,Hologram\"")
+        assertTrue("tampering must have applied", newer != json)
+        BackupManager.restoreFromJson(context, newer)
+        assertEquals("Questions", db.reviewLogDao().getLogsForUnit(unitId).first().single().reviewMethods)
     }
 
     /**
