@@ -438,134 +438,23 @@ class ReviewViewModel(
 
         viewModelScope.launch {
           try {
-            // Reload from the DB so edits made on the Edit screen aren't clobbered by a stale copy.
-            val loaded = repository.getUnitById(currentId) ?: return@launch
-            // Carry the topic onto the current memory model BEFORE anything schedules from it. An
-            // FSRS-5 stability is not an FSRS-6 stability, so the state is rebuilt by replaying this
-            // topic's real rating history through FSRS-6. No-op once it is already on the new model,
-            // and it never touches the dates — only the latent state moves.
-            val unit = repository.projectOntoCurrentModel(loaded)
-
             val now = System.currentTimeMillis()
-            // Clamped: a future-dated topic reviewed early would otherwise log NEGATIVE elapsed days
-            // (the FSRS math clamps internally, but the log/export data must stay clean too).
-            // Measured as the CURRENT model counts time (whole local calendar days for FSRS-6), so
-            // a topic offered by today's queue is credited with the day the learner actually waited
-            // rather than with the clock difference from whatever hour they last reviewed at.
-            val elapsedDays = MedScheduler.modelElapsedDays(
-                unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL,
-            )
-
-            // The first graded rating is always review #0 (seeded from the rating, capped by the
-            // first-study window) no matter how late it happens. Same rule as the replay path.
-            val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
-
-            // From the logs, the same source the preview read it from (advanceUnit).
-            val unrepairedStreak = repository.unrepairedStreak(unit.id)
-
-            // Single source of truth: the same MedScheduler.review() that powers the button preview.
-            val outcome = MedScheduler.review(
-                stability = unit.stability,
-                difficulty = unit.difficulty,
-                elapsedDays = elapsedDays,
+            // The one commit path (MedReviewRepository.rateUnit): reload, project onto the current model,
+            // schedule with the same MedScheduler.review() the buttons previewed, and write the row and its
+            // log in one transaction. The tests that pin what a rating writes call the same function.
+            val rated = repository.rateUnit(
+                unitId = currentId,
+                now = now,
                 memoryRating = memoryRating,
-                understanding = understandingRating,
-                highYield = unit.highYield,
-                reviewNumber = reviewNumber,
-                model = MedScheduler.CURRENT_MODEL,
-                unrepairedStreak = unrepairedStreak,
-                // The set the projection just put this topic on, stated rather than re-read.
-                parameterSetId = unit.parameterSetId,
-            )
-
-            // Deterministic ±5% fuzz (seeded by unit + prior review count) de-clumps cohorts; same
-            // value the preview buttons showed, and the same value the history replay will recompute.
-            val nextInterval = MedScheduler.fuzzedInterval(
-                outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount,
-                isFirstStudy = reviewNumber == 0,
-            )
-            val newReviewCount = unit.reviewCount + 1
-            val nextState = MedScheduler.masteryState(
-                stability = outcome.state.stability,
-                justForgot = memoryRating == MemoryRating.Forgot,
-            )
-
-            // TWO CLOCKS (DB v6). The memory model's date is preserved exactly in modelDueAt; a weak
-            // understanding adds a SHORT repair deadline instead of scaling that prediction down. The
-            // topic surfaces on whichever comes first, so a 250-day memory prediction with Partial
-            // understanding is still a 250-day prediction — the user just sees it again in 4 days.
-            val memoryDueAt = now + (nextInterval * 86400000).toLong()
-            val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
-            val effectiveDueAt = listOfNotNull(memoryDueAt, understandingDueAt).min()
-
-            val updatedUnit = unit.copy(
-                lastReviewedAt = now,
-                nextReviewAt = effectiveDueAt,
-                // A real review resets the honest-scheduling pair (DB v5): the model's date IS the
-                // effective date again, and any earlier user deferral is spent.
-                modelDueAt = memoryDueAt,
-                understandingDueAt = understandingDueAt,
-                memoryModel = MedScheduler.CURRENT_MODEL.id,
-                deferredUntil = null,
-                currentIntervalDays = nextInterval,
-                reviewCount = newReviewCount,
-                lapseCount = if (memoryRating == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
-                state = nextState.name,
-                difficulty = outcome.state.difficulty,
-                stability = outcome.state.stability,
-                retrievability = outcome.retrievabilityAtReview,
-                updatedAt = now
-            )
-
-            val score = if (reviewNumber == 0) -1 to -1
-                else com.example.domain.model.QuestionScore.normalized(questionsCorrect, questionsTotal)
-            val log = com.example.data.local.entity.ReviewLogEntity(
-                studyUnitId = unit.id,
-                reviewedAt = now,
-                memoryRating = memoryRating.name,
-                // Data honesty: when the understanding question was skipped (the Forgot fast-commit),
-                // record that it was never asked instead of fabricating an answer the user never gave.
-                understandingRating = if (understandingAsked) understandingRating.name else "NotAsked",
-                previousIntervalDays = unit.currentIntervalDays,
-                nextIntervalDays = nextInterval,
-                previousState = unit.state,
-                nextState = nextState.name,
-                retrievabilityAtReview = outcome.retrievabilityAtReview,
-                elapsedDays = elapsedDays,
-                // FIRST_STUDY rows carry a difficulty answer, not a recall grade — tagged so exports
-                // and calibration never mix the two signals.
-                logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
-                // Per-review context (v4): what the user actually chose + the settings in force —
-                // the data future weight-tuning can't backfill.
-                initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(memoryRating) else null,
+                understandingRating = understandingRating,
+                understandingAsked = understandingAsked,
+                methods = methods,
+                questionsCorrect = questionsCorrect,
+                questionsTotal = questionsTotal,
+                sessionKind = sessionKind,
                 reviewDurationMs = (now - unitShownAt).coerceIn(0L, 30 * 60 * 1000L),
-                wasImportantAtReview = if (unit.highYield) 1 else 0,
-                desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
-                schedulerVersion = MedScheduler.SCHEDULER_VERSION,
-                // v5 policy snapshot: which Yadora policy bundle + which understanding factor actually
-                // shaped this interval — so future policy changes replay history faithfully.
-                schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
-                // -1.0 is the entity's "not recorded" sentinel. Storing Partial's 0.9 here because
-                // the fast Forgot path passes Partial as a placeholder would put a factor in the
-                // research export that the user never actually selected.
-                understandingFactorAtReview =
-                    if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
-                // v7: the per-user interval correction this review was scheduled with.
-                calibrationScaleAtReview = MedScheduler.calibrationScale,
-                // v8 key-point score: not scored since the rating cap was retired (KeyPoints).
-                keyPointsTotal = -1,
-                keyPointsRecalled = -1,
-                // v9: the weight set this prediction and interval came from.
-                parameterSetId = unit.parameterSetId,
-                // v10 research data. A first study is not a review, so it records no method or score.
-                reviewMethods = if (reviewNumber == 0) null else com.example.domain.model.ReviewMethod.encode(methods),
-                questionsCorrect = score.first,
-                questionsTotal = score.second,
-                sessionKind = sessionKind.name,
-            )
-            // Update the unit's schedule AND insert its log atomically (one Room transaction), then
-            // remember the exact log id so Undo deletes precisely this log.
-            val logId = repository.commitReview(updatedUnit, log)
+            ) ?: return@launch
+            val reviewNumber = rated.reviewNumber
             // Session counters update only AFTER the commit succeeds — a failed write must never be
             // counted as a completed review in the session summary.
             sessionCount++
@@ -576,20 +465,20 @@ class ReviewViewModel(
                 MemoryRating.Hard -> sessionHard++
                 MemoryRating.Good, MemoryRating.Easy -> sessionGood++
             }
-            ratedStack.add(ReviewHistoryItem(unit.copy(), logId, memoryRating, wasFirstRating = reviewNumber == 0))
+            ratedStack.add(ReviewHistoryItem(rated.before.copy(), rated.logId, memoryRating, wasFirstRating = reviewNumber == 0))
             canUndo = ratedStack.isNotEmpty()
             // (The growth event is inserted inside commitReview's transaction, keyed to the log id,
             // so a committed review and its growth can never disagree — and undo removes both.)
             com.example.widget.DueWidgetProvider.updateAll(getApplication())
             // Both clocks: the memory prediction AND the date actually written to the row, so the
             // message can never announce an interval the schedule did not use.
-            val effectiveIntervalDays = (effectiveDueAt - now) / 86400000.0
+            val effectiveIntervalDays = (rated.effectiveDueAt - now) / 86400000.0
             lastReason = buildReasonText(
-                memoryRating, understandingRating, unit.highYield,
-                intervalDays = nextInterval,
+                memoryRating, understandingRating, rated.before.highYield,
+                intervalDays = rated.memoryIntervalDays,
                 effectiveIntervalDays = effectiveIntervalDays,
                 firstStudy = reviewNumber == 0,
-                repairPending = outcome.remediationDays != null,
+                repairPending = rated.repairPending,
             )
 
             advanceUnit()
