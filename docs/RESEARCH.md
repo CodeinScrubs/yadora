@@ -180,7 +180,64 @@ best alternative tested. One was not: the queue order, which changed (above). Th
 alternative with a measurable gain, the difficulty-adaptive target, comes with a trade-off the owner
 should choose.
 
-### 2.5 What the simulation cannot tell
+### 2.5 Two years to a residency exam
+
+The owner's case, simulated directly (`tools/pilot/residency.py`, 6 seeds). A candidate studies 4 new topics
+(chapters, lectures, question blocks) on 6 days a week for two years, about 2,500 topics, and sits the exam on
+the last day. Every twin gets exactly the Yadora twin's review time, day by day.
+
+Exam day, a learner the defaults describe. The first number is the average recall over every topic studied in
+the two years; the second is the share of topics at 90% or more; the third is the recall of the weakest tenth:
+
+| twin | Yadora at the default 0.90 | + Review ahead in the last 4 weeks (up to 60 a day) |
+|---|---|---|
+| **Yadora** | **95.2% · 96% · 90.0%** | **96.4% · 100% · 92.2%** |
+| reviews at random | 87.7% · 65% · 52.0% | 90.8% · 72% · 59.0% |
+| reviews oldest first (the disciplined student) | 89.3% · 69% · 55.4% | 90.9% · 73% · 58.2% |
+| fixed ladder: 1, 3, 7, 14, 30, 60, 120, 240, 365 days | 95.0% · 86% · 79.6% | 96.1% · 91% · 85.3% |
+| plain FSRS-6, no product layer, at equal time | 95.0% · 98% · 90.5% | (no such feature) |
+
+Yadora wins every seed against random and oldest-first review, in every world and every strategy tested: +5 to
++9 points on exam day. With the final push it reaches **100% of topics at 90%+**, where the other twins reach
+72–73%.
+
+Across learners, Yadora's exam-day average · share at 90%+ · weakest tenth, and its reviews a day:
+
+| learner | default 0.90 | + final push | target 0.95 for the last 6 months | 0.95 for the last 6 months + push |
+|---|---|---|---|---|
+| as the defaults assume | 95.2 · 96% · 90.0 (27/day) | **96.4 · 100% · 92.2** (28/day) | 96.3 · 97% · 89.7 (30/day) | 96.7 · 99% · 91.6 (31/day) |
+| forgets 2× faster | 95.1 · 96% · 89.7 (36/day) | **95.6 · 99% · 91.1** (36/day) | 95.2 · 92% · 81.1 (36/day) | 95.9 · 94% · 86.7 (37/day) |
+| forgets 2× slower | 95.3 · 95% · 89.9 (21/day) | **97.1 · 100% · 93.2** (22/day) | 96.6 · 97% · 90.6 (25/day) | 97.4 · 100% · 93.5 (25/day) |
+| 6 new topics a day | 94.8 · 92% · 88.5 (39/day) | 95.2 · 95% · 89.8 (39/day) | 94.8 · 90% · 81.2 (39/day) | 95.3 · 92% · 85.1 (39/day) |
+
+**The exam playbook that follows:**
+
+- Stay at the 0.90 default all the way.
+- In the last four weeks, after each day's reviews, use **Review ahead**.
+
+Raising the target to 0.95 for the last six months costs more reviews and buys less on exam day. For a fast
+forgetter or a heavy load it is worse than doing nothing: the extra reviews overflow the daily limit, and the
+weakest tenth drops from about 90% to 81%. The Settings copy used to recommend raising the target, and now says
+this instead.
+
+**Against a fixed ladder or a plain FSRS app**, at equal time the averages are close. Yadora is ahead by 0.2–1.3
+points against the ladder (3–6 seeds out of 6) and by 0.2–0.4 against plain FSRS-6 (4–5 of 6). The difference is
+the tail. The ladder leaves its weakest tenth at 71–82% on exam day, against Yadora's 88–90%. That is why "no topic left behind" is a claim only a model-based schedule can make. Plain
+FSRS-6 at equal time matches Yadora's tail; Yadora's lead over it is the per-user calibration (largest for learners
+the defaults misjudge) and the final push, which a plain FSRS app has no feature for.
+
+**Checked on the real code.** `TwoYearSoakTest` runs the same case through the app itself:
+
+- **What it runs:** 730 days, 2,432 topics and 22,804 reviews, through the review screen's own commit path, with
+  today's plan, the daily limit, the queue order, the calibration refresh, deferrals, a holiday and 40 Review ahead
+  topics a day in the last four weeks.
+- **Exam day:** 96.6% recall, with every topic at 90%+ and the weakest tenth at 92.7%. The twin who spent the same
+  time on random reviews reaches 90.1%.
+- **Every invariant held** on every day.
+- **Independent replay:** the export replays 25,236 of 25,236 logs exactly in `analyze.py`. CI runs that replay on
+  every change.
+
+### 2.6 What the simulation cannot tell
 
 - True memory is FSRS-6. It is the best available model, but its heavy tail makes unreviewed forgetting
   mild: under it, an unreviewed Medium topic is still ~50% recalled after six months. If whole medical
