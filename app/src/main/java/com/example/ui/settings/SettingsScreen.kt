@@ -46,6 +46,125 @@ private suspend fun writePickedDocument(
     ok
 }
 
+/**
+ * Automatic backup ([com.example.data.AutoBackup]): a daily full backup into a folder the learner chose.
+ * [refresh] changes on every ON_RESUME, so the status is re-read after a trip to another app.
+ */
+@Composable
+private fun AutoBackupCard(language: String, useJalali: Boolean, refresh: Int) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var tick by remember { mutableIntStateOf(0) }
+    var busy by remember { mutableStateOf(false) }
+    val prefs = remember { NotificationScheduler.transientPrefs(context) }
+    val on = remember(tick, refresh) { com.example.data.AutoBackup.isOn(context) }
+    val folder = remember(tick, refresh) { if (on) com.example.data.AutoBackup.folderName(context) else null }
+    val lastOkAt = remember(tick, refresh) { prefs.getLong(com.example.data.AutoBackup.PREF_LAST_OK_AT, 0L) }
+    val lastErrorAt = remember(tick, refresh) { prefs.getLong(com.example.data.AutoBackup.PREF_LAST_ERROR_AT, 0L) }
+    fun t(fa: String, de: String, en: String) = when (language) { "fa" -> fa; "de" -> de; else -> en }
+
+    fun backUpNow() {
+        busy = true
+        scope.launch {
+            try {
+                val outcome = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                    com.example.data.AutoBackup.runNow(context, force = true)
+                }
+                val msg = when (outcome) {
+                    is com.example.data.AutoBackup.Outcome.Written -> t("پشتیبان ذخیره شد", "Sicherung gespeichert", "Backup saved")
+                    is com.example.data.AutoBackup.Outcome.Skipped -> t("چیزی برای پشتیبان‌گیری نیست", "Nichts zu sichern", "Nothing to back up yet")
+                    is com.example.data.AutoBackup.Outcome.Failed -> t("پشتیبان‌گیری ناموفق بود", "Sicherung fehlgeschlagen", "Backup failed")
+                }
+                android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+            } finally {
+                busy = false
+                tick++
+            }
+        }
+    }
+
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val ok = runCatching {
+                // A new folder replaces the old one: release the old permission first.
+                if (com.example.data.AutoBackup.isOn(context)) com.example.data.AutoBackup.disable(context)
+                com.example.data.AutoBackup.enable(context, uri)
+            }.isSuccess
+            tick++
+            if (ok) backUpNow() else android.widget.Toast.makeText(
+                context, t("این پوشه قابل استفاده نیست", "Dieser Ordner lässt sich nicht verwenden", "That folder can't be used"),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(t("پشتیبان‌گیری خودکار", "Automatische Sicherung", "Automatic backup"),
+                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(6.dp))
+            if (!on) {
+                Text(
+                    t(
+                        "تاریخچهٔ مطالعه‌ات فقط روی همین گوشی است. یک پوشه انتخاب کن تا یادورا هر روز یک پشتیبان کامل آنجا ذخیره کند. پشتیبان‌های هفتهٔ اخیر و یکی از هر ماه نگه داشته می‌شوند. اگر پوشه‌ای را انتخاب کنی که یک برنامهٔ ابری (مثل گوگل‌درایو) همگامش می‌کند، با گم شدن گوشی هم چیزی از دست نمی‌رود.",
+                        "Dein Lernverlauf liegt nur auf diesem Handy. Wähle einen Ordner, und Yadora legt dort jeden Tag eine vollständige Sicherung ab. Die Sicherungen der letzten Woche und je eine pro Monat bleiben erhalten. Ein Ordner, den eine Cloud-App synchronisiert (z. B. Google Drive), schützt dich auch, wenn das Handy verloren geht.",
+                        "Your study history lives only on this phone. Choose a folder and Yadora saves a full backup there every day, keeping the last week's backups and one from each month. A folder a cloud app syncs (Google Drive, for example) also protects you if the phone is lost.",
+                    ),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Button(onClick = { runCatching { picker.launch(null) } }, modifier = Modifier.fillMaxWidth()) {
+                    Text(t("انتخاب پوشه", "Ordner wählen", "Choose a folder"))
+                }
+            } else {
+                val where = folder ?: "…"
+                Text(
+                    t("روشن: هر روز در پوشهٔ «$where».", "An: täglich in „$where“.", "On: every day, in “$where”."),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    if (lastOkAt > 0L) t("آخرین پشتیبان: ", "Letzte Sicherung: ", "Last backup: ") +
+                        com.example.ui.i18n.AppDate.dateTime(useJalali, lastOkAt)
+                    else t("هنوز پشتیبانی ساخته نشده.", "Noch keine Sicherung.", "No backup yet."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Only a real failed run warns: some storage providers cannot report a folder's name even
+                // when writing into it works.
+                if (lastErrorAt > lastOkAt) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        t(
+                            "آخرین پشتیبان‌گیری ناموفق بود. اگر پوشه جابه‌جا یا پاک شده، دوباره انتخابش کن.",
+                            "Die letzte Sicherung ist fehlgeschlagen. Wähle den Ordner erneut, falls er verschoben oder gelöscht wurde.",
+                            "The last backup failed. If the folder was moved or deleted, choose it again.",
+                        ),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { backUpNow() }, enabled = !busy, modifier = Modifier.weight(1f)) {
+                        Text(t("همین حالا", "Jetzt sichern", "Back up now"), maxLines = 1)
+                    }
+                    OutlinedButton(onClick = { runCatching { picker.launch(null) } }, enabled = !busy, modifier = Modifier.weight(1f)) {
+                        Text(t("تغییر پوشه", "Ordner ändern", "Change folder"), maxLines = 1)
+                    }
+                }
+                TextButton(onClick = { com.example.data.AutoBackup.disable(context); tick++ }, enabled = !busy) {
+                    Text(t("خاموش کردن پشتیبان‌گیری خودکار", "Automatische Sicherung ausschalten", "Turn off automatic backup"))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PermissionStatusRow(label: String, granted: Boolean, actionLabel: String, onAction: () -> Unit) {
     Row(
@@ -126,6 +245,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
         if (uri != null) {
             exportScope.launch {
                 val ok = writePickedDocument(context, uri) { com.example.data.BackupManager.writeBackup(context, it) }
+                // A backup made by hand quiets Today's automatic-backup suggestion for a month.
+                if (ok) NotificationScheduler.transientPrefs(context).edit {
+                    putLong(com.example.data.AutoBackup.PREF_LAST_MANUAL_AT, System.currentTimeMillis())
+                }
                 android.widget.Toast.makeText(context, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else if (language == "de") "Sicherung gespeichert" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else if (language == "de") "Sicherung fehlgeschlagen" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -1011,7 +1134,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 // Honest scope: countdown only. The exam date is decorative BY DESIGN (settled decision):
                 // it never compresses intervals, so the copy must not promise that it will one day.
                 Text(
-                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی بیشتر: از چند ماه قبل هدف به‌خاطرسپاری را بالا ببر، و در هفته‌های آخر، بعد از مرورهای هر روز، «مرور جلوتر از برنامه» را در صفحهٔ امروز بزن (ضعیف‌ترین مباحث اول)." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für mehr Prüfungsreife: Monate vorher das Behaltensziel erhöhen und in den letzten Wochen nach den fälligen Wiederholungen auf „Heute“ „Vorausarbeiten“ nutzen (die schwächsten Themen zuerst)." else "Only a countdown on the screens — it doesn't change your review schedule. To be more exam-ready: raise the retention target months ahead, and in the last weeks, after each day's reviews, use Review ahead on Today (weakest topics first).",
+                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی امتحان: هدف به‌خاطرسپاری را روی ۹۰٪ نگه دار و در چهار هفتهٔ آخر، بعد از مرورهای هر روز، «مرور جلوتر از برنامه» را در صفحهٔ امروز بزن (ضعیف‌ترین مباحث اول). در شبیه‌سازی دوساله، این کار تقریباً همهٔ مباحث را روز امتحان به ۹۰٪ یا بیشتر رساند. بالا بردن هدف به‌جای آن، مرور بیشتری خواست و نتیجهٔ کمتری داشت." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für die Prüfung: Lass das Behaltensziel bei 90 % und nutze in den letzten vier Wochen nach den fälligen Wiederholungen auf „Heute“ „Vorausarbeiten“ (die schwächsten Themen zuerst). In einer Zwei-Jahres-Simulation brachte das fast jedes Thema am Prüfungstag auf 90 % oder mehr. Ein höheres Ziel stattdessen kostete mehr Wiederholungen und brachte weniger." else "Only a countdown on the screens — it doesn't change your review schedule. For the exam: keep the retention target at 90% and, in the last four weeks, after each day's reviews, use Review ahead on Today (weakest topics first). In a two-year simulation that brought nearly every topic to 90% or more on exam day. Raising the target instead cost more reviews and did less.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1048,6 +1171,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(if (language == "fa") "داده‌ها" else if (language == "de") "Daten" else "Data", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
+                AutoBackupCard(language = language, useJalali = useJalali, refresh = permissionRefresh)
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = if (language == "fa") "یک فایل پشتیبان کامل (همراه عنوان‌ها و یادداشت‌ها) بساز و جایی امن ذخیره کن. فایل رمزگذاری نشده است. هر زمان می‌توانی آن را بازیابی کنی." else if (language == "de") "Erstelle eine vollständige Sicherung (mit Titeln & Notizen). Die Datei ist unverschlüsselt — bewahre sie sicher auf. Wiederherstellen jederzeit möglich." else "Make a full backup (including titles & notes). The file is unencrypted — save it somewhere safe. You can restore it any time.",
                     style = MaterialTheme.typography.bodyMedium,

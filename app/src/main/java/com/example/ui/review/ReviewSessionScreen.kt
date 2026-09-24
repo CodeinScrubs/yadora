@@ -952,8 +952,11 @@ fun ReviewSessionScreen(
                         if (!currentUnit.notes.isNullOrBlank()) {
                             HorizontalDivider()
                             Spacer(modifier = Modifier.height(16.dp))
+                            // Web addresses in the notes open when tapped (a Notion page, a video, a question block).
+                            val linkColor = MaterialTheme.colorScheme.primary
+                            val notesText = currentUnit.notes!!
                             Text(
-                                text = currentUnit.notes!!,
+                                text = remember(notesText, linkColor) { com.example.ui.components.NoteLinks.annotate(notesText, linkColor) },
                                 style = MaterialTheme.typography.bodyLarge.autoDirection(),
                                 modifier = Modifier.fillMaxWidth()
                             )

@@ -108,8 +108,11 @@ real phone before every release.
 - `tools/pilot/` — the research toolkit (standard-library Python): `yadora_model.py` (FSRS-6 + the
   interval rules, transcribed and checked against the py-fsrs goldens and kotlin-stdlib's RNG),
   `analyze.py` (reads research exports, replays every review, writes the pilot report) and `simulate.py`
-  (the identical-twins simulation). `docs/RESEARCH.md` holds the evidence and results, `docs/PILOT.md`
-  the pilot protocol and its pre-registered decision rules, `docs/PILOT_GUIDE_FA.md` the participant guide.
+  (the identical-twins simulation), `experiments.py` (each scheduling choice against its alternatives) and
+  `residency.py` (two years to an exam, against competitor-style schedulers). `docs/RESEARCH.md` holds the
+  evidence and results, `docs/PILOT.md` the pilot protocol and its pre-registered decision rules,
+  `docs/PILOT_GUIDE_FA.md` the participant guide, and `docs/COMPETITOR_REVIEWS.md` what 271 users of the closest
+  comparable app valued and suffered, with Yadora's answer to each.
 
 ## Settled decisions — do NOT re-propose these
 
@@ -622,6 +625,62 @@ These were decided deliberately. Re-suggesting them wastes a session:
   `python3 tools/pilot/test_analyze.py` checks it against `tools/pilot/fixtures/sample_export.json`, a
   REAL export written by `PilotExportFixtureTest` through the review screen's commit path. Regenerate
   the fixture when the export format changes.
+- **ONE commit path for a rating: `MedReviewRepository.rateUnit`** (2026-09-24). The review screen calls it,
+  and so do `ReplayEqualsLiveTest`, `PilotExportFixtureTest` and `TwoYearSoakTest`. It used to live inline in
+  `ReviewViewModel.rateCurrentUnit`, and three tests kept hand-made copies of it; when FSRS-6 went live one copy
+  still defaulted to FSRS-5 and passed while production disagreed with itself. The move was verified
+  byte-for-byte: the regenerated pilot fixture matched all 208 logs and every topic. Never reintroduce a copy
+  in a test: call `rateUnit` with the `now` you need.
+- **`TwoYearSoakTest` runs a residency candidate's two years through the real app** (2026-09-24). It covers
+  730 days, 4 new topics on 6 days a week (about 2,400 topics, 23,000 reviews), and a simulated true memory
+  (FSRS-6 defaults) giving honest ratings. It runs in Asia/Tehran (UTC+3:30), where the learners are: every
+  local midnight falls on a half hour of UTC.
+  - **What it drives:** each evening's session exactly as the screen opens it (`refreshMemoryModel`, the
+    calibration refresh, `todayPlan` at the default limit), with a holiday, occasional "Not today", 15% Partial
+    understanding, and 40 Review ahead topics a day in the last four weeks.
+  - **Asserted every day:** the plan respects the daily limit, offers every first rating and counts what was done.
+  - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
+    self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
+    live row; and the twin claim holds on the real schedule.
+  - **Measured:** exam-day recall 96.6% against 90.1% for a random-review twin at equal time; 100% of topics at
+    90%+; weakest tenth 92.7%.
+  - **CI:** `analyze.py` replays the export (25,236 logs, all exact) in the "Pilot toolkit agrees with the app"
+    step, and exits non-zero on a single mismatch. Runtime is about 65 s.
+  - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
+    measured numbers, re-measure and record why.
+- **The exam playbook is 0.90 plus Review ahead, NOT a higher target** (`tools/pilot/residency.py`,
+  `docs/RESEARCH.md` §2.5, 2026-09-24). Over two years at equal time, staying at 0.90 and using Review ahead in
+  the last four weeks brought 99–100% of topics to 90%+ recall on exam day. Raising the target to 0.95 for the
+  last six months cost more reviews and bought less. For a fast forgetter or a heavy load it was worse than
+  nothing: the extra reviews overflow the daily limit and the weakest tenth fell from ~90% to ~81%. The Settings
+  exam copy said "raise the retention target months ahead" and now says this instead. Against a fixed-interval
+  ladder at equal time the AVERAGE is close (+0.2–1.3 points), but the ladder leaves its weakest tenth at 71–82%
+  where Yadora keeps 88–90%. Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Do not claim a large
+  algorithmic lead over another FSRS app: the lead is the product around the model (the final push, reliable free
+  reminders, the honest plan, backups).
+- **Automatic backup** (`data/AutoBackup`, 2026-09-24). Data loss was the second-loudest complaint about the
+  closest comparable app ("I lost all my data", "wiped 7 years of data"), and the database is excluded from
+  cloud backup by decision.
+  - **How it works:** once a day `AutoBackupWorker` writes a full streamed backup into a folder the learner
+    picked (`OpenDocumentTree`, persisted permission). A folder a sync app mirrors survives losing the phone.
+  - **Files:** never overwritten; each run writes a new dated file (`yadora_backup_YYYY-MM-DD_HHmm.json`). A
+    failed write deletes its own file.
+  - **Pruning:** only after a success, and only files with exactly that name pattern. It keeps the newest backup
+    of each of the last 7 days that have one, plus the newest of each of the last 6 months.
+  - **Empty library:** never backed up, so "Delete all data" cannot rotate the good backups out.
+  - **The folder's address** lives in the device-only transient prefs: a restore onto another phone asks for a
+    folder again instead of carrying a permission that phone never granted.
+  - **Today's suggestion:** shown once a real history exists (20+ topics), only while automatic backup is off,
+    and at most monthly; a manual export or "Not now" quiets it (`AutoBackup.shouldNudge`).
+  - **Tests:** `AutoBackupTest` pins all of it on a real folder.
+- **Features the comparable app's users asked for, decided** (`docs/COMPETITOR_REVIEWS.md`).
+  - **Built:** the empty Today explains the three-step loop (the most-thumbed request was a tutorial); web
+    addresses in notes open when tapped (`ui/components/NoteLinks`).
+  - **Deliberately NOT built:** fixed custom intervals (the ladder's forgotten tail; the retention target is the
+    principled control); file attachments (a link does the job); sync, web and iOS (offline Android; the
+    automatic backup into a synced folder covers a new phone).
+  - **Their bugs Yadora avoids:** reminders when nothing is due, paywalled reminders, a retention setting that
+    would not stick, the wrong default language, silent task limits. Keep avoiding them.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

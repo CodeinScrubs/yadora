@@ -102,6 +102,9 @@ class MedReviewApplication : Application() {
             )
         }
 
+        // Automatic backups into the folder the learner chose (AutoBackup), if they turned them on.
+        if (com.example.data.AutoBackup.isOn(this)) com.example.data.AutoBackup.schedule(this)
+
         // The personal memory model: once a day, when the battery is not low, refit FSRS-6 to this
         // learner's own history if enough new evidence exists (PersonalModelWorker). KEEP, so a relaunch
         // never restarts the day-long period.

@@ -36,6 +36,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -481,11 +482,67 @@ fun TodayScreen(
                 }
             }
             
+            // Automatic backup, suggested once there is a real history to lose (AutoBackup.shouldNudge).
+            val nudgeContext = androidx.compose.ui.platform.LocalContext.current
+            var nudgeTick by remember { mutableIntStateOf(0) }
+            val showBackupNudge = remember(totalActive, nudgeTick) {
+                val tp = com.example.notifications.NotificationScheduler.transientPrefs(nudgeContext)
+                com.example.data.AutoBackup.shouldNudge(
+                    topics = totalActive,
+                    autoOn = com.example.data.AutoBackup.isOn(nudgeContext),
+                    now = System.currentTimeMillis(),
+                    lastManualAt = tp.getLong(com.example.data.AutoBackup.PREF_LAST_MANUAL_AT, 0L),
+                    dismissedAt = tp.getLong(com.example.data.AutoBackup.PREF_NUDGE_DISMISSED_AT, 0L),
+                )
+            }
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (showBackupNudge) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    when (strings.languageCode) {
+                                        "fa" -> "از تاریخچهٔ مطالعه‌ات محافظت کن"
+                                        "de" -> "Schütze deinen Lernverlauf"
+                                        else -> "Protect your study history"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    when (strings.languageCode) {
+                                        "fa" -> "برنامهٔ مرورهایت از روی همین تاریخچه ساخته می‌شود و فعلاً فقط روی این گوشی است. پشتیبان‌گیری خودکار هر روز یک نسخه در پوشه‌ای که انتخاب می‌کنی ذخیره می‌کند."
+                                        "de" -> "Dein Wiederholungsplan wird aus diesem Verlauf berechnet, und er liegt bisher nur auf diesem Handy. Die automatische Sicherung legt jeden Tag eine Kopie in einem Ordner deiner Wahl ab."
+                                        else -> "Your review schedule is computed from this history, and right now it lives only on this phone. Automatic backup saves a copy every day in a folder you choose."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = onNavigateToSettings) {
+                                        Text(when (strings.languageCode) { "fa" -> "تنظیم پشتیبان‌گیری"; "de" -> "Einrichten"; else -> "Set it up" })
+                                    }
+                                    TextButton(onClick = {
+                                        com.example.notifications.NotificationScheduler.transientPrefs(nudgeContext).edit {
+                                            putLong(com.example.data.AutoBackup.PREF_NUDGE_DISMISSED_AT, System.currentTimeMillis())
+                                        }
+                                        nudgeTick++
+                                    }) {
+                                        Text(when (strings.languageCode) { "fa" -> "بعداً"; "de" -> "Später"; else -> "Not now" })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if (totalDue == 0) {
                     item {
                         val isFarsi = strings.languageCode == "fa"
@@ -515,16 +572,25 @@ fun TodayScreen(
                                         color = MaterialTheme.colorScheme.onSurface,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    // The whole loop, once, before anything exists. Users of apps like this keep
+                                    // asking for exactly this ("no tutorial, I didn't understand what to do").
                                     Text(
                                         text = when (strings.languageCode) {
-                                            "fa" -> "اولین مبحثی که خوانده‌ای را با دکمهٔ + ثبت کن؛ برنامهٔ مرورش از همان‌جا ساخته می‌شود."
-                                            "de" -> "Tippe auf +, um dein erstes gelerntes Thema einzutragen — Yadora plant die Wiederholungen ab dort."
-                                            else -> "Tap + to log the first topic you studied — Yadora schedules its reviews from there."
+                                            "fa" -> "۱. هر طور که دوست داری بخوان: یک فصل، یک کلاس، یک بلوک تست.\n" +
+                                                "۲. با دکمهٔ + ثبتش کن و بگو چطور پیش رفت. اولین مرور از همان لحظه برنامه‌ریزی می‌شود.\n" +
+                                                "۳. هر مبحث را وقتی یادورا یادآوری کرد، به هر روشی که دوست داری مرور کن و بگو چقدر از آن یادت مانده بود. تاریخ بعدی از روی جوابت تعیین می‌شود."
+                                            "de" -> "1. Lerne, wie du willst: ein Kapitel, eine Vorlesung, einen Fragenblock.\n" +
+                                                "2. Trag es mit + ein und bewerte, wie es lief. Die erste Wiederholung wird ab diesem Moment geplant.\n" +
+                                                "3. Wiederhole jedes Thema, wenn Yadora dich erinnert, auf beliebige Weise, und sag, wie viel du noch wusstest. Der nächste Termin ergibt sich aus deiner Antwort."
+                                            else -> "1. Study however you like: a chapter, a lecture, a block of questions.\n" +
+                                                "2. Tap + to log it and rate how it went. The first review is planned from that moment.\n" +
+                                                "3. Review each topic when Yadora reminds you, any way you like, then say how much you still remembered. The next date follows from your answer."
                                         },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                                        modifier = Modifier.fillMaxWidth(),
                                     )
                                 } else {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
