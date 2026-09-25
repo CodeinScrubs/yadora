@@ -61,15 +61,17 @@ jobs:
 
       # The pilot toolkit replays every exported review and must reproduce the app's elapsed days,
       # predictions and intervals EXACTLY. PilotExportFixtureTest writes a fresh export from the current
-      # Kotlin code (rerun explicitly: a test task restored from the build cache would not write it), so a
-      # rule changed in the app but not in tools/pilot/yadora_model.py fails here instead of in a
-      # participant's data.
+      # Kotlin code, and TwoYearSoakTest writes two years of a residency candidate's study run through the
+      # real app (~25,000 reviews). Both are rerun explicitly: a test task restored from the build cache
+      # would not write them. A rule changed in the app but not in tools/pilot/yadora_model.py fails here
+      # instead of in a participant's data; analyze.py exits non-zero on a single mismatch.
       - name: Pilot toolkit agrees with the app
         run: |
-          ./gradlew :app:testDebugUnitTest --tests com.example.data.PilotExportFixtureTest --rerun --stacktrace
+          ./gradlew :app:testDebugUnitTest --tests com.example.data.PilotExportFixtureTest --tests com.example.data.TwoYearSoakTest --rerun --stacktrace
           python3 tools/pilot/test_yadora_model.py
           python3 tools/pilot/test_analyze.py
           python3 tools/pilot/analyze.py app/build/pilot-fixture/sample_export.json --out build/pilot-check --no-fit
+          python3 tools/pilot/analyze.py app/build/soak/export.json --out build/soak-check --no-fit
 
       - name: Lint (0 errors)
         run: ./gradlew :app:lintDebug --stacktrace

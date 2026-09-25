@@ -650,6 +650,163 @@ class MedReviewRepository(
      * Persist a review atomically: the unit's schedule, its log, AND its growth event land in one
      * transaction (keyed by the log id, so undo can remove exactly this event). Returns the log id.
      */
+    /** What one committed rating wrote, for the screen that asked for it. */
+    data class RatedReview(
+        /** The row as it was scheduled from (already on the current model): the snapshot Undo restores. */
+        val before: StudyUnitEntity,
+        val after: StudyUnitEntity,
+        val logId: Long,
+        /** 0 = this was the topic's first rating (review #0), whatever its date. */
+        val reviewNumber: Int,
+        /** The memory interval written to the row, fuzz included. */
+        val memoryIntervalDays: Double,
+        /** The date the topic actually returns on: the earlier of the memory and repair clocks. */
+        val effectiveDueAt: Long,
+        val repairPending: Boolean,
+    )
+
+    /**
+     * THE commit path for one rating: the review screen calls it, and so does every test that pins what
+     * a rating writes (replay == live, the pilot fixture, the two-year soak), so the code the tests verify
+     * is the code the app runs. It used to live inline in the review screen, and three tests kept copies
+     * of it that had to be updated by hand whenever it changed.
+     *
+     * It reloads the row (so an edit made on the Edit screen is not clobbered by a stale copy), carries it
+     * onto the current memory model BEFORE anything schedules from it, schedules with the same
+     * [MedScheduler.review] the rating buttons preview with, and writes the row and its log in one
+     * transaction ([commitReview]). [now] is a parameter only so a test can place a history in time; the
+     * screen passes the wall clock. Returns null if the topic no longer exists.
+     */
+    suspend fun rateUnit(
+        unitId: Long,
+        now: Long,
+        memoryRating: MemoryRating,
+        understandingRating: UnderstandingRating,
+        understandingAsked: Boolean = true,
+        methods: Set<com.example.domain.model.ReviewMethod> = emptySet(),
+        questionsCorrect: Int? = null,
+        questionsTotal: Int? = null,
+        sessionKind: com.example.domain.model.SessionKind,
+        reviewDurationMs: Long,
+    ): RatedReview? {
+        val loaded = getUnitById(unitId) ?: return null
+        // An FSRS-5 stability is not an FSRS-6 stability, so the state is rebuilt by replaying this
+        // topic's real rating history on the current model. No-op once it is already there, and it
+        // never touches the dates: only the latent state moves.
+        val unit = projectOntoCurrentModel(loaded)
+
+        // Measured as the CURRENT model counts time (whole local calendar days for FSRS-6), so a topic
+        // offered by today's queue is credited with the day the learner actually waited rather than the
+        // clock difference from whatever hour they last reviewed at. Clamped at 0: a future-dated topic
+        // reviewed early would otherwise log negative elapsed days.
+        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
+
+        // The first graded rating is always review #0 (seeded from the rating, capped by the first-study
+        // window) however late it happens. Same rule as the replay path.
+        val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
+
+        val outcome = MedScheduler.review(
+            stability = unit.stability,
+            difficulty = unit.difficulty,
+            elapsedDays = elapsedDays,
+            memoryRating = memoryRating,
+            understanding = understandingRating,
+            highYield = unit.highYield,
+            reviewNumber = reviewNumber,
+            model = MedScheduler.CURRENT_MODEL,
+            // From the logs, the same source the preview read it from.
+            unrepairedStreak = unrepairedStreak(unit.id),
+            // The set the projection just put this topic on, stated rather than re-read.
+            parameterSetId = unit.parameterSetId,
+        )
+
+        // Deterministic ±5% fuzz (seeded by unit + prior review count): the value the preview showed and
+        // the value the history replay recomputes.
+        val nextInterval = MedScheduler.fuzzedInterval(
+            outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount,
+            isFirstStudy = reviewNumber == 0,
+        )
+        val nextState = MedScheduler.masteryState(
+            stability = outcome.state.stability,
+            justForgot = memoryRating == MemoryRating.Forgot,
+        )
+
+        // TWO CLOCKS (DB v6). The memory model's date is kept exactly in modelDueAt; a weak understanding
+        // adds a SHORT repair deadline instead of scaling that prediction down, and the topic returns on
+        // whichever comes first.
+        val memoryDueAt = now + (nextInterval * 86400000).toLong()
+        val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
+        val effectiveDueAt = listOfNotNull(memoryDueAt, understandingDueAt).min()
+
+        val updatedUnit = unit.copy(
+            lastReviewedAt = now,
+            nextReviewAt = effectiveDueAt,
+            // A real review resets the honest-scheduling pair (DB v5): the model's date IS the effective
+            // date again, and any earlier deferral is spent.
+            modelDueAt = memoryDueAt,
+            understandingDueAt = understandingDueAt,
+            memoryModel = MedScheduler.CURRENT_MODEL.id,
+            deferredUntil = null,
+            currentIntervalDays = nextInterval,
+            reviewCount = unit.reviewCount + 1,
+            lapseCount = if (memoryRating == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
+            state = nextState.name,
+            difficulty = outcome.state.difficulty,
+            stability = outcome.state.stability,
+            retrievability = outcome.retrievabilityAtReview,
+            updatedAt = now,
+        )
+
+        val score = if (reviewNumber == 0) -1 to -1
+            else com.example.domain.model.QuestionScore.normalized(questionsCorrect, questionsTotal)
+        val log = ReviewLogEntity(
+            studyUnitId = unit.id,
+            reviewedAt = now,
+            memoryRating = memoryRating.name,
+            // When the understanding question was skipped (the Forgot fast-commit), record that it was
+            // never asked instead of an answer the learner never gave.
+            understandingRating = if (understandingAsked) understandingRating.name else "NotAsked",
+            previousIntervalDays = unit.currentIntervalDays,
+            nextIntervalDays = nextInterval,
+            previousState = unit.state,
+            nextState = nextState.name,
+            retrievabilityAtReview = outcome.retrievabilityAtReview,
+            elapsedDays = elapsedDays,
+            // FIRST_STUDY rows carry a first rating, not a recall: tagged so exports and calibration never
+            // mix the two signals.
+            logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
+            initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(memoryRating) else null,
+            reviewDurationMs = reviewDurationMs,
+            wasImportantAtReview = if (unit.highYield) 1 else 0,
+            desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
+            schedulerVersion = MedScheduler.SCHEDULER_VERSION,
+            // Which policy bundle and which understanding factor shaped this interval, so later policy
+            // changes replay history faithfully. -1.0 = "not recorded": the fast Forgot path passes Partial
+            // as a placeholder, and storing its factor would claim an answer the learner never gave.
+            schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
+            understandingFactorAtReview =
+                if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
+            // The per-user interval correction this review was scheduled with.
+            calibrationScaleAtReview = MedScheduler.calibrationScale,
+            // Not scored since the key-point rating cap was retired.
+            keyPointsTotal = -1,
+            keyPointsRecalled = -1,
+            // The weight set this prediction and interval came from.
+            parameterSetId = unit.parameterSetId,
+            // Research data. A first study is not a review, so it records no method or score.
+            reviewMethods = if (reviewNumber == 0) null else com.example.domain.model.ReviewMethod.encode(methods),
+            questionsCorrect = score.first,
+            questionsTotal = score.second,
+            sessionKind = sessionKind.name,
+        )
+        val logId = commitReview(updatedUnit, log)
+        return RatedReview(
+            before = unit, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
+            memoryIntervalDays = nextInterval, effectiveDueAt = effectiveDueAt,
+            repairPending = outcome.remediationDays != null,
+        )
+    }
+
     suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity): Long {
         var logId = 0L
         database.withTransaction {

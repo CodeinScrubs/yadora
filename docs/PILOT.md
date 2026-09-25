@@ -33,7 +33,9 @@ reviews from a friend's topics is exactly the downside the standard forbids.
 2. On each phone:
    - finish onboarding, including the REMINDERS step: grant notifications and exact alarms;
    - on Samsung, Xiaomi, Huawei, Oppo and Vivo, set Yadora's battery use to unrestricted;
-   - send yourself a test reminder (Settings → Send a test reminder).
+   - send yourself a test reminder (Settings → Send a test reminder);
+   - turn on automatic backup (Settings → Data) into a folder, ideally one a cloud app syncs. Two months of
+     pilot data must survive a lost or reset phone.
 3. **Keep the defaults**: retention target 0.90 and the default daily limit, unless the participant has a
    reason. Nobody changes them mid-pilot; a change mid-way splits the data in two.
 4. Note each participant's research ID (Settings, next to "Share research data") against their name,

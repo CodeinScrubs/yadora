@@ -48,58 +48,16 @@ class ReplayEqualsLiveTest {
         db.close()
     }
 
-    /** Mirrors the live commit in ReviewSessionViewModel.rateCurrentUnit (same math, same writes). */
+    /**
+     * The live commit: the SAME repository function the review screen calls (MedReviewRepository.rateUnit),
+     * not a copy of it. A copy used to live here and had to be kept in step by hand; when FSRS-6 went live
+     * it still defaulted to FSRS-5 and this test kept passing while production disagreed with itself.
+     */
     private fun liveReview(unitId: Long, now: Long, memory: MemoryRating, understanding: UnderstandingRating): Long = runBlocking {
-        // Must mirror the REAL commit path, including projecting onto the current memory model and
-        // selecting it explicitly. Without this the test would compare an FSRS-5 "live" review with an
-        // FSRS-6 replay (or vice versa) and pass while production disagreed with itself.
-        val unit = repo.projectOntoCurrentModel(repo.getUnitById(unitId)!!)
-        // Counted exactly as the app counts it (whole local calendar days for FSRS-6), not as elapsed
-        // milliseconds: the two only agree when the timestamps sit a whole number of days apart.
-        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
-        val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
-        // The repair-clock backoff reads the topic's history, exactly as rateCurrentUnit does.
-        val unrepairedStreak = repo.unrepairedStreak(unit.id)
-        val outcome = MedScheduler.review(
-            stability = unit.stability, difficulty = unit.difficulty, elapsedDays = elapsedDays,
-            memoryRating = memory, understanding = understanding, highYield = unit.highYield,
-            reviewNumber = reviewNumber, model = MedScheduler.CURRENT_MODEL,
-            unrepairedStreak = unrepairedStreak,
-        )
-        val nextInterval = MedScheduler.fuzzedInterval(
-            outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount,
-            isFirstStudy = reviewNumber == 0,
-        )
-        val memoryDueAt = now + (nextInterval * 86400000).toLong()
-        val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
-        val nextState = MedScheduler.masteryState(outcome.state.stability, memory == MemoryRating.Forgot)
-        val updated = unit.copy(
-            lastReviewedAt = now,
-            nextReviewAt = listOfNotNull(memoryDueAt, understandingDueAt).min(),
-            modelDueAt = memoryDueAt,
-            understandingDueAt = understandingDueAt,
-            memoryModel = MedScheduler.CURRENT_MODEL.id,
-            deferredUntil = null,
-            currentIntervalDays = nextInterval,
-            reviewCount = unit.reviewCount + 1,
-            lapseCount = if (memory == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
-            state = nextState.name,
-            difficulty = outcome.state.difficulty,
-            stability = outcome.state.stability,
-            retrievability = outcome.retrievabilityAtReview,
-        )
-        val log = ReviewLogEntity(
-            studyUnitId = unit.id, reviewedAt = now,
-            memoryRating = memory.name, understandingRating = understanding.name,
-            previousIntervalDays = unit.currentIntervalDays, nextIntervalDays = nextInterval,
-            previousState = unit.state, nextState = nextState.name,
-            retrievabilityAtReview = outcome.retrievabilityAtReview, elapsedDays = elapsedDays,
-            logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
-            schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
-            understandingFactorAtReview = MedScheduler.understandingFactor(understanding),
-            calibrationScaleAtReview = MedScheduler.calibrationScale,
-        )
-        repo.commitReview(updated, log)
+        repo.rateUnit(
+            unitId = unitId, now = now, memoryRating = memory, understandingRating = understanding,
+            sessionKind = com.example.domain.model.SessionKind.PLAN, reviewDurationMs = 60_000,
+        )!!.logId
     }
 
     /**

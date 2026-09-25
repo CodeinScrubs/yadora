@@ -84,6 +84,10 @@ interface StudyUnitDao {
     
     @Query("SELECT COUNT(*) FROM study_units WHERE archived = 0")
     fun getTotalActiveUnitsCount(): Flow<Int>
+
+    /** Every row, archived and recently deleted too: whether a backup would have anything in it. */
+    @Query("SELECT COUNT(*) FROM study_units")
+    suspend fun countAllOnce(): Int
     
     @Query("SELECT COUNT(*) FROM study_units WHERE archived = 0 AND state = :state")
     fun getCountByState(state: String): Flow<Int>

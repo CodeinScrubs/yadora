@@ -2,10 +2,8 @@ package com.example.data
 
 import androidx.test.core.app.ApplicationProvider
 import com.example.MedReviewApplication
-import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.domain.model.MemoryRating
-import com.example.domain.model.QuestionScore
 import com.example.domain.model.ReviewMethod
 import com.example.domain.model.SessionKind
 import com.example.domain.model.UnderstandingRating
@@ -24,9 +22,8 @@ import org.robolectric.annotation.Config
  *
  * tools/pilot/analyze.py replays every exported history through an independent Python transcription of
  * the scheduler and reports whether the phone scheduled exactly what the rules say. That check is only
- * worth something if it is run against what the app actually writes, so this test drives the real
- * repository through the same commit path the review screen uses (mirroring ReviewViewModel
- * .rateCurrentUnit field for field, like ReplayEqualsLiveTest) and writes the real exporter's output to
+ * worth something if it is run against what the app actually writes, so this test rates through the
+ * review screen's own commit path (MedReviewRepository.rateUnit) and writes the real exporter's output to
  * app/build/pilot-fixture/sample_export.json. tools/pilot/fixtures/sample_export.json is a copy of it;
  * tools/pilot/test_analyze.py checks the toolkit against that copy.
  */
@@ -36,6 +33,7 @@ class PilotExportFixtureTest {
 
     private val day = 86_400_000L
 
+    /** One rating through the review screen's own commit path (MedReviewRepository.rateUnit). */
     private fun commit(
         repo: com.example.data.repository.MedReviewRepository,
         unitId: Long,
@@ -46,58 +44,16 @@ class PilotExportFixtureTest {
         score: Pair<Int?, Int?>,
         kind: SessionKind,
     ) = runBlocking {
-        val unit = repo.projectOntoCurrentModel(repo.getUnitById(unitId)!!)
-        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
-        val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
+        val reviewNumber = MedScheduler.effectiveReviewNumber(repo.getUnitById(unitId)!!.reviewCount)
         val understandingAsked = memory != MemoryRating.Forgot || reviewNumber == 0
         // A review rated Forgot commits at once with Partial as a placeholder, exactly as the screen does.
-        val und = if (understandingAsked) understanding else UnderstandingRating.Partial
-        val outcome = MedScheduler.review(
-            stability = unit.stability, difficulty = unit.difficulty, elapsedDays = elapsedDays,
-            memoryRating = memory, understanding = und, highYield = unit.highYield,
-            reviewNumber = reviewNumber, model = MedScheduler.CURRENT_MODEL,
-            unrepairedStreak = repo.unrepairedStreak(unit.id), parameterSetId = unit.parameterSetId,
-        )
-        val nextInterval = MedScheduler.fuzzedInterval(
-            outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount, isFirstStudy = reviewNumber == 0,
-        )
-        val memoryDueAt = now + (nextInterval * 86400000).toLong()
-        val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
-        val nextState = MedScheduler.masteryState(outcome.state.stability, memory == MemoryRating.Forgot)
-        val (qc, qt) = if (reviewNumber == 0) -1 to -1 else QuestionScore.normalized(score.first, score.second)
-        repo.commitReview(
-            unit.copy(
-                lastReviewedAt = now, nextReviewAt = listOfNotNull(memoryDueAt, understandingDueAt).min(),
-                modelDueAt = memoryDueAt, understandingDueAt = understandingDueAt,
-                memoryModel = MedScheduler.CURRENT_MODEL.id, deferredUntil = null,
-                currentIntervalDays = nextInterval, reviewCount = unit.reviewCount + 1,
-                lapseCount = if (memory == MemoryRating.Forgot) unit.lapseCount + 1 else unit.lapseCount,
-                state = nextState.name, difficulty = outcome.state.difficulty, stability = outcome.state.stability,
-                retrievability = outcome.retrievabilityAtReview, updatedAt = now,
-            ),
-            ReviewLogEntity(
-                studyUnitId = unit.id, reviewedAt = now,
-                memoryRating = memory.name,
-                understandingRating = if (understandingAsked) und.name else "NotAsked",
-                previousIntervalDays = unit.currentIntervalDays, nextIntervalDays = nextInterval,
-                previousState = unit.state, nextState = nextState.name,
-                retrievabilityAtReview = outcome.retrievabilityAtReview, elapsedDays = elapsedDays,
-                logType = if (reviewNumber == 0) "FIRST_STUDY" else "RECALL",
-                initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(memory) else null,
-                reviewDurationMs = 90_000,
-                wasImportantAtReview = if (unit.highYield) 1 else 0,
-                desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
-                schedulerVersion = MedScheduler.SCHEDULER_VERSION,
-                schedulerPolicyVersion = MedScheduler.POLICY_VERSION,
-                understandingFactorAtReview = if (understandingAsked) MedScheduler.understandingFactor(und) else -1.0,
-                calibrationScaleAtReview = MedScheduler.calibrationScale,
-                keyPointsTotal = -1, keyPointsRecalled = -1,
-                parameterSetId = unit.parameterSetId,
-                reviewMethods = if (reviewNumber == 0) null else ReviewMethod.encode(methods),
-                questionsCorrect = qc, questionsTotal = qt,
-                sessionKind = kind.name,
-            ),
-        )
+        repo.rateUnit(
+            unitId = unitId, now = now, memoryRating = memory,
+            understandingRating = if (understandingAsked) understanding else UnderstandingRating.Partial,
+            understandingAsked = understandingAsked, methods = methods,
+            questionsCorrect = score.first, questionsTotal = score.second,
+            sessionKind = kind, reviewDurationMs = 90_000,
+        )!!
     }
 
     @Test

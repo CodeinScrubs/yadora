@@ -82,6 +82,8 @@ class Scenario:
     # the Library's review-now allows, one topic at a time); the other twin reviews oldest-first.
     sweep_days: int = 0
     sweep_capacity: int = 0
+    # The learner moves the retention slider on a given day: (day, new target). None = never.
+    retention_from: Optional[tuple] = None
     true_weights: Sequence[float] = ym.DEFAULT_WEIGHTS
     sched_weights: Sequence[float] = ym.DEFAULT_WEIGHTS
 
@@ -112,6 +114,11 @@ class Result:
     cost: float
     max_day_reviews: int
     topics: int
+    # How the final quiz is spread over topics: the share recalled at 90% or better, at 80% or better, and
+    # the recall of the weakest tenth. An average can hide a tail of forgotten topics; these cannot.
+    share_at_90: float = 0.0
+    share_at_80: float = 0.0
+    weakest_tenth: float = 0.0
 
 
 class TrueMemory:
@@ -155,6 +162,13 @@ def is_study_day(sc: Scenario, day: int) -> bool:
 
 def on_holiday(sc: Scenario, day: int) -> bool:
     return bool(sc.holiday and sc.holiday[0] <= day < sc.holiday[0] + sc.holiday[1])
+
+
+def target_on(sc: Scenario, day: int) -> float:
+    """The retention target in force on `day` (the Settings slider, which the learner may move once)."""
+    if sc.retention_from and day >= sc.retention_from[0]:
+        return sc.retention_from[1]
+    return sc.retention
 
 
 def priority(t: Topic, day: int) -> float:
@@ -207,7 +221,7 @@ def run_yadora(sc: Scenario, classes: List[List[int]], seed: int):
             mem.seed(t, grade)
             st = sched.initial_state(grade)
             t.s, t.d = st.stability, st.difficulty
-            ivl, base = ym.memory_interval(sched, st, grade, sc.retention, True, cal_scale)
+            ivl, base = ym.memory_interval(sched, st, grade, target_on(sc, day), True, cal_scale)
             ivl = ym.fuzzed_interval(ivl, base, tid, 0, True)
             t.model_due = day + REVIEW_HOUR_FRACTION + ivl
             t.due_day = math.floor(t.model_due)
@@ -239,7 +253,7 @@ def run_yadora(sc: Scenario, classes: List[List[int]], seed: int):
                     if len(evidence) > ym.CAL_WINDOW:
                         evidence.pop(0)
                 new = sched.next_state(ym.State(t.s, t.d), elapsed, reported)
-                ivl, base = ym.memory_interval(sched, new, reported, sc.retention, False, cal_scale)
+                ivl, base = ym.memory_interval(sched, new, reported, target_on(sc, day), False, cal_scale)
                 ivl = ym.fuzzed_interval(ivl, base, t.tid, t.reviews, False)
                 t.s, t.d = new.stability, new.difficulty
                 t.reviews += 1
@@ -315,11 +329,16 @@ def run_other(sc: Scenario, classes: List[List[int]], seed: int, daily_cost: Lis
 def finish(sc, mem, topics, know, reviews, cost, max_day) -> Result:
     last = sc.days - 1
     first_half = [t for t in topics if t.studied_day < sc.days // 2]
+    rs = sorted(mem.r(t, last) for t in topics) if topics else [0.0]
+    tenth = rs[: max(1, len(rs) // 10)]
     return Result(
         final_quiz=knowledge(mem, topics, last),
         first_half_quiz=knowledge(mem, first_half, last),
         mean_knowledge=statistics.fmean(know),
         reviews=reviews, cost=cost, max_day_reviews=max_day, topics=len(topics),
+        share_at_90=sum(1 for r in rs if r >= 0.9) / len(rs),
+        share_at_80=sum(1 for r in rs if r >= 0.8) / len(rs),
+        weakest_tenth=statistics.fmean(tenth),
     )
 
 
