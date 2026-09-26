@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Warning
 
-/** One requirement row: green check when satisfied, red cross + a fix button when not. */
 /**
  * Writes a file the user just created with the system picker, and deletes it if the write fails part-way: a
  * truncated backup under the name the user chose looks like a good one until the day it is needed. Not
@@ -165,6 +164,7 @@ private fun AutoBackupCard(language: String, useJalali: Boolean, refresh: Int) {
     }
 }
 
+/** One requirement row: green check when satisfied, red cross + a fix button when not. */
 @Composable
 private fun PermissionStatusRow(label: String, granted: Boolean, actionLabel: String, onAction: () -> Unit) {
     Row(
@@ -354,7 +354,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                // Edge-to-edge: keep the exam-name field above the keyboard (see AddUnitScreen).
+                .consumeWindowInsets(padding)
+                .imePadding(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {

@@ -646,10 +646,6 @@ class MedReviewRepository(
         )
     }
 
-    /**
-     * Persist a review atomically: the unit's schedule, its log, AND its growth event land in one
-     * transaction (keyed by the log id, so undo can remove exactly this event). Returns the log id.
-     */
     /** What one committed rating wrote, for the screen that asked for it. */
     data class RatedReview(
         /** The row as it was scheduled from (already on the current model): the snapshot Undo restores. */
@@ -807,6 +803,10 @@ class MedReviewRepository(
         )
     }
 
+    /**
+     * Persist a review atomically: the unit's schedule, its log, AND its growth event land in one
+     * transaction (keyed by the log id, so undo can remove exactly this event). Returns the log id.
+     */
     suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity): Long {
         var logId = 0L
         database.withTransaction {

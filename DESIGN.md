@@ -81,9 +81,11 @@ event. Elapsed time at the eventual review is still measured from `lastReviewedA
 retention as the date approached and force a final review ~1–2 days before.
 
 *As built:* the exam date is decorative by decision (CLAUDE.md); it drives the countdown and nothing else.
-Exam preparation is the learner's choice, not the schedule's: raise the retention target months ahead,
-and in the final weeks use **Review ahead** on Today (rated topics not yet due, weakest predicted recall
-first). The identical-twins simulation (`docs/RESEARCH.md` §2.1) shows why the latter matters: it is the
+Exam preparation is the learner's choice, not the schedule's: keep the retention target at 0.90 and, in
+the final four weeks, use **Review ahead** on Today (rated topics not yet due, weakest predicted recall
+first). Raising the target months ahead was the earlier advice; the two-year simulation
+(`tools/pilot/residency.py`, `docs/RESEARCH.md` §2.5) found it costs more reviews and does less, and for a
+fast forgetter or a heavy load it overflows the daily limit. The identical-twins simulation (`docs/RESEARCH.md` §2.1) shows why the latter matters: it is the
 one case where a learner without a schedule can win, by saving time for a final push, and a Yadora learner
 spending the same push weakest-first wins again.
 

@@ -242,8 +242,14 @@ class AnalyticsExportConsistencyTest {
         )
         assertEquals("same name both times on one day", first.name, second.name)
         assertEquals("a complete export", 12, JSONObject(second.readText()).getInt("exportVersion"))
-        val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", second)
-        assertEquals("content", uri.scheme)
+        assertEquals("in cache/exports/, the one folder file_paths.xml serves", dir.canonicalFile, second.parentFile!!.canonicalFile)
+        // FileProvider matches a file to its root with a hard-coded '/' separator, as on every Android device
+        // and on CI. On a Windows host the JVM's paths use '\', so no file can ever match there and the call
+        // throws "Failed to find configured root": a property of the test machine, not of the app.
+        if (java.io.File.separatorChar == '/') {
+            val uri = androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", second)
+            assertEquals("content", uri.scheme)
+        }
     }
 
     /**
