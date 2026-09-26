@@ -129,6 +129,17 @@ These were decided deliberately. Re-suggesting them wastes a session:
   how hard the session FELT would feed the model the wrong quantity. Then "How well do you understand it
   now?" drives the repair clock as before. The Settings guide says the same, and that doing questions
   usually sticks better than rereading alone.
+- **The review screen's topic card never shrinks below 200 dp** (`ReviewCardLayout` in `ReviewSessionScreen`,
+  2026-09-26). The card used to be simply weighted above the rating controls. When the controls grew (method row,
+  question score, hint, one full-width button per rating), a 360x640 phone in Persian squeezed the card to an
+  empty sliver: the learner could not see WHICH topic they were rating, and "Not today" fell off the screen. Now
+  the card fills what the controls leave, exactly as before on a normal phone, but keeps 200 dp, and the page
+  scrolls when that does not fit. `SmallScreenReviewTest` pins it in English and Persian. Adding anything to the
+  rating area: run it.
+- **Screens with text fields take the keyboard's height** (`.consumeWindowInsets(padding).imePadding()` on the
+  Review, Add/Edit and Settings content, 2026-09-26). The activity is edge-to-edge, so the keyboard covers the
+  window instead of resizing it, and without this a focused field near the bottom (a question score, the notes)
+  sat under the keyboard. Consume the Scaffold padding first, or the navigation bar is counted twice.
 - **First rating happens on the REVIEW screen, not the Add screen.** The Add
   screen intentionally has no confidence/difficulty section. A topic is due on
   its study date; the first rating there is review #0, and the schedule counts from the moment of that
@@ -423,8 +434,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **The scientific basis of the product-layer choices** (do not "simplify" these away):
   power-law forgetting `R = (1 + FACTOR·t/S)^-0.5` is FSRS-4.5+/5's deliberate replacement for
   the exponential curve because it fits real review data better; scheduling at ~0.90 retention
-  (slider 0.85–0.97; 0.90 is the workload optimum, 0.95–0.97 buys exam-readiness at roughly
-  1.4–2× the reviews) sits in the workload-optimal band from FSRS's own retention simulations
+  (slider 0.85–0.97; 0.90 is the workload optimum, 0.95–0.97 buys more recall at roughly
+  1.4–2× the reviews, but is NOT the exam playbook: see "The exam playbook" below) sits in the workload-optimal band from FSRS's own retention simulations
   and matches Bjork's desirable-difficulty argument that retrieval should be effortful but
   successful; and `FIRST_STUDY_MAX_DAYS` exists because a self-rating taken immediately after
   studying measures *current fluency*, not delayed retention (the well-documented

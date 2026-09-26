@@ -484,6 +484,11 @@ fun AddUnitScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp)
+                // The app is edge-to-edge, so the keyboard covers the window instead of shrinking it. Taking its
+                // height off the scroll area lets a focused field (the notes, the source) scroll into view above
+                // it. The system-bar padding is consumed first so the navigation bar is not counted twice.
+                .consumeWindowInsets(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
         ) {
             Spacer(modifier = Modifier.height(8.dp))
