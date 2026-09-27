@@ -384,12 +384,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                         Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                             val model = retentionData
                             if (model != null) {
-                                Chart(
-                                    chart = lineChart(),
-                                    model = model,
-                                    startAxis = rememberStartAxis(),
-                                    bottomAxis = rememberBottomAxis(),
-                                )
+                                FourteenDayChart(model = model, bars = false, percent = true)
                             } else {
                                 // Honest empty state: never plot a fake-perfect 100% before real data.
                                 Text(
@@ -448,7 +443,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 Spacer(modifier = Modifier.height(4.dp))
                                 // The correction in force, stated as a plain factor on the intervals.
                                 val scaleText = String.format(java.util.Locale.US, "%.2f", cal.scale)
-                                    .let { if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(it) else it }
+                                    .let { if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(it) else if (strings.languageCode == "de") it.replace('.', ',') else it }
                                 Text(
                                     text = if (isFarsiLanguage) "بر اساس ${fmt(cal.n)} مرور واقعی · ${cal.model} · ضریب فاصله‌ها ×$scaleText" else if (strings.languageCode == "de") "Basierend auf ${cal.n} echten Wiederholungen · ${cal.model} · Intervallfaktor ×$scaleText" else "Based on ${cal.n} real recall reviews · ${cal.model} · interval factor ×$scaleText",
                                     style = MaterialTheme.typography.labelSmall,
@@ -480,7 +475,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 val n: (Int) -> String = { digits(it.toString()) }
                                 val ll: (Double) -> String = { digits(String.format(java.util.Locale.US, "%.3f", it)) }
                                 val pct: (Double) -> String = { digits(String.format(java.util.Locale.US, "%.1f", it * 100)) }
-                                val date: (Long) -> String = { com.example.ui.i18n.AppDate.date(useJalali, it) }
+                                val date: (Long) -> String = { com.example.ui.i18n.AppDate.date(useJalali, it, isFarsiLanguage) }
                                 val active = status.active
                                 val latest = status.latestAttempt
                                 val standard = when (strings.languageCode) { "fa" -> "وزن‌های استاندارد FSRS-6"; "de" -> "Standardgewichte von FSRS-6"; else -> "Standard FSRS-6 weights" }
@@ -530,12 +525,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
                         Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                            Chart(
-                                chart = lineChart(),
-                                model = consistencyData,
-                                startAxis = rememberStartAxis(),
-                                bottomAxis = rememberBottomAxis(),
-                            )
+                            FourteenDayChart(model = consistencyData, bars = true, percent = false)
                         }
                     }
                 }
@@ -628,7 +618,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                     val dayHeader = when (i) {
                         0 -> if (isFarsiLanguage) "امروز" else if (strings.languageCode == "de") "Heute" else "Today"
                         1 -> if (isFarsiLanguage) "فردا" else if (strings.languageCode == "de") "Morgen" else "Tomorrow"
-                        else -> com.example.ui.i18n.AppDate.weekdayDate(useJalali, dayNameCalendar.timeInMillis)
+                        else -> com.example.ui.i18n.AppDate.weekdayDate(useJalali, dayNameCalendar.timeInMillis, isFarsiLanguage)
                     }
                     
                     val reviewCount = dueInDay.size
@@ -675,7 +665,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = if (isFarsiLanguage) "تعداد نکات مرور: ${com.example.ui.i18n.PersianDate.faDigits(reviewCount)} موضوع" else if (strings.languageCode == "de") "$reviewCount Themen zur Wiederholung" else "$reviewCount topics to review",
+                                        text = if (isFarsiLanguage) "${com.example.ui.i18n.PersianDate.faDigits(reviewCount)} مبحث برای مرور" else if (strings.languageCode == "de") (if (reviewCount == 1) "1 Thema zur Wiederholung" else "$reviewCount Themen zur Wiederholung") else (if (reviewCount == 1) "1 topic to review" else "$reviewCount topics to review"),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -715,7 +705,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
                                     text = if (isFarsiLanguage) {
-                                        "این روز از حد تعیین‌شده‌ی شما (${com.example.ui.i18n.PersianDate.faDigits(limitValue)} مرور) بیشتر است. برای سبک‌تر شدن، چند مبحث را زودتر یا دیرتر تنظیم کنید."
+                                        "این روز از سقف روزانه‌ات (${com.example.ui.i18n.PersianDate.faDigits(limitValue)} مرور) بیشتر است. برای سبک‌تر شدنش، چند مبحث را زودتر یا دیرتر بگذار."
                                     } else if (strings.languageCode == "de") {
                                         "Dieser Tag liegt über deinem Limit von $limitValue Wiederholungen. Verschiebe ein paar Themen nach vorn oder hinten, um ihn zu entlasten."
                                     } else {
@@ -841,6 +831,94 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
     }
 }
 
+/**
+ * One of Progress's 14-day charts: x = 0..13 is thirteen days ago .. today (the view model's indexing).
+ *
+ * Every day is on screen at once, and the last point is TODAY. The charts used to scroll sideways and open on the
+ * OLDEST ten days, so the four most recent (today included) were hidden unless the learner thought to swipe the
+ * chart itself. Days are labelled by their day of the month in the learner's calendar and digits, every other day,
+ * instead of the raw index 0..9. Retention sits on a fixed 0–100% scale in 25% steps; review counts are bars on
+ * whole-number steps (ticks read "9.17" and "1.83" reviews before), and the retention line is straight, since a smoothed
+ * curve overshoots and suggests values between days that were never measured.
+ */
+@Composable
+private fun FourteenDayChart(model: ChartEntryModel, bars: Boolean, percent: Boolean) {
+    val strings = com.example.ui.i18n.LocalStrings.current
+    val useJalali = com.example.ui.i18n.LocalUseJalali.current
+    val fa = strings.languageCode == "fa"
+    fun digits(s: String) = if (fa) com.example.ui.i18n.PersianDate.faDigits(s) else s
+    val color = MaterialTheme.colorScheme.primary
+
+    // The y axis: 0-100% in quarters, or counts on a "nice" whole-number step with at most five ticks.
+    val (top, steps) = if (percent) 100f to 4 else {
+        val max = maxOf(model.maxY, 1f)
+        val step = listOf(1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000).first { it >= max / 4f }
+        val top = kotlin.math.ceil(max / step).toInt().coerceAtLeast(1) * step
+        top.toFloat() to top / step
+    }
+    val overrider = remember(top) {
+        com.patrykandpatrick.vico.core.chart.values.AxisValuesOverrider.fixed(minX = 0f, maxX = 13f, minY = 0f, maxY = top)
+    }
+    val chart = if (bars) {
+        com.patrykandpatrick.vico.compose.chart.column.columnChart(
+            columns = listOf(
+                com.patrykandpatrick.vico.compose.component.lineComponent(
+                    color = color,
+                    thickness = 8.dp,
+                    shape = com.patrykandpatrick.vico.core.component.shape.Shapes.roundedCornerShape(allPercent = 40),
+                )
+            ),
+            axisValuesOverrider = overrider,
+        )
+    } else {
+        lineChart(
+            lines = listOf(
+                com.patrykandpatrick.vico.compose.chart.line.lineSpec(
+                    lineColor = color,
+                    pointConnector = com.patrykandpatrick.vico.core.chart.DefaultPointConnector(cubicStrength = 0f),
+                )
+            ),
+            axisValuesOverrider = overrider,
+        )
+    }
+    val yLabels = remember(fa, percent) {
+        object : com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter<com.patrykandpatrick.vico.core.axis.AxisPosition.Vertical.Start> {
+            override fun formatValue(value: Float, chartValues: com.patrykandpatrick.vico.core.chart.values.ChartValues): CharSequence {
+                val n = kotlin.math.round(value).toInt()
+                return if (!percent) digits(n.toString()) else if (fa) "٪" + digits(n.toString()) else "$n%"
+            }
+        }
+    }
+    val xLabels = remember(fa, useJalali) {
+        object : com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter<com.patrykandpatrick.vico.core.axis.AxisPosition.Horizontal.Bottom> {
+            override fun formatValue(value: Float, chartValues: com.patrykandpatrick.vico.core.chart.values.ChartValues): CharSequence {
+                val c = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, kotlin.math.round(value).toInt() - 13) }
+                val day = if (useJalali) {
+                    com.example.ui.i18n.PersianDate.gregorianToJalali(
+                        c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH) + 1, c.get(java.util.Calendar.DAY_OF_MONTH),
+                    ).third
+                } else c.get(java.util.Calendar.DAY_OF_MONTH)
+                return digits(day.toString())
+            }
+        }
+    }
+    Chart(
+        chart = chart,
+        model = model,
+        startAxis = rememberStartAxis(
+            valueFormatter = yLabels,
+            itemPlacer = remember(steps) { com.patrykandpatrick.vico.core.axis.AxisItemPlacer.Vertical.default(maxItemCount = steps + 1) },
+        ),
+        bottomAxis = rememberBottomAxis(
+            valueFormatter = xLabels,
+            // Every other day, ending on today.
+            itemPlacer = remember { com.patrykandpatrick.vico.core.axis.AxisItemPlacer.Horizontal.default(spacing = 2, offset = 1) },
+        ),
+        chartScrollSpec = com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec(isScrollEnabled = false),
+        isZoomEnabled = false,
+    )
+}
+
 @Composable
 fun DonutChart(
     data: List<Float>,
@@ -903,7 +981,12 @@ fun StateRow(label: String, count: Int, color: androidx.compose.ui.graphics.Colo
             Spacer(modifier = Modifier.width(12.dp))
             Text(label, style = MaterialTheme.typography.bodyLarge)
         }
-        Text(count.toString(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+        // In the reader's digits: Persian beside Persian labels (it printed "26" among "۴۲" and "۲۱").
+        val languageCode = com.example.ui.i18n.LocalStrings.current.languageCode
+        Text(
+            if (languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(count) else count.toString(),
+            style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold,
+        )
     }
 }
 

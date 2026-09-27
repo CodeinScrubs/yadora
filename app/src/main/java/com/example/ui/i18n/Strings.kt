@@ -24,7 +24,7 @@ data class AppStrings(
     val upcoming: String = "UPCOMING",
     val startReview: String = "Start Review Session",
     val nextReview: String = "Next: %s",
-    val sessionComplete: String = "Session Complete!",
+    val sessionComplete: String = "Session complete",
     
     // Understanding Ratings
     val urConfused: String = "Confused",
@@ -53,8 +53,10 @@ data class AppStrings(
     
     // Library Screen
     val library: String = "Library",
-    val searchUnits: String = "Search units...",
-    val itemsCount: String = "%d items",
+    val searchUnits: String = "Search topics…",
+    // "%d items" printed "1 items"; the count is of topics, one form each for one and several.
+    val itemsCount: String = "%d topics",
+    val itemsCountOne: String = "1 topic",
     // Archive is RECOVERABLE — its copy must never claim irreversibility (the old "delete" wording did).
     val archiveTopicConfirm: String = "Archive '%s'? You can restore it from the archive at any time.",
     val restoreTopicConfirm: String = "Restore '%s' back into your active library?",
@@ -97,7 +99,8 @@ data class AppStrings(
     // A review is whatever the learner chooses (questions, notes, a lecture, a video); the rating is how
     // much of the topic they still had when they came back to it — the recall outcome FSRS models.
     val memoryQuestion: String = "How much did you still remember?",
-    val memoryQuestionHint: String = "Review it your way — questions, notes, a lecture or a video. Rate what you still knew when you came back to it, before rereading or checking answers.",
+    // One sentence: the method row just above already says a review can be done any way.
+    val memoryQuestionHint: String = "Rate what you still knew before rereading or checking answers.",
     val understandingNowQuestion: String = "How well do you understand it now?",
     // Key points (DB v8): the scoring standard, ticked after the reveal.
     val dueNow: String = "Due Now",
@@ -140,7 +143,7 @@ val PersianStrings = AppStrings(
     upcoming = "آینده",
     startReview = "شروع جلسه مرور",
     nextReview = "بعدی: %s",
-    sessionComplete = "جلسه مرور تمام شد!",
+    sessionComplete = "جلسهٔ مرور تمام شد",
     
     // Understanding Ratings
     urConfused = "مبهم",
@@ -169,8 +172,9 @@ val PersianStrings = AppStrings(
     
     // Library Screen
     library = "کتابخانه",
-    searchUnits = "جستجوی مباحث...",
-    itemsCount = "%d مورد",
+    searchUnits = "جستجوی مباحث…",
+    itemsCount = "%d مبحث",
+    itemsCountOne = "۱ مبحث",
     archiveTopicConfirm = "«%s» بایگانی شود؟ هر زمان می‌توانی آن را از بایگانی بازگردانی.",
     restoreTopicConfirm = "«%s» به کتابخانهٔ فعال بازگردانده شود؟",
     
@@ -209,7 +213,7 @@ val PersianStrings = AppStrings(
     memoryRating = "درجه‌بندی حافظه",
     understandingRating = "درجه‌بندی درک مطلب",
     memoryQuestion = "چقدر از آن یادت مانده بود؟",
-    memoryQuestionHint = "به هر روشی که می‌خواهی مرورش کن — تست، جزوه، کلاس یا ویدیو. بگو وقتی دوباره سراغش آمدی، پیش از دوباره‌خواندن یا دیدن جواب‌ها، چقدر از آن یادت بود.",
+    memoryQuestionHint = "بگو پیش از دوباره‌خواندن یا دیدن جواب‌ها چقدر از آن یادت بود.",
     understandingNowQuestion = "الان چقدر آن را می‌فهمی؟",
     dueNow = "موعد الان",
     needsRelearnState = "نیاز به یادگیری مجدد",
@@ -277,7 +281,8 @@ val GermanStrings = AppStrings(
     // Library Screen
     library = "Bibliothek",
     searchUnits = "Themen durchsuchen …",
-    itemsCount = "%d Einträge",
+    itemsCount = "%d Themen",
+    itemsCountOne = "1 Thema",
     archiveTopicConfirm = "„%s“ archivieren? Du kannst es jederzeit aus dem Archiv wiederherstellen.",
     restoreTopicConfirm = "„%s“ zurück in deine aktive Bibliothek holen?",
 
@@ -317,7 +322,7 @@ val GermanStrings = AppStrings(
     memoryRating = "Erinnerung",
     understandingRating = "Verständnis",
     memoryQuestion = "Wie viel wusstest du noch?",
-    memoryQuestionHint = "Wiederhole es auf deine Art — Fragen, Notizen, Vorlesung oder Video. Bewerte, was du noch wusstest, als du wieder damit angefangen hast — bevor du nachgelesen oder Lösungen angesehen hast.",
+    memoryQuestionHint = "Bewerte, was du noch wusstest, bevor du nachgelesen oder Lösungen angesehen hast.",
     understandingNowQuestion = "Wie gut verstehst du es jetzt?",
     dueNow = "Jetzt fällig",
     needsRelearnState = "Neu lernen",

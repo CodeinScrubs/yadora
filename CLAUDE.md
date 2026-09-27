@@ -58,14 +58,26 @@ because Android 14+ denies `SCHEDULE_EXACT_ALARM` to new installs by default. Th
 step exists for exactly that: granting there re-armed both as exact (`window=0`,
 `exactAllowReason=permission`), and the step itself was checked in English and Persian, light and dark.
 `BootReceiver` re-arms both after a reboot; `connectedDebugAndroidTest` runs. Still unverified: Doze
-delivery over real time, clock/time-zone changes, Samsung battery management over days, the
-full-screen alarm.
+delivery over real time, Samsung battery management over days, the full-screen alarm.
+
+Verified 2026-09-27 (build 1.1 / 4). On the Samsung: with the day's limit done and one review held back, the
+20:00 alarm fired, posted nothing, logged no NOTIF_SHOWN and re-armed only tomorrow's two slots. On the emulator
+(`cmd alarm set-timezone` / `set-time`, `settings put global auto_time 0`): a time-zone change re-arms both slots in
+the NEW local time and posts one catch-up if a slot already passed with topics due; changing back posts nothing
+more. Setting the clock FORWARD past a slot used to post twice within a second (the catch-up and the overdue alarm,
+same notification id, two alerts, two NOTIF_SHOWN); an alarm within 5 minutes of a real reminder now only re-arms
+(`NotificationScheduler.shownJustBefore`). Setting the clock BACK re-arms the real next slots: a saved nudge more
+than one repeat ahead is stale (`isLiveNudge`), and a "last shown" time in the future no longer counts as shown
+today (`shownToday`), which had silenced that day's catch-up and safety sweep. `ReminderSlotsTest` pins the three
+rules. The R8 release, signed with the SDK debug key only to install over the debug build, then ran on the Samsung:
+launch, a rating and its Undo, "Back up now", a full restore and the automatic-backup worker, with no crash. The
+phone's research export replayed through `analyze.py` with 0 mismatches and 0 self-check issues (D1 OK).
 
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
-nothing. After a reboot wait at least ~60 s past `sys.boot_completed` before judging whether reminders
-were re-armed: under load the boot broadcast reached Yadora ~40 s late, and a 25 s check reported a
-re-arm bug that did not exist. Drive the UI with `uiautomator dump` + `input tap` on the node bounds,
+nothing. After a reboot wait up to two minutes past `sys.boot_completed` before judging whether reminders
+were re-armed: under load the boot broadcast reached Yadora ~40 s late (and over 80 s late on 2026-09-27,
+with a Gradle build running), and a 25 s check reported a re-arm bug that did not exist. Drive the UI with `uiautomator dump` + `input tap` on the node bounds,
 found with `tools/device/ui_find.py`. It tests text and content-description SEPARATELY, so anchor
 patterns: `^Allow$` is the button, while `^Allow` also hits the dialog title "Allow Yadora to send you
 notifications?". To revoke exact alarms for a test use `appops set --uid com.yadora.app
@@ -78,6 +90,12 @@ Both checks are scripted — run them (Git Bash, repo root) instead of rebuildin
 (exact vs inexact), channels and jobs; `tools/device/test_reminder.sh <serial>` fires Settings → "Send a
 test reminder" through the real UI and prints the notification Android actually posted. Run both on a
 real phone before every release.
+
+For a realistic library on a device, `DeviceSeedBackupTest` writes `app/build/device-seed/yadora_seed_backup.json`:
+~40 English and Persian topics with a month of history made through the real commit path, more reviews due than a
+limit of 10 allows, first ratings waiting, a deferral, an archived and a deleted topic. Its dates are relative to
+the run, so regenerate it the day you use it (`--tests "com.example.data.DeviceSeedBackupTest"`), push it to
+`/sdcard/Download` and restore it with Settings → Import backup. It carries no settings block.
 
 ## Identity (permanent — never change)
 
@@ -136,6 +154,30 @@ These were decided deliberately. Re-suggesting them wastes a session:
   the card fills what the controls leave, exactly as before on a normal phone, but keeps 200 dp, and the page
   scrolls when that does not fit. `SmallScreenReviewTest` pins it in English and Persian. Adding anything to the
   rating area: run it.
+- **Every rating button says roughly when its answer brings the topic back** (user request 2026-09-27). The four
+  memory buttons (and Easy/Medium/Hard on a first rating) show an estimate in whole days under the label ("~27d",
+  "حدود ۲۷ روز"; a tenth of a day on a guess claims precision it does not have); the understanding buttons show the
+  exact figure as before. Both come from ONE function, `previewReturnDays` in `ReviewSessionScreen`: the same
+  `MedScheduler.review`, fuzz and two clocks as `MedReviewRepository.rateUnit`. The memory estimate is computed for Clear
+  understanding, because Partial/Confused can only bring a topic back SOONER (the repair clock), so the "~" figure is the
+  latest the topic can return; Forgot is exact (tomorrow) and is printed without "~". Checked by hand on the phone: an
+  easy topic (S 13.8 d, D 2.1, 12 days since the last review) previewed 55/78/128 d for Hard/Good/Easy = FSRS-6's
+  37/52/86 d × 1.906 (a 0.85 target) × 0.81 (the learner's calibration) × the topic's −4% fuzz. `ButtonEstimateTest` rates every answer on
+  topics in six states at two calibration scales and pins preview == commit and "estimate >= actual". Never compute a
+  button's figure any other way.
+- **The review screen fits a phone without scrolling** (seen on the owner's Samsung, 2026-09-27): one metadata row in
+  the card (the stage is already in the header), method chips short enough for one row (EN "Lecture", DE "Vorlesung",
+  FA "کلاس/ویدیو", "سایر"), a one-sentence memory hint, 48 dp rating buttons. Before, the rating area pushed the card
+  to its 200 dp minimum and "Not today" below the fold.
+- **Progress's 14-day charts show all fourteen days, ending today** (`FourteenDayChart`, 2026-09-27). Vico scrolled
+  them sideways and opened on the OLDEST ten days, so the four most recent (today included) were hidden unless the
+  learner swiped the chart. Scrolling and zoom are off, x is labelled by day of month (the learner's calendar and
+  digits, every other day), retention is a straight line on a fixed 0–100% axis, review counts are bars on a whole-number
+  step. After any Vico or Compose change, look at both charts on a phone.
+- **Digits follow the interface language, dates the calendar setting** (2026-09-27). `AppDate.date/dateTime/weekdayDate`
+  take a REQUIRED `persianDigits` (the Persian interface): Jalali dates used to print Latin digits beside Persian ones.
+  An English interface on the Jalali calendar keeps Latin digits. `PersianDate.faDigits` also turns a decimal point
+  between two digits into the Persian separator "٫" ("۱۱٫۲ روز", "×۰٫۸۱").
 - **Screens with text fields take the keyboard's height** (`.consumeWindowInsets(padding).imePadding()` on the
   Review, Add/Edit and Settings content, 2026-09-26). The activity is edge-to-edge, so the keyboard covers the
   window instead of resizing it, and without this a focused field near the bottom (a question score, the notes)
@@ -203,13 +245,24 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Merging topics never discards work.** The same material often gets added
   twice (frequently in two languages). `MedReviewRepository.mergeUnits` keeps one
   survivor and, in ONE transaction: re-points every review log at it (logs are
-  never deleted), sums `reviewCount`/`lapseCount`, sets stability and difficulty
+  never deleted), sums `reviewCount`/`lapseCount` LESS each absorbed copy's first
+  study that the combined history demotes to a re-encoding exposure (only the
+  earliest first log still seeds; replay and the export's self-check count it the
+  same way), sets stability and difficulty
   to a **review-count-weighted average** so the result sits nearer the copy with
   more iterations (an unrated copy still weighs 1, never 0), takes the
   **earliest** `nextReviewAt` (a merge must never push material further away than
-  the schedule already had), unions `highYield`, clears `deferredUntil`, and
+  the schedule already had), unions `highYield`, KEEPS a copy's deferral when the
+  earliest date came from one (`deferredUntil` = that date; without deferrals the
+  earliest date is the earlier clock and nothing is deferred), and
   SOFT-deletes the absorbed copies so a mistaken merge is recoverable. No schema
-  change — it is a re-pointing of existing rows. `MergeUnitsTest` pins all of it.
+  change — it is a re-pointing of existing rows. `MergeUnitsTest` pins all of it, and
+  `AnalyticsExportConsistencyTest` pins that a merge of rated, deferred copies (and a
+  correction after it) leaves the export's self-check empty. Until 2026-09-27 the merge
+  summed the counts and cleared the deferral while keeping the deferred date; on the
+  Samsung the export then flagged the survivor twice (REVIEW_COUNT_MISMATCH,
+  CLOCK_DISAGREEMENT). Topics merged by older builds keep those flags until a correction
+  replays them.
 - **Per-topic delete is SOFT** (`deletedAt`, 30-day grace, purge on app start,
   restore from the archive screen). The only hard deletes are the purge and
   "Delete all data".
@@ -674,8 +727,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   cloud backup by decision.
   - **How it works:** once a day `AutoBackupWorker` writes a full streamed backup into a folder the learner
     picked (`OpenDocumentTree`, persisted permission). A folder a sync app mirrors survives losing the phone.
-  - **Files:** never overwritten; each run writes a new dated file (`yadora_backup_YYYY-MM-DD_HHmm.json`). A
-    failed write deletes its own file.
+  - **Files:** never overwritten; each run writes a new dated file (`yadora_backup_YYYY-MM-DD_HHmmss.json`; older
+    minute-only names and a provider's clash copy "… (1).json" are recognised too). A failed write deletes its own file.
+  - **One file per day, and "Back up now" always writes:** on the owner's Samsung, choosing a folder started the daily
+    job AND "back up now" at once and left two identical files, the second renamed "(1)" and never pruned. Now runs
+    are serialised (`runLock`), names carry seconds, a renamed copy is recognised, and pruning keeps the day's newest,
+    so two backups moments apart leave one file. A forced run never reuses an earlier file (`AutoBackup.shouldWrite`):
+    it must hold everything up to the moment the button was pressed. Choosing a new folder clears the last-backup
+    record, so the new folder always gets its first file.
   - **Pruning:** only after a success, and only files with exactly that name pattern. It keeps the newest backup
     of each of the last 7 days that have one, plus the newest of each of the last 6 months.
   - **Empty library:** never backed up, so "Delete all data" cannot rotate the good backups out.

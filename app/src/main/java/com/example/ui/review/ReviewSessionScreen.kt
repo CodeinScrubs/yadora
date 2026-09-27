@@ -78,12 +78,61 @@ internal fun intervalButtonLabel(days: Double): String {
  */
 internal fun localizedIntervalLabel(days: Double, languageCode: String): String {
     val latin = intervalButtonLabel(days)
+    if (languageCode == "de") return latin.replace('.', ',') // German writes a decimal comma: "3,2d"
     if (languageCode != "fa") return latin
     return when {
         latin == "<1h" -> "کمتر از ۱ ساعت"
         latin.endsWith("h") -> "${com.example.ui.i18n.PersianDate.faDigits(latin.dropLast(1))} ساعت"
         else -> "${com.example.ui.i18n.PersianDate.faDigits(latin.dropLast(1).replace('.', '٫'))} روز"
     }
+}
+
+/**
+ * When the topic on screen comes back after [memory] and [understanding], in days from [now]: the same
+ * [MedScheduler.review], fuzz and two clocks as the commit ([com.example.data.repository.MedReviewRepository.rateUnit]),
+ * so a button can never promise one date and the schedule write another. `ButtonEstimateTest` pins it against the
+ * commit for every combination. The understanding buttons show it exactly; each memory button shows it for Clear
+ * understanding as an estimate, because Partial or Confused can only bring a topic back SOONER (the repair clock),
+ * never later, and a Forgot is always tomorrow.
+ */
+internal fun previewReturnDays(
+    unit: StudyUnitEntity,
+    now: Long,
+    memory: MemoryRating,
+    understanding: UnderstandingRating,
+    unrepairedStreak: Int,
+): Double {
+    val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
+    // Measured as the commit measures it (whole local calendar days on FSRS-6).
+    val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
+    val outcome = MedScheduler.review(
+        stability = unit.stability,
+        difficulty = unit.difficulty,
+        elapsedDays = elapsedDays,
+        memoryRating = memory,
+        understanding = understanding,
+        highYield = unit.highYield,
+        reviewNumber = reviewNumber,
+        model = MedScheduler.CURRENT_MODEL,
+        unrepairedStreak = unrepairedStreak,
+        parameterSetId = unit.parameterSetId,
+    )
+    val memoryInterval = MedScheduler.fuzzedInterval(
+        outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount, isFirstStudy = reviewNumber == 0,
+    )
+    // The date that actually applies: the earlier of the memory prediction and the understanding repair deadline.
+    return minOf(memoryInterval, outcome.remediationDays ?: Double.MAX_VALUE)
+}
+
+/**
+ * The figure printed on a memory button. An ESTIMATE, so whole days and a sign that says so ("~128d",
+ * "حدود ۱۲۸ روز"): a tenth of a day on a guess claims precision it does not have, and "~" is not how Persian says
+ * "about". A Forgot is exact (tomorrow) and is printed like the understanding buttons' exact figures.
+ */
+internal fun estimateLabel(days: Double, languageCode: String, exact: Boolean): String {
+    if (exact) return localizedIntervalLabel(days, languageCode)
+    val whole = Math.round(days).coerceAtLeast(1L)
+    return if (languageCode == "fa") "حدود ${com.example.ui.i18n.PersianDate.faDigits(whole)} روز" else "~${whole}d"
 }
 
 /** True if [earlier] falls on an earlier local calendar day than [later]. */
@@ -691,28 +740,30 @@ fun ReviewSessionScreen(
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
                             // Reviews only: a first rating's Easy/Medium/Hard says how difficult a fresh study
-                            // felt, not how much was remembered, so it is counted on its own.
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(text = num(viewModel.sessionCount - viewModel.sessionNew), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                                Text(text = when (strings.languageCode) { "fa" -> "مرور"; "de" -> "Wiederholt"; else -> "Reviewed" }, style = MaterialTheme.typography.labelSmall)
-                            }
-                            if (viewModel.sessionNew > 0) {
+                            // felt, not how much was remembered, so it is counted on its own. A column with nothing in
+                            // it is left out: logging one new topic used to end on "0 · 1 · 0 · 0 · 0".
+                            val reviewed = viewModel.sessionCount - viewModel.sessionNew
+                            @Composable
+                            fun stat(value: Int, label: String, color: androidx.compose.ui.graphics.Color) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(text = num(viewModel.sessionNew), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.tertiary)
-                                    Text(text = when (strings.languageCode) { "fa" -> "مطالعهٔ ثبت‌شده"; "de" -> "Neu erfasst"; else -> "Studies logged" }, style = MaterialTheme.typography.labelSmall)
+                                    Text(text = num(value), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = color)
+                                    Text(text = label, style = MaterialTheme.typography.labelSmall)
                                 }
                             }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(text = num(viewModel.sessionGood), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.secondary)
-                                Text(text = when (strings.languageCode) { "fa" -> "آسان/خوب"; "de" -> "Gut/Leicht"; else -> "Good/Easy" }, style = MaterialTheme.typography.labelSmall)
+                            if (reviewed > 0 || viewModel.sessionNew == 0) {
+                                stat(reviewed, when (strings.languageCode) { "fa" -> "مرور"; "de" -> "Wiederholt"; else -> "Reviewed" }, MaterialTheme.colorScheme.primary)
                             }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(text = num(viewModel.sessionHard), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Hard).solid)
-                                Text(text = when (strings.languageCode) { "fa" -> "سخت"; "de" -> "Schwer"; else -> "Hard" }, style = MaterialTheme.typography.labelSmall)
+                            if (viewModel.sessionNew > 0) {
+                                stat(viewModel.sessionNew, when (strings.languageCode) { "fa" -> "مطالعهٔ ثبت‌شده"; "de" -> "Neu erfasst"; else -> "Studies logged" }, MaterialTheme.colorScheme.tertiary)
                             }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(text = num(viewModel.sessionForgot), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Forgot).solid)
-                                Text(text = when (strings.languageCode) { "fa" -> "فراموش شده"; "de" -> "Vergessen"; else -> "Forgot" }, style = MaterialTheme.typography.labelSmall)
+                            if (viewModel.sessionGood > 0) {
+                                stat(viewModel.sessionGood, when (strings.languageCode) { "fa" -> "آسان/خوب"; "de" -> "Gut/Leicht"; else -> "Good/Easy" }, MaterialTheme.colorScheme.secondary)
+                            }
+                            if (viewModel.sessionHard > 0) {
+                                stat(viewModel.sessionHard, when (strings.languageCode) { "fa" -> "سخت"; "de" -> "Schwer"; else -> "Hard" }, com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Hard).solid)
+                            }
+                            if (viewModel.sessionForgot > 0) {
+                                stat(viewModel.sessionForgot, when (strings.languageCode) { "fa" -> "فراموش شده"; "de" -> "Vergessen"; else -> "Forgot" }, com.example.ui.theme.ratingTone(com.example.domain.model.MemoryRating.Forgot).solid)
                             }
                         }
                     }
@@ -733,6 +784,8 @@ fun ReviewSessionScreen(
                 // First rating (logging a study) vs a later review.
                 val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.reviewCount)
                 val isFreshFirstStudy = previewReviewNumber == 0
+                // One clock for every preview on this screen (the estimates and the understanding buttons).
+                val now = System.currentTimeMillis()
                 // Reference only: shown with the notes, never scored (KeyPoints).
                 val keyPointList = remember(currentUnit.keyPoints) { com.example.domain.srs.KeyPoints.parse(currentUnit.keyPoints) }
                 Row(
@@ -811,7 +864,6 @@ fun ReviewSessionScreen(
                             // (studied before it was added), so a back-dated topic's first review reads "2nd study".
                             val studiedBeforeAdded = isEarlierLocalDay(currentUnit.studiedAt, currentUnit.createdAt)
                             val repNum = currentUnit.reviewCount + 1 + (if (studiedBeforeAdded) 1 else 0)
-                            val formattedStage = strings.stateLabel(currentUnit.state)
                         
                             val lastDateStr = currentUnit.lastReviewedAt?.let {
                                 val diffMs = System.currentTimeMillis() - it
@@ -834,15 +886,20 @@ fun ReviewSessionScreen(
                             val intervalStr = if (currentUnit.currentIntervalDays <= 0.0) {
                                 when (strings.languageCode) { "fa" -> "۰ روز"; "de" -> "0 Tage"; else -> "0 days" }
                             } else {
-                                val rounded = (currentUnit.currentIntervalDays * 10).toInt() / 10.0
-                                when (strings.languageCode) { "fa" -> "${num(rounded)} روز"; "de" -> "$rounded Tage"; else -> "$rounded days" }
+                                // Rounded like the buttons' figures (it used to truncate: a 77.79-day interval the
+                                // button had shown as 77.8 read 77.7 here), without a trailing ".0".
+                                val tenths = Math.round(currentUnit.currentIntervalDays * 10) / 10.0
+                                val rounded = if (tenths % 1.0 == 0.0) tenths.toLong().toString() else tenths.toString()
+                                when (strings.languageCode) { "fa" -> "${num(rounded)} روز"; "de" -> "${rounded.replace('.', ',')} Tage"; else -> "$rounded days" }
                             }
 
+                            // ONE line: which study this is, and the gap and time since the last one. The stage is already in the
+                            // header above; two rows here cost the space the scope and notes need on a phone.
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(bottom = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Card(
@@ -867,36 +924,20 @@ fun ReviewSessionScreen(
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                     )
                                 }
-                            
-                                Text(
-                                    text = "${when (strings.languageCode) { "fa" -> "مرحله"; "de" -> "Stufe"; else -> "Stage" }}: $formattedStage",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
+                                if (!isFreshFirstStudy) {
+                                    Text(
+                                        text = "${when (strings.languageCode) { "fa" -> "فاصله"; "de" -> "Abstand"; else -> "Interval" }}: $intervalStr · " +
+                                            "${when (strings.languageCode) { "fa" -> "آخرین"; "de" -> "Zuletzt"; else -> "Last" }}: $lastDateStr",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        textAlign = TextAlign.End,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
                             }
-                        
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "${when (strings.languageCode) { "fa" -> "فاصله"; "de" -> "Abstand"; else -> "Interval" }}: $intervalStr",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                                Text(
-                                    text = "${when (strings.languageCode) { "fa" -> "آخرین"; "de" -> "Zuletzt"; else -> "Last" }}: $lastDateStr",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
-                        
+
                             HorizontalDivider()
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             Text(
                                 text = currentUnit.title,
@@ -1039,14 +1080,24 @@ fun ReviewSessionScreen(
                                     modifier = Modifier.weight(1f).padding(4.dp).heightIn(min = 56.dp),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Text(
-                                        when (rating) {
-                                            MemoryRating.Easy -> when (strings.languageCode) { "fa" -> "آسان"; "de" -> "Leicht"; else -> "Easy" }
-                                            MemoryRating.Good -> when (strings.languageCode) { "fa" -> "متوسط"; "de" -> "Mittel"; else -> "Medium" }
-                                            else -> when (strings.languageCode) { "fa" -> "سخت"; "de" -> "Schwer"; else -> "Hard" }
-                                        },
-                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                    )
+                                    // The first check-in this answer leads to (with Clear understanding): the learner sees
+                                    // what each answer means for the schedule before choosing it.
+                                    val estimate = previewReturnDays(currentUnit, now, rating, UnderstandingRating.Clear, viewModel.currentUnrepairedStreak)
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            when (rating) {
+                                                MemoryRating.Easy -> when (strings.languageCode) { "fa" -> "آسان"; "de" -> "Leicht"; else -> "Easy" }
+                                                MemoryRating.Good -> when (strings.languageCode) { "fa" -> "متوسط"; "de" -> "Mittel"; else -> "Medium" }
+                                                else -> when (strings.languageCode) { "fa" -> "سخت"; "de" -> "Schwer"; else -> "Hard" }
+                                            },
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                        Text(
+                                            estimateLabel(estimate, strings.languageCode, exact = false),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1099,24 +1150,35 @@ fun ReviewSessionScreen(
                                     containerColor = tone.container,
                                     contentColor = tone.onContainer,
                                 ),
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).heightIn(min = 52.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp).heightIn(min = 48.dp),
                                 shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        when (rating) {
-                                            MemoryRating.Forgot -> strings.ratingFail
-                                            MemoryRating.Hard -> strings.ratingHard
-                                            MemoryRating.Good -> strings.ratingGood
-                                            MemoryRating.Easy -> strings.ratingEasy
-                                        },
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.width(88.dp),
+                                    // The rating, and under it roughly when this answer brings the topic back.
+                                    val estimate = previewReturnDays(
+                                        currentUnit, now, rating,
+                                        if (rating == MemoryRating.Forgot) UnderstandingRating.Partial else UnderstandingRating.Clear,
+                                        viewModel.currentUnrepairedStreak,
                                     )
+                                    Column(modifier = Modifier.width(88.dp)) {
+                                        Text(
+                                            when (rating) {
+                                                MemoryRating.Forgot -> strings.ratingFail
+                                                MemoryRating.Hard -> strings.ratingHard
+                                                MemoryRating.Good -> strings.ratingGood
+                                                MemoryRating.Easy -> strings.ratingEasy
+                                            },
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                        Text(
+                                            estimateLabel(estimate, strings.languageCode, exact = rating == MemoryRating.Forgot),
+                                            style = MaterialTheme.typography.labelSmall,
+                                        )
+                                    }
                                     Text(
                                         when (rating) {
                                             MemoryRating.Forgot -> strings.ratingFailMeaning
@@ -1153,43 +1215,11 @@ fun ReviewSessionScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
+                            val chosenMemory = selectedMemory ?: MemoryRating.Good
                             UnderstandingRating.entries.forEach { rating ->
-                                val now = System.currentTimeMillis()
-                                // Same measure the commit uses, or the buttons would preview an
-                                // interval the commit then disagrees with.
-                                val elapsedDays = MedScheduler.modelElapsedDays(
-                                    currentUnit.lastReviewedAt ?: currentUnit.studiedAt, now,
-                                    MedScheduler.CURRENT_MODEL,
-                                )
-                                // Both choices are known here, so this is the actual interval that commits
-                                // (including the same deterministic fuzz the commit path applies).
-                                val previewOutcome = MedScheduler.review(
-                                    stability = currentUnit.stability,
-                                    difficulty = currentUnit.difficulty,
-                                    elapsedDays = elapsedDays,
-                                    memoryRating = selectedMemory!!,
-                                    understanding = rating,
-                                    highYield = currentUnit.highYield,
-                                    reviewNumber = previewReviewNumber,
-                                    model = MedScheduler.CURRENT_MODEL,
-                                    // The repair clock doubles per unrepaired answer; same value the commit reads.
-                                    unrepairedStreak = viewModel.currentUnrepairedStreak,
-                                    parameterSetId = currentUnit.parameterSetId,
-                                )
-                                val finalInterval = MedScheduler.fuzzedInterval(
-                                    previewOutcome.intervalDays,
-                                    previewOutcome.baseIntervalDays,
-                                    currentUnit.id,
-                                    currentUnit.reviewCount,
-                                    isFirstStudy = previewReviewNumber == 0,
-                                )
-                                // Show when the topic will actually COME BACK, which under the two-clock
-                                // model is the earlier of the memory prediction and the understanding
-                                // repair deadline. Showing the raw memory interval here would print the
-                                // same number on all three buttons (understanding no longer scales it)
-                                // and then contradict itself by resurfacing the topic days earlier.
-                                val effectiveInterval =
-                                    minOf(finalInterval, previewOutcome.remediationDays ?: Double.MAX_VALUE)
+                                // Both answers are known here, so this is exactly when the topic comes back: the
+                                // earlier of the memory date and the repair deadline, with the commit's own fuzz.
+                                val effectiveInterval = previewReturnDays(currentUnit, now, chosenMemory, rating, viewModel.currentUnrepairedStreak)
                                 val intervalStr = localizedIntervalLabel(effectiveInterval, strings.languageCode)
                                 Button(
                                     onClick = {
@@ -1296,8 +1326,9 @@ private fun ReviewMethodPicker(
     fun label(m: com.example.domain.model.ReviewMethod): String = when (m) {
         com.example.domain.model.ReviewMethod.Questions -> when (languageCode) { "fa" -> "تست و سؤال"; "de" -> "Fragen"; else -> "Questions" }
         com.example.domain.model.ReviewMethod.Reading -> when (languageCode) { "fa" -> "خواندن"; "de" -> "Lesen"; else -> "Reading" }
-        com.example.domain.model.ReviewMethod.Lecture -> when (languageCode) { "fa" -> "کلاس یا ویدیو"; "de" -> "Vorlesung / Video"; else -> "Lecture / video" }
-        com.example.domain.model.ReviewMethod.Other -> when (languageCode) { "fa" -> "روش دیگر"; "de" -> "Anders"; else -> "Other" }
+        // Short enough that all four fit one row on a phone; a lecture here includes a recorded one or a video.
+        com.example.domain.model.ReviewMethod.Lecture -> when (languageCode) { "fa" -> "کلاس/ویدیو"; "de" -> "Vorlesung"; else -> "Lecture" }
+        com.example.domain.model.ReviewMethod.Other -> when (languageCode) { "fa" -> "سایر"; "de" -> "Anders"; else -> "Other" }
     }
     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
@@ -1326,20 +1357,32 @@ private fun ReviewMethodPicker(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.padding(top = 4.dp),
             ) {
-                val numberKeyboard = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                )
+                // The keyboard's action key moves from "right" to "total", then closes the keyboard: without it the
+                // key did nothing on a phone, and the learner had to reach for the second field and then press Back.
+                val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
                 OutlinedTextField(
                     value = right, onValueChange = onRight, singleLine = true,
                     label = { Text(when (languageCode) { "fa" -> "درست"; "de" -> "richtig"; else -> "right" }) },
-                    keyboardOptions = numberKeyboard,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Next,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onNext = { focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Next) },
+                    ),
                     modifier = Modifier.width(96.dp),
                 )
                 Text(when (languageCode) { "fa" -> "از"; "de" -> "von"; else -> "out of" })
                 OutlinedTextField(
                     value = total, onValueChange = onTotal, singleLine = true,
                     label = { Text(when (languageCode) { "fa" -> "کل"; "de" -> "gesamt"; else -> "total" }) },
-                    keyboardOptions = numberKeyboard,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onDone = { focusManager.clearFocus() },
+                    ),
                     modifier = Modifier.width(96.dp),
                 )
             }

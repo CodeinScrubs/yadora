@@ -318,5 +318,61 @@ class AnalyticsExportConsistencyTest {
         assertEquals("the corrupt row is exported as-is", 99, repo.getUnitById(liar)!!.reviewCount)
     }
 
+    /**
+     * A merge must leave the database agreeing with itself. On the owner's Samsung (2026-09-27) merging two
+     * rated copies, both deferred with "Not today", made the export flag the survivor twice: its count included
+     * the absorbed copy's first study, which the combined history treats as a re-encoding exposure, and its due
+     * date was the copies' deferred date with the deferral cleared. Real histories through the real commit path,
+     * then the merge, then a correction: the self-check stays empty at every step.
+     */
+    @Test
+    fun `a merge of rated, deferred copies leaves the self-check empty`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<MedReviewApplication>()
+        val repo = app.repository
+        val now = System.currentTimeMillis()
+        val day = 86400000L
+
+        fun copy(title: String, studiedDaysAgo: Int) = runBlocking {
+            val at = now - studiedDaysAgo * day
+            repo.insertUnit(
+                StudyUnitEntity(
+                    title = title, studyType = "Topic", stability = 1.0, difficulty = 5.0, retrievability = 1.0,
+                    state = "New", studiedAt = at, nextReviewAt = at, modelDueAt = at,
+                    currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0, createdAt = at,
+                )
+            )
+        }
+        suspend fun rate(id: Long, daysAgo: Int, m: MemoryRating) = repo.rateUnit(
+            unitId = id, now = now - daysAgo * day, memoryRating = m, understandingRating = UnderstandingRating.Clear,
+            sessionKind = com.example.domain.model.SessionKind.PLAN, reviewDurationMs = 60_000,
+        )!!
+
+        val english = copy("Hyponatraemia", 40).also { rate(it, 40, MemoryRating.Good); rate(it, 37, MemoryRating.Good) }
+        val persian = copy("هیپوناترمی", 30).also { rate(it, 30, MemoryRating.Hard); rate(it, 27, MemoryRating.Forgot) }
+        // Both are due by now; the learner taps "Not today" on each.
+        val tomorrow8 = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, 1); set(java.util.Calendar.HOUR_OF_DAY, 8)
+            set(java.util.Calendar.MINUTE, 0); set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        repo.procrastinateUnit(english, tomorrow8)
+        repo.procrastinateUnit(persian, tomorrow8)
+        fun issues(): String {
+            val c = JSONObject(runBlocking { AnalyticsExporter.buildJson(app) }).getJSONObject("consistency")
+            return if (c.getInt("issueCount") == 0) "" else c.getJSONArray("issues").toString()
+        }
+        assertEquals("clean before the merge", "", issues())
+
+        val merged = repo.mergeUnits(english, listOf(persian))!!
+        assertEquals("four ratings, one of them now a re-encoding exposure", 3, merged.reviewCount)
+        assertEquals("the lapse is kept", 1, merged.lapseCount)
+        assertEquals("the copies' deferral is kept as one", tomorrow8, merged.deferredUntil)
+        assertEquals("clean after the merge", "", issues())
+
+        val lastLog = app.database.reviewLogDao().getLogsForUnitOnce(english).maxByOrNull { it.reviewedAt }!!
+        repo.editReviewRating(english, lastLog.id, MemoryRating.Hard, UnderstandingRating.Clear)
+        assertEquals("a correction does not change the count", 3, repo.getUnitById(english)!!.reviewCount)
+        assertEquals("clean after a correction", "", issues())
+    }
+
     private fun unitsCountForCheck(json: JSONObject): Int = json.getJSONArray("studyUnits").length()
 }

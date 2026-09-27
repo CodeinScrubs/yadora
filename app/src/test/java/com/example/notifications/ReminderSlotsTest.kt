@@ -85,6 +85,39 @@ class ReminderSlotsTest {
         )
     }
 
+    /** A clock set forward past a slot must not post the same reminder twice (seen on the emulator, 2026-09-27). */
+    @Test
+    fun `a reminder posted moments ago is the same reminder`() {
+        val now = 1_790_577_300_000L
+        assertTrue(NotificationScheduler.shownJustBefore(now - 1_000, now))
+        assertTrue(NotificationScheduler.shownJustBefore(now, now))
+        assertFalse("five minutes later is a new nudge", NotificationScheduler.shownJustBefore(now - 5 * 60_000, now))
+        assertFalse("three hours later is the next nudge", NotificationScheduler.shownJustBefore(now - 3 * 3_600_000, now))
+        assertFalse("never shown", NotificationScheduler.shownJustBefore(0L, now))
+        assertFalse("shown 'in the future' means the clock went back", NotificationScheduler.shownJustBefore(now + 60_000, now))
+    }
+
+    @Test
+    fun `a reminder shown 'later today' after the clock went back does not count as shown`() {
+        val start = 1_790_541_000_000L // a local midnight
+        val now = start + 20 * 3_600_000L
+        assertTrue(NotificationScheduler.shownToday(start + 10 * 3_600_000L, start, now))
+        assertFalse("yesterday", NotificationScheduler.shownToday(start - 1, start, now))
+        assertFalse("after now: the clock was set back", NotificationScheduler.shownToday(now + 3_600_000L, start, now))
+    }
+
+    /** The saved nudge is kept until it fires, but a clock set back must not leave it days ahead. */
+    @Test
+    fun `a saved nudge is kept only while it is at most one repeat away`() {
+        val now = 1_790_577_300_000L
+        val hour = 3_600_000L
+        assertTrue(NotificationScheduler.isLiveNudge(now + 3 * hour, now))
+        assertTrue(NotificationScheduler.isLiveNudge(now + 1, now))
+        assertFalse("already due or past", NotificationScheduler.isLiveNudge(now, now))
+        assertFalse("the clock went back two days", NotificationScheduler.isLiveNudge(now + 48 * hour, now))
+        assertFalse("nothing saved", NotificationScheduler.isLiveNudge(0L, now))
+    }
+
     @Test
     fun duplicate_slot_collision_is_coalesced() {
         val eighteen = 18L * 60 * 60 * 1000

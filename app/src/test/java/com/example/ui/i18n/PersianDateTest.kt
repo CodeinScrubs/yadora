@@ -68,5 +68,9 @@ class PersianDateTest {
         assertEquals("۱۴۰۳", PersianDate.faDigits(1403))
         assertEquals("۰۹:۳۰", PersianDate.faDigits("09:30"))
         assertEquals("abc", PersianDate.faDigits("abc"))
+        assertEquals("a decimal point becomes the Persian separator", "۱۱٫۲ روز", PersianDate.faDigits("11.2 روز"))
+        assertEquals("×۰٫۸۱", PersianDate.faDigits("×0.81"))
+        assertEquals("a full stop is not a decimal point", "مرور ۳.", PersianDate.faDigits("مرور 3."))
+        assertEquals("۱۴۰۵/۰۷/۰۵ ۰۹:۳۰", PersianDate.faDigits("1405/07/05 09:30"))
     }
 }

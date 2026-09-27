@@ -27,8 +27,8 @@ class AutoBackupTest {
     @Test fun `a backup is a new dated file with the full contents`() = runBlocking {
         val f = folder()
         val out = AutoBackup.writeInto(f, t0, topicCount = 12) { it.write("{\"backupVersion\":9}".toByteArray()) }
-        assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_2130.json"), out)
-        assertEquals("{\"backupVersion\":9}", java.io.File(f.dir, "yadora_backup_2026-09-24_2130.json").readText())
+        assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_213000.json"), out)
+        assertEquals("{\"backupVersion\":9}", java.io.File(f.dir, "yadora_backup_2026-09-24_213000.json").readText())
     }
 
     @Test fun `a write that fails part-way leaves no file behind and deletes nothing`() = runBlocking {
@@ -36,7 +36,7 @@ class AutoBackupTest {
         AutoBackup.writeInto(f, t0.minusDays(1), 12) { it.write(1) }
         val out = AutoBackup.writeInto(f, t0, 12) { it.write("{\"half".toByteArray()); throw java.io.IOException("disk full") }
         assertTrue(out is AutoBackup.Outcome.Failed)
-        assertEquals("only yesterday's good backup remains", listOf("yadora_backup_2026-09-23_2130.json"), f.names())
+        assertEquals("only yesterday's good backup remains", listOf("yadora_backup_2026-09-23_213000.json"), f.names())
     }
 
     @Test fun `an empty library is never backed up, so old backups are never rotated out by empty ones`() = runBlocking {
@@ -45,7 +45,7 @@ class AutoBackupTest {
         for (d in 1..40) {
             assertTrue(AutoBackup.writeInto(f, t0.plusDays(d.toLong()), topicCount = 0) { it.write(1) } is AutoBackup.Outcome.Skipped)
         }
-        assertEquals(listOf("yadora_backup_2026-09-24_2130.json"), f.names())
+        assertEquals(listOf("yadora_backup_2026-09-24_213000.json"), f.names())
     }
 
     @Test fun `rotation keeps a week of days and six months, and never touches other files`() = runBlocking {
@@ -79,6 +79,39 @@ class AutoBackupTest {
         )
         val doomed = AutoBackup.toDelete(names)
         assertEquals(listOf("yadora_backup_2026-09-24_0800.json"), doomed)
+    }
+
+    @Test fun `older minute-only names and a provider's renamed copy are backups too, and are pruned`() {
+        val names = listOf(
+            "yadora_backup_2026-09-27_190312.json",      // current: to the second
+            "yadora_backup_2026-09-27_1903.json",        // an older build's minute-only name, same day
+            "yadora_backup_2026-09-27_1903 (1).json",    // the clash copy a storage provider renamed
+            "yadora_backup_2026-09-26_2100.json",
+            "yadora_backup (1).json", "notes (1).json",  // not backups: never touched
+        )
+        val doomed = AutoBackup.toDelete(names).toSet()
+        assertEquals(setOf("yadora_backup_2026-09-27_1903.json", "yadora_backup_2026-09-27_1903 (1).json"), doomed)
+    }
+
+    /** Two backups seconds apart (the daily job and "Back up now") leave ONE file: the newer, holding the most. */
+    @Test fun `two backups moments apart leave one file, the newer`() = runBlocking {
+        val f = folder()
+        AutoBackup.writeInto(f, t0, 12) { it.write("{\"older\":1}".toByteArray()) }
+        val out = AutoBackup.writeInto(f, t0.plusSeconds(40), 12) { it.write("{\"newer\":1}".toByteArray()) }
+        assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_213040.json"), out)
+        assertEquals(listOf("yadora_backup_2026-09-24_213040.json"), f.names())
+        assertEquals("{\"newer\":1}", java.io.File(f.dir, "yadora_backup_2026-09-24_213040.json").readText())
+    }
+
+    @Test fun `Back up now always writes, the daily job once a day`() {
+        val now = 1_800_000_000_000L
+        val min = 60_000L
+        assertTrue("nothing yet: write", AutoBackup.shouldWrite(false, now, 0L))
+        assertTrue("Back up now a minute after another: write, it must hold everything up to now",
+            AutoBackup.shouldWrite(true, now, now - min))
+        assertFalse("the daily job the same day: skip", AutoBackup.shouldWrite(false, now, now - min))
+        assertTrue("the daily job a day later: write", AutoBackup.shouldWrite(false, now, now - 25 * 60 * min))
+        assertTrue("a clock set back: write rather than trust a future stamp", AutoBackup.shouldWrite(false, now, now + 60 * min))
     }
 
     @Test fun `Today suggests automatic backup only when there is something to lose and at most monthly`() {

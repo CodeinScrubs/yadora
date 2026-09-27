@@ -382,8 +382,10 @@ class MedReviewRepository(
             // — and an FSRS-5 stability is not measured in the same units as an FSRS-6 one. Averaging
             // across them would produce a number belonging to neither model and silently mis-time the
             // topic from then on. Projection replays each copy's real history, so nothing is lost.
-            val survivor = projectWithHistory(survivorRow, reviewLogDao.getLogsForUnitOnce(survivorRow.id))
-            val absorbed = absorbedRows.map { projectWithHistory(it, reviewLogDao.getLogsForUnitOnce(it.id)) }
+            val survivorLogs = reviewLogDao.getLogsForUnitOnce(survivorRow.id)
+            val absorbedLogs = absorbedRows.map { reviewLogDao.getLogsForUnitOnce(it.id) }
+            val survivor = projectWithHistory(survivorRow, survivorLogs)
+            val absorbed = absorbedRows.mapIndexed { i, row -> projectWithHistory(row, absorbedLogs[i]) }
 
             val all = listOf(survivor) + absorbed
             // Weight by evidence: an unrated copy counts once, a well-drilled copy counts per review.
@@ -395,13 +397,34 @@ class MedReviewRepository(
             val mergedStability = weighted { it.stability }
             val mergedDifficulty = weighted { it.difficulty }
             val earliestDue = all.minOf { it.nextReviewAt }
+            val mergedModelDue = all.minOf { it.modelDueAt }
+            val mergedUnderstandingDue = all.mapNotNull { it.understandingDueAt }.minOrNull()
+
+            // Each copy counted its own first log as a graded review. In the COMBINED history only the earliest
+            // of those is still one: every other copy's FIRST_STUDY becomes a re-encoding exposure, which the
+            // replay (editReviewRating, projection) and the export's self-check never count. Summing the copies'
+            // counts left the survivor one review ahead of its own history per absorbed first study (seen on the
+            // Samsung: "row says 8, history has 7"), so a later correction silently changed the count and with it
+            // the fuzz seed. Only those demoted seeds come off the sum; every real review still counts.
+            val byTime = compareBy<com.example.data.local.entity.ReviewLogEntity>({ it.reviewedAt }, { it.id })
+            val copyFirstLogs = (listOf(survivorLogs) + absorbedLogs).mapNotNull { it.minWithOrNull(byTime) }
+            val combinedFirstId = copyFirstLogs.minWithOrNull(byTime)?.id
+            val demotedSeeds = copyFirstLogs.filter { it.id != combinedFirstId && it.logType == "FIRST_STUDY" }
+
+            // The merged topic comes back on the earliest date any copy had. When that date is later than both
+            // merged clocks, a copy's DEFERRAL put it there (without deferrals the earliest date IS the earlier
+            // clock), so the deferral is kept, not cleared: nextReviewAt must equal the earlier clock unless the
+            // user moved it, and clearing it left a topic due on a date nothing on the row explained. The same
+            // holds for a copy the user moved EARLIER by hand. A merge still creates no deferral of its own.
+            val clocksDue = listOfNotNull(mergedModelDue.takeIf { it > 0L }, mergedUnderstandingDue).minOrNull()
+            val keptDeferral = if (clocksDue == null || earliestDue == clocksDue) null else earliestDue
 
             val merged = survivor.copy(
                 stability = mergedStability,
                 difficulty = mergedDifficulty,
                 currentIntervalDays = weighted { it.currentIntervalDays },
-                reviewCount = all.sumOf { it.reviewCount },
-                lapseCount = all.sumOf { it.lapseCount },
+                reviewCount = (all.sumOf { it.reviewCount } - demotedSeeds.size).coerceAtLeast(0),
+                lapseCount = (all.sumOf { it.lapseCount } - demotedSeeds.count { it.memoryRating == "Forgot" }).coerceAtLeast(0),
                 highYield = all.any { it.highYield }, // importance is a union: if either mattered, it matters
                 // The recall prompt defines what "remembering" this topic means, so a merge must not drop
                 // one: keep the survivor's if it has one, otherwise the first absorbed copy's.
@@ -421,16 +444,16 @@ class MedReviewRepository(
                 // modelDueAt takes the earliest MODEL date, never `earliestDue`: nextReviewAt may be a
                 // date the user deferred to, and the v5 honest-scheduling rule is that a deferral must
                 // never be laundered into the memory model's own opinion.
-                modelDueAt = all.minOf { it.modelDueAt },
+                modelDueAt = mergedModelDue,
                 // The understanding clock follows the same never-push-further-away rule: if ANY copy
                 // still owed a comprehension repair, the merged topic still owes it. Taking the
                 // earliest also keeps nextReviewAt explainable — it must equal the earlier of the two
                 // clocks, and dropping this would leave a topic due earlier than either of them.
-                understandingDueAt = all.mapNotNull { it.understandingDueAt }.minOrNull(),
+                understandingDueAt = mergedUnderstandingDue,
                 // Every copy was just projected, so the merged state is expressed in one model.
                 memoryModel = MedScheduler.CURRENT_MODEL.id,
                 parameterSetId = survivor.parameterSetId,
-                deferredUntil = null, // the merged topic is a fresh, un-deferred schedule
+                deferredUntil = keptDeferral,
                 updatedAt = System.currentTimeMillis(),
             )
 

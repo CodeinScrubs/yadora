@@ -47,10 +47,23 @@ object PersianDate {
         }
     }
 
-    /** Convert Latin digits in a string to Persian digits; other characters are left as-is. */
+    /**
+     * Convert Latin digits in a string to Persian digits. A '.' BETWEEN two digits is a decimal point and becomes
+     * the Persian decimal separator '٫' ("11.2" → "۱۱٫۲"): printing "۱۱.۲" mixed two writing systems in one number.
+     * Everything else is left as-is: a sentence's full stop, a time's ':' and a date's '/' never sit between two digits
+     * as a decimal point does.
+     */
     fun faDigits(s: String): String {
         val sb = StringBuilder(s.length)
-        for (ch in s) sb.append(if (ch in '0'..'9') FA_DIGITS[ch - '0'] else ch)
+        for ((i, ch) in s.withIndex()) {
+            sb.append(
+                when {
+                    ch in '0'..'9' -> FA_DIGITS[ch - '0']
+                    ch == '.' && i > 0 && i < s.length - 1 && s[i - 1] in '0'..'9' && s[i + 1] in '0'..'9' -> '٫'
+                    else -> ch
+                }
+            )
+        }
         return sb.toString()
     }
 

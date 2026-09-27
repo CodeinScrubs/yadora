@@ -381,7 +381,7 @@ fun AddUnitScreen(
     val reminderContext = androidx.compose.ui.platform.LocalContext.current
     // Dates honor the user's calendar preference (Jalali/Gregorian), independent of UI language.
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
-    val fmtDate: (Long) -> String = { m -> com.example.ui.i18n.AppDate.date(useJalali, m) }
+    val fmtDate: (Long) -> String = { m -> com.example.ui.i18n.AppDate.date(useJalali, m, strings.languageCode == "fa") }
 
     // One save path for both buttons: the top bar's Save, and "Save and rate now" for a new topic.
     fun save(rateNow: Boolean) {
@@ -882,7 +882,7 @@ fun AddUnitScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = com.example.ui.i18n.AppDate.dateTime(useJalali, log.reviewedAt),
+                                    text = com.example.ui.i18n.AppDate.dateTime(useJalali, log.reviewedAt, strings.languageCode == "fa"),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -927,12 +927,14 @@ fun AddUnitScreen(
                             Text(
                                 text = run {
                                     val fa = strings.languageCode == "fa"
+                                    // Each language's own decimal sign ("10.5d", "10,5 T", "۱۰٫۵ روز").
                                     fun num(v: Double): String {
                                         val s = String.format(java.util.Locale.US, "%.1f", v)
-                                        return if (fa) com.example.ui.i18n.PersianDate.faDigits(s) else s
+                                        return if (fa) com.example.ui.i18n.PersianDate.faDigits(s)
+                                            else if (strings.languageCode == "de") s.replace('.', ',') else s
                                     }
                                     val dayUnit = when (strings.languageCode) {
-                                        "fa" -> "روز"; "de" -> "T"; else -> "d"
+                                        "fa" -> " روز"; "de" -> " T"; else -> "d"
                                     }
                                     val intervalLabel = when (strings.languageCode) {
                                         "fa" -> "بازه"; "de" -> "Intervall"; else -> "Interval"
