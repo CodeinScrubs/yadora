@@ -20,7 +20,10 @@ class PersonalModelWorker(ctx: Context, params: WorkerParameters) : CoroutineWor
         // FORCE skips only the "enough NEW evidence since the last attempt" wait. The minimum review count
         // and the held-out gate still decide whether anything is adopted.
         val force = inputData.getBoolean(KEY_FORCE, false)
-        runCatching { app.repository.refitPersonalModel(force = force) }.onFailure { error ->
+        // The switch is read again where a result would be adopted: turned off mid-fit, nothing is adopted.
+        runCatching {
+            app.repository.refitPersonalModel(force = force, isEnabled = { prefs.getBoolean(PREF_ENABLED, true) })
+        }.onFailure { error ->
             android.util.Log.w("Yadora", "personal model refit failed", error)
             runCatching {
                 app.repository.logEvent("PERSONAL_MODEL_FAILED", detail = "${error::class.java.simpleName}: ${error.message?.take(120)}")

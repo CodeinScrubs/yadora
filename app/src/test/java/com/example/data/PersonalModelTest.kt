@@ -202,6 +202,14 @@ class PersonalModelTest {
             logs.forEach { db.reviewLogDao().insertLog(it) }
         }
 
+        // Switched off while the fit ran (the switch is read again where the result would be adopted): the fit
+        // passes, and nothing is adopted or recorded as an attempt.
+        val offMidFit = repo.refitPersonalModel(now = t0 + 1200 * day, isEnabled = { false })
+        assertEquals(Fsrs6Optimizer.Verdict.ACCEPTED, offMidFit!!.verdict)
+        assertNull("nothing adopted after the switch went off", db.memoryParameterSetDao().getActive())
+        assertTrue("and no attempt recorded", db.memoryParameterSetDao().getAll().isEmpty())
+        assertEquals("the discard is logged", "PERSONAL_MODEL_DISCARDED", db.eventLogDao().getAll().last().type)
+
         val report = repo.refitPersonalModel(now = t0 + 1200 * day)
         assertNotNull(report)
         assertEquals("z = ${report!!.zScore}", Fsrs6Optimizer.Verdict.ACCEPTED, report.verdict)

@@ -59,6 +59,7 @@ def run_ladder(sc: Scenario, classes, seed: int, daily_cost: Sequence[float]) ->
     due: List[int] = []
     reviews, cost = 0, 0.0
     know: List[float] = []
+    debt = 0.0  # a day's overspend comes off the next day (simulate.run_other explains why)
     for day in range(sc.days):
         for grade in classes[day]:
             t = Topic(len(topics), day, 0, 0, day)
@@ -66,7 +67,7 @@ def run_ladder(sc: Scenario, classes, seed: int, daily_cost: Sequence[float]) ->
             topics.append(t)
             step.append(0)
             due.append(day + LADDER[0])
-        budget = daily_cost[day]
+        budget = daily_cost[day] - debt
         if budget > 0:
             pool = [t for t in topics if t.last_day < day]
             owed = sorted((t for t in pool if due[t.tid] <= day), key=lambda t: (due[t.tid], t.tid))
@@ -83,6 +84,7 @@ def run_ladder(sc: Scenario, classes, seed: int, daily_cost: Sequence[float]) ->
                 budget -= c
                 cost += c
                 reviews += 1
+        debt = max(0.0, -budget)
         know.append(knowledge(mem, topics, day))
     return finish(sc, mem, topics, know, reviews, cost, 0)
 

@@ -26,4 +26,8 @@ interface EventLogDao {
 
     @Query("DELETE FROM event_logs")
     suspend fun deleteAll()
+
+    /** Every merge: the survivor in unitId, the absorbed copies' ids comma-separated in detail. */
+    @Query("SELECT * FROM event_logs WHERE type = 'MERGE'")
+    suspend fun getMergeEvents(): List<EventLogEntity>
 }

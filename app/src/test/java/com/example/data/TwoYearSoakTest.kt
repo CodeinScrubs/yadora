@@ -132,6 +132,10 @@ class TwoYearSoakTest {
 
         val memory = HashMap<Long, TrueMemory>()
         val twinMemory = HashMap<Long, TrueMemory>()
+        // A day's overspend (a review is started while time is left and costs what its outcome costs) comes off the
+        // next day, so the twin's total time equals Yadora's to within one review. It used to be forgiven, which gave
+        // the twin a few percent more time (an outside audit of the same loop in simulate.py, 2026-09-27).
+        var twinDebt = 0.0
         val order = ArrayList<Long>()
         var reviews = 0
         var deferrals = 0
@@ -222,7 +226,7 @@ class TwoYearSoakTest {
 
             // The twin: the same review time today, spent on topics picked at random.
             val pool = order.filter { twinMemory.getValue(it).lastDay < d }.shuffled(twinRnd)
-            var budget = dayCost
+            var budget = dayCost - twinDebt
             for (id in pool) {
                 if (budget <= 0) break
                 val mem = twinMemory.getValue(id)
@@ -230,6 +234,7 @@ class TwoYearSoakTest {
                 mem.update(d, if (recalled) successGrade(twinRnd) else Grade.Again)
                 budget -= if (recalled) 1.0 else 1.5
             }
+            twinDebt = maxOf(0.0, -budget)
         }
 
         val last = days - 1

@@ -341,7 +341,11 @@ class ReviewViewModel(
     private suspend fun advanceUnit() {
         var shown: StudyUnitEntity? = null
         while (dueUnits.isNotEmpty()) {
-            val next = dueUnits.removeAt(0)
+            val queued = dueUnits.removeAt(0)
+            // The queue was read when the session started; the row may have changed since (an edit, a
+            // correction, a merge, a delete), and the buttons must preview from the row the commit will read.
+            val next = runCatching { repository.getUnitById(queued.id) }.getOrNull()
+                ?.takeIf { it.deletedAt == null && !it.archived } ?: continue
             // FAIL CLOSED. The old fallback here was getOrDefault(next), which on a projection
             // failure showed the RAW row -- an FSRS-5 stability behind a preview that computes
             // FSRS-6 intervals, which is precisely the preview-vs-commit mismatch this projection
@@ -371,6 +375,33 @@ class ReviewViewModel(
         _currentUnit.value = shown
         unitShownAt = System.currentTimeMillis()
         _currentUnit.value?.let { checkSplitSuggestion(it) } ?: run { splitSuggestion = false }
+    }
+
+    /**
+     * Re-read the topic on screen, for coming back to it: the pencil opens the Edit screen from here, where the
+     * learner can correct a past rating, switch Important on or change the study date. The card used to keep
+     * the row it had loaded, so the buttons previewed from a state the database no longer held while the
+     * commit read the new one (an outside audit, 2026-09-27). The answers already chosen stay: they are kept
+     * per topic, not per copy of its row. A topic deleted, archived or merged away meanwhile gives way to the next.
+     */
+    fun refreshCurrentUnit() {
+        val shownId = _currentUnit.value?.id ?: return
+        if (isProcessing) return
+        viewModelScope.launch {
+            val fresh = runCatching { repository.getUnitById(shownId) }.getOrNull()
+            if (_currentUnit.value?.id != shownId || isProcessing) return@launch // moved on meanwhile
+            if (fresh == null || fresh.deletedAt != null || fresh.archived) {
+                advanceUnit()
+                return@launch
+            }
+            val projected = runCatching { repository.projectOntoCurrentModel(fresh) }.getOrNull()
+            if (projected == null) {
+                advanceUnit()
+                return@launch
+            }
+            currentUnrepairedStreak = runCatching { repository.unrepairedStreak(shownId) }.getOrDefault(0)
+            if (projected != _currentUnit.value) _currentUnit.value = projected
+        }
     }
 
     /**
@@ -460,7 +491,10 @@ class ReviewViewModel(
                 }
                 // The undone log is gone, so the streak the buttons preview with must be re-read.
                 currentUnrepairedStreak = repository.unrepairedStreak(historyItem.unitBeforeRating.id)
-                _currentUnit.value = historyItem.unitBeforeRating
+                // The row as undo left it: its schedule from before the rating, its content as it is now.
+                _currentUnit.value = repository.getUnitById(historyItem.unitBeforeRating.id)
+                    ?.let { runCatching { repository.projectOntoCurrentModel(it) }.getOrNull() }
+                    ?: historyItem.unitBeforeRating
             } catch (t: Throwable) {
                 ratedStack.add(historyItem) // undo failed: keep the history item so Undo stays possible
             } finally {
@@ -616,6 +650,10 @@ fun ReviewSessionScreen(
     LaunchedEffect(unitId, ignoreLimit, ahead) {
         viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead)
     }
+    // Coming back to the card (from the Edit screen, or the app from the background): show the row as it is now.
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshCurrentUnit()
+    }
 
     val currentUnitState by viewModel.currentUnit.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
@@ -627,10 +665,11 @@ fun ReviewSessionScreen(
 
     // rememberSaveable, not remember: a rotation, a dark-mode toggle, a split-screen resize or a
     // font-size change destroys composition, and with plain remember the learner was thrown back to
-    // the first rating step having already answered it. Keyed on the unit so moving to the next topic
-    // still clears it.
+    // the first rating step having already answered it. Keyed on the topic's id, so moving to the next topic
+    // clears it while a refresh of the same topic (coming back from the Edit screen) keeps it.
+    val currentTopicKey = currentUnitState?.id
     var selectedMemory by rememberSaveable(
-        currentUnitState,
+        currentTopicKey,
         // Saved as the enum NAME (MemoryRating is not Parcelable); an unknown name restores as null
         // rather than throwing, so a bundle written by another build cannot crash the review screen.
         stateSaver = androidx.compose.runtime.saveable.Saver<MemoryRating?, String>(
@@ -642,14 +681,14 @@ fun ReviewSessionScreen(
     // Optional pilot research data for THIS topic: how the learner reviewed, and a question score. Reset for
     // every topic (a remembered choice would record a method nobody picked), saved across rotation.
     var reviewMethods by rememberSaveable(
-        currentUnitState,
+        currentTopicKey,
         stateSaver = androidx.compose.runtime.saveable.Saver<Set<com.example.domain.model.ReviewMethod>, String>(
             save = { com.example.domain.model.ReviewMethod.encode(it).orEmpty() },
             restore = { com.example.domain.model.ReviewMethod.decode(it) },
         ),
     ) { mutableStateOf(emptySet<com.example.domain.model.ReviewMethod>()) }
-    var questionsRight by rememberSaveable(currentUnitState) { mutableStateOf("") }
-    var questionsTotal by rememberSaveable(currentUnitState) { mutableStateOf("") }
+    var questionsRight by rememberSaveable(currentTopicKey) { mutableStateOf("") }
+    var questionsTotal by rememberSaveable(currentTopicKey) { mutableStateOf("") }
     // Only a Questions review carries a score; unticking Questions drops what was typed.
     fun scoreOrNull(field: String): Int? =
         if (com.example.domain.model.ReviewMethod.Questions in reviewMethods) field.trim().toIntOrNull() else null

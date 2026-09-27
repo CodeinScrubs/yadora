@@ -321,4 +321,78 @@ class BackupRoundTripTest {
             sched.knownParameterSets = emptyMap()
         }
     }
+
+    /** One topic with one review, the backup of it, and a way to put the library back to that state. */
+    private suspend fun oneTopicLibrary(context: Context): Pair<Long, String> {
+        val db = (context as MedReviewApplication).database
+        val now = System.currentTimeMillis()
+        val unitId = db.studyUnitDao().insertUnit(
+            StudyUnitEntity(title = "Keep me", studyType = "Topic", studiedAt = now, nextReviewAt = now)
+        )
+        db.reviewLogDao().insertLog(
+            ReviewLogEntity(
+                studyUnitId = unitId, reviewedAt = now, memoryRating = "Good", understandingRating = "Clear",
+                previousIntervalDays = 0.0, nextIntervalDays = 1.0, previousState = "New", nextState = "Learning",
+            )
+        )
+        return unitId to BackupManager.buildBackupJson(context)
+    }
+
+    /**
+     * An outside audit (2026-09-27) restored `"studyUnits": null`: it passed as an empty library and replaced every
+     * topic with nothing. Null or missing record lists are damage; a real empty library is an empty list.
+     */
+    @Test
+    fun `a backup whose topic or review list is null is refused and the library is untouched`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val (unitId, json) = oneTopicLibrary(context)
+        for (section in listOf("studyUnits", "reviewLogs")) {
+            val bad = org.json.JSONObject(json).put(section, org.json.JSONObject.NULL).toString()
+            assertTrue("null $section must be refused", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
+            assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+            assertEquals(1, db.reviewLogDao().getLogsForUnitOnce(unitId).size)
+        }
+        // The audit's exact file: nothing but a version and a null topic list. Nothing else in it can fail
+        // validation, so only the list check stands between it and an empty library.
+        val bare = "{\"backupVersion\": ${BackupManager.BACKUP_VERSION}, \"studyUnits\": null}"
+        assertTrue("a bare null topic list must be refused", runCatching { BackupManager.restoreFromJson(context, bare) }.isFailure)
+        assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+        val noTopics = org.json.JSONObject(json).apply { remove("studyUnits") }.toString()
+        assertTrue("a file without topics is not a backup", runCatching { BackupManager.restoreFromJson(context, noTopics) }.isFailure)
+        assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+    }
+
+    @Test
+    fun `a backup naming a memory model this build does not know is refused`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val (unitId, json) = oneTopicLibrary(context)
+        val root = org.json.JSONObject(json)
+        root.getJSONArray("studyUnits").getJSONObject(0).put("memoryModel", "FSRS-7")
+        val result = runCatching { BackupManager.restoreFromJson(context, root.toString()) }
+        assertTrue("a newer model must not be read as FSRS-5", result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("update the app"))
+        assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+        // An older file with no model named at all is still FSRS-5, as before.
+        val legacy = org.json.JSONObject(json)
+        legacy.getJSONArray("studyUnits").getJSONObject(0).remove("memoryModel")
+        BackupManager.restoreFromJson(context, legacy.toString())
+        assertEquals("FSRS-5", db.studyUnitDao().getUnitById(unitId)!!.memoryModel)
+    }
+
+    /** Soft-deleted implies archived: a file saying "deleted but active" restores the deletion it records. */
+    @Test
+    fun `a topic the backup marks deleted is restored into Recently deleted, never into Today`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val (unitId, json) = oneTopicLibrary(context)
+        val root = org.json.JSONObject(json)
+        root.getJSONArray("studyUnits").getJSONObject(0).put("deletedAt", 1_000L).put("archived", false)
+        BackupManager.restoreFromJson(context, root.toString())
+        val restored = db.studyUnitDao().getUnitById(unitId)!!
+        assertEquals(1_000L, restored.deletedAt)
+        assertTrue("archived with it", restored.archived)
+        assertTrue("so no active query offers it", db.studyUnitDao().getAllActiveOnce().none { it.id == unitId })
+    }
 }

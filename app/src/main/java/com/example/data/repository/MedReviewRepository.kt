@@ -15,7 +15,7 @@ import com.example.domain.model.UnderstandingRating
 import com.example.domain.srs.MedScheduler
 import com.example.domain.srs.MemoryState
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.withLock
 
 class MedReviewRepository(
     private val studyUnitDao: StudyUnitDao,
@@ -99,7 +99,8 @@ class MedReviewRepository(
     suspend fun updateUnitReplayingHistory(unit: StudyUnitEntity) {
         database.withTransaction {
             studyUnitDao.updateUnit(unit)
-            if (reviewLogDao.getLogsForUnit(unit.id).first().isNotEmpty()) {
+            // One-shot read inside the transaction (a Flow's query runs outside it).
+            if (reviewLogDao.getLogsForUnitOnce(unit.id).isNotEmpty()) {
                 // logId = -1 matches no log → pure replay, no rating substituted (args unused).
                 editReviewRating(unit.id, -1L, MemoryRating.Good, UnderstandingRating.Clear)
             } else if (unit.deferredUntil == null) {
@@ -230,14 +231,30 @@ class MedReviewRepository(
         MedScheduler.activeParameterSet = active ?: MedScheduler.DEFAULT_PARAMETER_SET
     }
 
-    /** Every topic's graded history, rebuilt exactly as [projectWithHistory] rebuilds it, for the optimizer. */
-    suspend fun trainingHistories(): List<com.example.domain.srs.Fsrs6Optimizer.History> =
-        reviewLogDao.getAllLogsOnce().groupBy { it.studyUnitId }.values.mapNotNull { logs ->
+    /**
+     * Every topic's graded history, rebuilt exactly as [projectWithHistory] rebuilds it, for the optimizer.
+     *
+     * Merged topics are left out, as the pilot analysis leaves them out of its fit (tools/pilot/analyze.py). A
+     * merged history interleaves two copies studied separately, and its state is a weighted average no replay
+     * reproduces; the on-device fit used to train on it anyway (an outside audit, 2026-09-27).
+     */
+    suspend fun trainingHistories(): List<com.example.domain.srs.Fsrs6Optimizer.History> {
+        val merged = mergedUnitIds()
+        return reviewLogDao.getAllLogsOnce().groupBy { it.studyUnitId }.filterKeys { it !in merged }.values.mapNotNull { logs ->
             com.example.domain.srs.Fsrs6Optimizer.historyOf(
                 logs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
                     .map { com.example.domain.srs.Fsrs6Optimizer.Event(it.reviewedAt, it.memoryRating, it.logType) },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
         }
+    }
+
+    /** Every topic a merge touched, survivors and absorbed copies, read from the MERGE events as analyze.py reads them. */
+    private suspend fun mergedUnitIds(): Set<Long> = database.eventLogDao().getMergeEvents().flatMapTo(HashSet()) { e ->
+        listOfNotNull(e.unitId) + (e.detail ?: "").split(",").mapNotNull { it.trim().toLongOrNull() }
+    }
+
+    /** One refit at a time: the daily job and the one Settings starts must not fit and adopt side by side. */
+    private val refitLock = kotlinx.coroutines.sync.Mutex()
 
     /**
      * Refit the memory model to this learner when there is enough NEW evidence to be worth it: at least
@@ -251,8 +268,20 @@ class MedReviewRepository(
     suspend fun refitPersonalModel(
         now: Long = System.currentTimeMillis(),
         force: Boolean = false,
+        /** The Settings switch as it stands NOW; read again where a result would be adopted. */
+        isEnabled: () -> Boolean = { true },
+    ): com.example.domain.srs.Fsrs6Optimizer.FitReport? = refitLock.withLock { refitLocked(now, force, isEnabled) }
+
+    private suspend fun refitLocked(
+        now: Long,
+        force: Boolean,
+        isEnabled: () -> Boolean,
     ): com.example.domain.srs.Fsrs6Optimizer.FitReport? {
         val dao = database.memoryParameterSetDao()
+        // What the fit is about to learn from, so its result can be checked against the history as it is when
+        // it finishes (a fit takes seconds).
+        val maxLogId = reviewLogDao.maxLogId()
+        val fingerprint = reviewLogDao.historyFingerprint(maxLogId)
         val histories = trainingHistories()
         val available = histories.sumOf { h -> (1 until h.size).count { h.inLoss(it) } }
         if (available < com.example.domain.srs.Fsrs6Optimizer.MIN_REVIEWS_FOR_A_FIT) return null
@@ -271,6 +300,19 @@ class MedReviewRepository(
         val accepted = report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.ACCEPTED && weights != null
         fun stored(x: Double?) = if (x != null && x.isFinite()) x else -1.0
         database.withTransaction {
+            // Checked where the result is written, not only where the job started: the learner may have switched
+            // the personal model off, wiped or restored the data while the fit ran, and a fit that finished after
+            // "off" used to be adopted anyway (an outside audit, 2026-09-27). Settings writes the switch before its
+            // own transaction retires the active set, so reading it inside this one leaves no gap.
+            if (!isEnabled() || reviewLogDao.historyFingerprint(maxLogId) != fingerprint) {
+                database.eventLogDao().insert(
+                    com.example.data.local.entity.EventLogEntity(
+                        type = "PERSONAL_MODEL_DISCARDED",
+                        detail = if (!isEnabled()) "switched off during the fit" else "history changed during the fit",
+                    )
+                )
+                return@withTransaction
+            }
             if (accepted) dao.retireActive(now)
             dao.insert(
                 com.example.data.local.entity.MemoryParameterSetEntity(
@@ -519,12 +561,16 @@ class MedReviewRepository(
         studyUnitDao.restoreDeletedUnit(id, System.currentTimeMillis())
     }
 
-    /** Hard-delete topics whose 30-day grace expired, HISTORY FIRST so a crash can't orphan logs. */
+    /**
+     * Hard-delete topics whose 30-day grace expired, HISTORY FIRST so a crash can't orphan logs. Choosing the
+     * topics and deleting them is one transaction: chosen outside it, a topic restored in between was deleted
+     * anyway, with its history (an outside audit reproduced it, 2026-09-27).
+     */
     suspend fun purgeExpiredDeleted(graceMillis: Long = 30L * 24 * 60 * 60 * 1000) {
         val cutoff = System.currentTimeMillis() - graceMillis
-        val ids = studyUnitDao.getPurgeCandidateIds(cutoff)
-        if (ids.isEmpty()) return
         database.withTransaction {
+            val ids = studyUnitDao.getPurgeCandidateIds(cutoff)
+            if (ids.isEmpty()) return@withTransaction
             reviewLogDao.deleteLogsForUnits(ids)
             studyUnitDao.hardDeleteUnits(ids)
         }
@@ -593,7 +639,7 @@ class MedReviewRepository(
         ignoreLimit: Boolean = false,
     ): com.example.ui.today.DailyPlan.Plan {
         val due = studyUnitDao.getDueUnitsList(com.example.ui.today.DayBounds.endOf(now))
-        val done = reviewLogDao.countReviewsSince(com.example.ui.today.DayBounds.startOf(now))
+        val done = reviewLogDao.countReviewsBetween(com.example.ui.today.DayBounds.startOf(now), com.example.ui.today.DayBounds.endOf(now))
         return com.example.ui.today.DailyPlan.plan(due, done, dailyLimit, now, ignoreLimit)
     }
 
@@ -618,8 +664,8 @@ class MedReviewRepository(
         limit = limit,
     )
 
-    /** Reviews (first ratings excluded) committed since [since], live. */
-    fun observeReviewsSince(since: Long): Flow<Int> = reviewLogDao.observeReviewsSince(since)
+    /** Reviews (first ratings excluded) whose time falls in one local day, [since] to [until], live. */
+    fun observeReviewsBetween(since: Long, until: Long): Flow<Int> = reviewLogDao.observeReviewsBetween(since, until)
 
     /**
      * How many answers in a row, counting back from the topic's latest log, left understanding
@@ -695,6 +741,11 @@ class MedReviewRepository(
      * [MedScheduler.review] the rating buttons preview with, and writes the row and its log in one
      * transaction ([commitReview]). [now] is a parameter only so a test can place a history in time; the
      * screen passes the wall clock. Returns null if the topic no longer exists.
+     *
+     * The read, the projection, the scheduling and the write are ONE transaction, not only the write: a write
+     * landing between this read and [commitReview] (an Edit-screen save, a second rating of the same topic, a
+     * notification's "Not today") used to be overwritten by the row this rating had read, or counted once
+     * for two reviews (an outside audit reproduced both with a paused read, 2026-09-27).
      */
     suspend fun rateUnit(
         unitId: Long,
@@ -705,6 +756,19 @@ class MedReviewRepository(
         methods: Set<com.example.domain.model.ReviewMethod> = emptySet(),
         questionsCorrect: Int? = null,
         questionsTotal: Int? = null,
+        sessionKind: com.example.domain.model.SessionKind,
+        reviewDurationMs: Long,
+    ): RatedReview? = database.withTransaction { rateUnitLocked(unitId, now, memoryRating, understandingRating, understandingAsked, methods, questionsCorrect, questionsTotal, sessionKind, reviewDurationMs) }
+
+    private suspend fun rateUnitLocked(
+        unitId: Long,
+        now: Long,
+        memoryRating: MemoryRating,
+        understandingRating: UnderstandingRating,
+        understandingAsked: Boolean,
+        methods: Set<com.example.domain.model.ReviewMethod>,
+        questionsCorrect: Int?,
+        questionsTotal: Int?,
         sessionKind: com.example.domain.model.SessionKind,
         reviewDurationMs: Long,
     ): RatedReview? {
@@ -851,10 +915,39 @@ class MedReviewRepository(
      */
     suspend fun undoReview(previousUnit: StudyUnitEntity, logId: Long) {
         database.withTransaction {
-            studyUnitDao.updateUnit(previousUnit)
+            // Undo takes back the REVIEW, not what the learner changed since: the snapshot's scheduling fields go
+            // back, while title, notes, source, scope, subject, Important, study date and archive state stay as
+            // they are now. Writing the whole snapshot reverted an edit made between the rating and the undo.
+            val current = studyUnitDao.getUnitById(previousUnit.id)
+            studyUnitDao.updateUnit(current?.let { withSchedulingOf(it, previousUnit) } ?: previousUnit)
             reviewLogDao.deleteLogById(logId)
             database.eventLogDao().deleteStudyActionForLog(logId.toString())
         }
+    }
+
+    /**
+     * [current] with every field a review writes taken from [snapshot]; everything the learner edits kept. When
+     * nothing else changed since the rating, that is the snapshot itself, exactly.
+     */
+    internal fun withSchedulingOf(current: StudyUnitEntity, snapshot: StudyUnitEntity): StudyUnitEntity {
+        val merged = current.copy(
+            state = snapshot.state,
+            difficulty = snapshot.difficulty,
+            stability = snapshot.stability,
+            retrievability = snapshot.retrievability,
+            lastReviewedAt = snapshot.lastReviewedAt,
+            nextReviewAt = snapshot.nextReviewAt,
+            currentIntervalDays = snapshot.currentIntervalDays,
+            reviewCount = snapshot.reviewCount,
+            lapseCount = snapshot.lapseCount,
+            modelDueAt = snapshot.modelDueAt,
+            deferredUntil = snapshot.deferredUntil,
+            understandingDueAt = snapshot.understandingDueAt,
+            memoryModel = snapshot.memoryModel,
+            parameterSetId = snapshot.parameterSetId,
+            updatedAt = snapshot.updatedAt,
+        )
+        return if (merged == snapshot) snapshot else merged.copy(updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -866,8 +959,23 @@ class MedReviewRepository(
      *
      * Pass [logId] = -1 for a PURE replay (no rating substituted): used after the topic's study date
      * changes, so the schedule is recomputed from the new origin instead of silently diverging from it.
+     *
+     * Saving a rating UNCHANGED does nothing. It used to replay the whole history, which is not always the
+     * identity: a merged topic's weighted average became a chronological replay, a topic that had crossed to
+     * a personal weight set recomputed its older rows on that set, and after a time-zone move the calendar
+     * days between old reviews could shift (an outside audit reproduced all three, 2026-09-27). A real
+     * correction still recomputes everything, which is what the dialog says it does.
+     *
+     * The read, the replay and the write are one transaction, so nothing written in between is overwritten.
      */
     suspend fun editReviewRating(
+        unitId: Long,
+        logId: Long,
+        newMemory: MemoryRating,
+        newUnderstanding: UnderstandingRating?,
+    ) = database.withTransaction { editReviewRatingLocked(unitId, logId, newMemory, newUnderstanding) }
+
+    private suspend fun editReviewRatingLocked(
         unitId: Long,
         logId: Long,
         newMemory: MemoryRating,
@@ -875,10 +983,18 @@ class MedReviewRepository(
     ) {
         val unit = studyUnitDao.getUnitById(unitId) ?: return
         // Deterministic ordering: two logs can share a millisecond (restored/synthetic data) — break
-        // ties by insertion id so replay order can never silently differ between runs.
-        val logs = reviewLogDao.getLogsForUnit(unitId).first()
+        // ties by insertion id so replay order can never silently differ between runs. One-shot read: a
+        // Flow's query would run outside this transaction.
+        val logs = reviewLogDao.getLogsForUnitOnce(unitId)
             .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
         if (logs.isEmpty()) return
+        if (logId != -1L) {
+            // A correction of a log that is gone (undone meanwhile) corrects nothing.
+            val target = logs.firstOrNull { it.id == logId } ?: return
+            val sameMemory = target.memoryRating == newMemory.name
+            val sameUnderstanding = newUnderstanding == null || target.understandingRating == newUnderstanding.name
+            if (sameMemory && sameUnderstanding) return
+        }
 
         // A topic on a personal weight set replays under that set, so the registry must hold it even in
         // a process where no review session has run yet.
@@ -983,6 +1099,9 @@ class MedReviewRepository(
                         elapsedDays = elapsed,
                         // logType is deliberately PRESERVED. Rewriting it to RECALL would launder a
                         // study exposure into retrieval history and destroy the distinction forever.
+                        // The numbers above were just computed on this model and set: the row says so.
+                        schedulerVersion = replayModel.id,
+                        parameterSetId = replaySetId,
                     )
                 )
                 prevTime = log.reviewedAt
@@ -1083,6 +1202,13 @@ class MedReviewRepository(
                     calibrationScaleAtReview = if (log.id != logId) log.calibrationScaleAtReview
                         else if (replayModel == MedScheduler.MemoryModel.FSRS_6) MedScheduler.calibrationScale
                         else 1.0,
+                    // The prediction and interval above were computed on THIS model and weight set, so the row
+                    // is stamped with them. It used to keep its original stamp: a topic that had crossed from
+                    // the defaults to a personal set, then had a rating corrected, carried rows labelled
+                    // "defaults" holding the personal set's numbers, which the calibration (after a switch back
+                    // to the defaults) and the pilot's exact replay both trust (an outside audit, 2026-09-27).
+                    schedulerVersion = replayModel.id,
+                    parameterSetId = replaySetId,
                 )
             )
 
