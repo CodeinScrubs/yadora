@@ -80,6 +80,14 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         if (show) archived else active
     }
 
+    /**
+     * Every topic in the current view (active or archived) whatever the search and filter: what a selection can
+     * hold. Finding a duplicate pair means selecting across two searches ("Appendicitis", then "آپاندیسیت"), so
+     * the merge dialog must list the whole selection, not only what the current search shows.
+     */
+    val viewUnits: StateFlow<List<StudyUnitEntity>> = baseList
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val filteredUnits: StateFlow<List<StudyUnitEntity>> = combine(
         baseList, searchQuery, subjects, systems,
         combine(filter, sortBy) { f, s -> f to s }
@@ -220,6 +228,7 @@ fun LibraryScreen(
 ) {
     val viewModel: LibraryViewModel = viewModel(factory = LibraryViewModelFactory(repository))
     val units by viewModel.filteredUnits.collectAsStateWithLifecycle()
+    val viewUnits by viewModel.viewUnits.collectAsStateWithLifecycle()
     val recentlyDeleted by viewModel.recentlyDeleted.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -230,6 +239,9 @@ fun LibraryScreen(
     val libContext = androidx.compose.ui.platform.LocalContext.current
     
     var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    // A selection belongs to one view: switching between the library and the archive starts a new one, so an
+    // action here can never reach topics selected over there.
+    androidx.compose.runtime.LaunchedEffect(showArchived) { selectedIds = emptySet() }
     // Deleting FROM the archive: the archive toolbar previously offered only Restore, so an archived
     // topic could not be deleted from selection mode at all.
     var showBatchPurgeConfirm by remember { mutableStateOf(false) }
@@ -239,7 +251,10 @@ fun LibraryScreen(
     val isFarsi = strings.languageCode == "fa"
 
     if (showMergeDialog) {
-        val candidates = units.filter { it.id in selectedIds }
+        // The WHOLE selection, including topics the current search hides: every selected id is merged, so every
+        // one must be shown and choosable. Filtering by the visible list let a topic selected under an earlier
+        // search be absorbed without appearing in the dialog (seen on the Samsung).
+        val candidates = viewUnits.filter { it.id in selectedIds }
         var keepId by remember(selectedIds) {
             // Default to the copy with the most reviews — the one the user has invested most in.
             mutableStateOf(candidates.maxByOrNull { it.reviewCount }?.id ?: candidates.firstOrNull()?.id)
@@ -284,8 +299,8 @@ fun LibraryScreen(
                                 Text(
                                     when (strings.languageCode) {
                                         "fa" -> "${com.example.ui.i18n.PersianDate.faDigits(u.reviewCount)} مرور"
-                                        "de" -> "${u.reviewCount} Wiederholungen"
-                                        else -> "${u.reviewCount} reviews"
+                                        "de" -> if (u.reviewCount == 1) "1 Wiederholung" else "${u.reviewCount} Wiederholungen"
+                                        else -> if (u.reviewCount == 1) "1 review" else "${u.reviewCount} reviews"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -372,11 +387,15 @@ fun LibraryScreen(
     }
 
     if (showBatchDeleteConfirm) {
-        val batchDeleteTitle = when (strings.languageCode) { "fa" -> "بایگانی مباحث انتخاب شده؟"; "de" -> "Ausgewählte Themen archivieren?"; else -> "Archive Selected Topics?" }
+        val batchDeleteTitle = when (strings.languageCode) {
+            "fa" -> if (selectedIds.size == 1) "بایگانی مبحث انتخاب‌شده؟" else "بایگانی مباحث انتخاب‌شده؟"
+            "de" -> if (selectedIds.size == 1) "Ausgewähltes Thema archivieren?" else "Ausgewählte Themen archivieren?"
+            else -> if (selectedIds.size == 1) "Archive Selected Topic?" else "Archive Selected Topics?"
+        }
         val batchDeleteConfirmText = when (strings.languageCode) {
-            "fa" -> "آیا مطمئن هستید که می‌خواهید ${com.example.ui.i18n.PersianDate.faDigits(selectedIds.size)} مبحث انتخاب شده را بایگانی کنید؟"
-            "de" -> "Möchtest du die ${selectedIds.size} ausgewählten Themen wirklich archivieren?"
-            else -> "Are you sure you want to archive the ${selectedIds.size} selected topics?"
+            "fa" -> "مطمئنی که می‌خواهی ${com.example.ui.i18n.PersianDate.faDigits(selectedIds.size)} مبحث انتخاب‌شده را بایگانی کنی؟"
+            "de" -> if (selectedIds.size == 1) "Möchtest du das ausgewählte Thema wirklich archivieren?" else "Möchtest du die ${selectedIds.size} ausgewählten Themen wirklich archivieren?"
+            else -> if (selectedIds.size == 1) "Are you sure you want to archive the selected topic?" else "Are you sure you want to archive the ${selectedIds.size} selected topics?"
         }
         AlertDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
@@ -547,8 +566,9 @@ fun LibraryScreen(
             }
         },
         floatingActionButton = {
-            // Same quick-add entry point as Today, so adding a topic never requires switching tabs.
-            if (selectedIds.isEmpty()) {
+            // Same quick-add entry point as Today, so adding a topic never requires switching tabs. Not in the archive:
+            // nothing is added there, and on a short list the button sat on the last "Restore" (seen on the Samsung).
+            if (selectedIds.isEmpty() && !showArchived) {
                 FloatingActionButton(
                     onClick = onNavigateToAdd,
                     containerColor = MaterialTheme.colorScheme.primary
@@ -626,7 +646,8 @@ fun LibraryScreen(
                     LibraryFilter.ALL to (when (strings.languageCode) { "fa" -> "همه"; "de" -> "Alle"; else -> "All" }),
                     LibraryFilter.DUE to (when (strings.languageCode) { "fa" -> "موعد رسیده"; "de" -> "Fällig"; else -> "Due" }),
                     LibraryFilter.WEAK to (when (strings.languageCode) { "fa" -> "ضعیف"; "de" -> "Schwach"; else -> "Weak" }),
-                    LibraryFilter.HIGH_YIELD to (when (strings.languageCode) { "fa" -> "پربازده"; "de" -> "Wichtig"; else -> "High-yield" })
+                    // "Important": the word the cards, the Add screen and Today use for the same flag.
+                    LibraryFilter.HIGH_YIELD to (when (strings.languageCode) { "fa" -> "مهم"; "de" -> "Wichtig"; else -> "Important" })
                 ).forEach { (f, label) ->
                     FilterChip(
                         selected = filter == f,
@@ -639,13 +660,14 @@ fun LibraryScreen(
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
+                // Room under the last card for the floating button (see TodayScreen).
+                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Titles shared by 2+ topics → show the differing detail so they're distinguishable.
                 val dupTitles = units.groupingBy { com.example.data.text.TopicTitle.normalize(it.title) }.eachCount().filterValues { it > 1 }.keys
                 item {
-                    Text(strings.itemsCount.format(units.size).let { if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(it) else it }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text((if (units.size == 1) strings.itemsCountOne else strings.itemsCount.format(units.size)).let { if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(it) else it }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 items(units, key = { it.id }) { unit ->

@@ -55,7 +55,10 @@ class ReminderSafetyWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
             set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         val transient = NotificationScheduler.transientPrefs(ctx)
-        if (transient.getLong(NotificationScheduler.PREF_LAST_SHOWN_AT, 0L) >= startOfToday) {
+        if (NotificationScheduler.shownToday(
+                transient.getLong(NotificationScheduler.PREF_LAST_SHOWN_AT, 0L), startOfToday, now.timeInMillis,
+            )
+        ) {
             return Result.success() // already shown
         }
 

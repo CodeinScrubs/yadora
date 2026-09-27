@@ -26,6 +26,24 @@ class IntervalButtonLabelTest {
     }
 
     @Test
+    fun `each language writes its own decimal separator`() {
+        assertEquals("3.2d", localizedIntervalLabel(3.2, "en"))
+        assertEquals("3,2d", localizedIntervalLabel(3.2, "de"))
+        assertEquals("۳٫۲ روز", localizedIntervalLabel(3.2, "fa"))
+    }
+
+    /** A memory button's figure is an estimate: whole days, marked as approximate; a Forgot is exact. */
+    @Test
+    fun `button estimates are whole days`() {
+        assertEquals("~128d", estimateLabel(127.8, "en", exact = false))
+        assertEquals("~128d", estimateLabel(127.8, "de", exact = false))
+        assertEquals("حدود ۱۲۸ روز", estimateLabel(127.8, "fa", exact = false))
+        assertEquals("~1d", estimateLabel(0.4, "en", exact = false))
+        assertEquals("1d", estimateLabel(1.0, "en", exact = true))
+        assertEquals("۱ روز", estimateLabel(1.0, "fa", exact = true))
+    }
+
+    @Test
     fun `under a day shows hours`() {
         assertEquals("12h", intervalButtonLabel(0.5))
         assertEquals("<1h", intervalButtonLabel(0.02))

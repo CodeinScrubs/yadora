@@ -52,6 +52,15 @@ class QueuePlanningTest {
         assertEquals(listOf(1, 1, 2, 2, 3, 3), offsets)
     }
 
+    /** "You were away" + Spread out only when the backlog is bigger than one day's limit. */
+    @Test fun the_recovery_plan_is_offered_only_for_a_backlog_the_day_cannot_hold() {
+        assertFalse("one late review after a full day", OverdueRedistributor.offersRecovery(1, 10))
+        assertFalse("exactly a day's worth", OverdueRedistributor.offersRecovery(10, 10))
+        assertTrue("more than a day's worth", OverdueRedistributor.offersRecovery(11, 10))
+        assertTrue("a broken limit setting still counts as one a day", OverdueRedistributor.offersRecovery(2, 0))
+        assertFalse("nothing overdue", OverdueRedistributor.offersRecovery(0, 0))
+    }
+
     @Test fun dayOffset_never_exceeds_the_planned_window() {
         assertEquals(3, OverdueRedistributor.dayOffset(1000, 6, 50))
     }

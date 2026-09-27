@@ -11,18 +11,27 @@ val LocalUseJalali = compositionLocalOf { false }
 
 /**
  * Central date formatting so the calendar preference is honored consistently everywhere.
- * Jalali → authentic Persian-script month names + Persian digits (e.g. "۱۴ تیر ۱۴۰۳").
- * Gregorian → English, Latin digits (e.g. "Jul 14, 2026") — pinned to Locale.ENGLISH so a device's
- * own locale can't leak a third format into the app.
+ * Jalali → Persian-script month names (e.g. "14 تیر 1403"). Gregorian → English (e.g. "Jul 14, 2026"),
+ * pinned to Locale.ENGLISH so a device's own locale can't leak a third format into the app.
+ *
+ * The DIGITS follow the interface language, not the calendar: [persianDigits] (the Persian interface) gives
+ * "۱۴ تیر ۱۴۰۳", while an English interface on the Jalali calendar keeps Latin digits. Every caller passes it.
+ * It used to be missing, so the Persian interface printed every Jalali date in Latin digits beside Persian ones.
  */
 object AppDate {
-    fun date(useJalali: Boolean, millis: Long): String =
-        if (useJalali) PersianDate.formatDate(millis)
-        else java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.ENGLISH).format(java.util.Date(millis))
+    private fun digits(s: String, persianDigits: Boolean) = if (persianDigits) PersianDate.faDigits(s) else s
 
-    fun dateTime(useJalali: Boolean, millis: Long): String =
+    fun date(useJalali: Boolean, millis: Long, persianDigits: Boolean): String = digits(
+        if (useJalali) PersianDate.formatDate(millis)
+        else java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.ENGLISH).format(java.util.Date(millis)),
+        persianDigits,
+    )
+
+    fun dateTime(useJalali: Boolean, millis: Long, persianDigits: Boolean): String = digits(
         if (useJalali) PersianDate.formatDateTime(millis)
-        else java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.ENGLISH).format(java.util.Date(millis))
+        else java.text.SimpleDateFormat("MMM dd, yyyy HH:mm", java.util.Locale.ENGLISH).format(java.util.Date(millis)),
+        persianDigits,
+    )
 
     /**
      * The value Material's DatePicker expects for "select this LOCAL day": UTC midnight of that date.
@@ -36,7 +45,9 @@ object AppDate {
     }
 
     /** "EEE, MMM d" style (weekday + short date) for the forecast headers. */
-    fun weekdayDate(useJalali: Boolean, millis: Long): String =
+    fun weekdayDate(useJalali: Boolean, millis: Long, persianDigits: Boolean): String = digits(
         if (useJalali) PersianDate.formatDate(millis)
-        else java.text.SimpleDateFormat("EEE, MMM d", java.util.Locale.ENGLISH).format(java.util.Date(millis))
+        else java.text.SimpleDateFormat("EEE, MMM d", java.util.Locale.ENGLISH).format(java.util.Date(millis)),
+        persianDigits,
+    )
 }

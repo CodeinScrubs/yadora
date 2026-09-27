@@ -126,7 +126,12 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 Thread {
                     try {
                         try {
-                            if (dueCountToday(appContext) > 0) {
+                            if (NotificationScheduler.shownJustBefore(appContext)) {
+                                // The reminder that is already showing, posted moments ago by another path (a
+                                // clock set forward fires the catch-up and this alarm together): keep the chain,
+                                // do not post and alert a second time.
+                                NotificationScheduler.scheduleDailyReminder(appContext)
+                            } else if (dueCountToday(appContext) > 0) {
                                 val source = if (intent.action == NotificationScheduler.ACTION_SNOOZE_FIRE) "snooze" else "alarm"
                                 val posted = NotificationScheduler.showReviewNotification(appContext, source = source)
                                 if (posted) {

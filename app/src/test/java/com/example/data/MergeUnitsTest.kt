@@ -83,10 +83,13 @@ class MergeUnitsTest {
         repo.insertReviewLog(logFor(other, now - 20 * day, type = "FIRST_STUDY"))
         repo.insertReviewLog(logFor(other, now - 10 * day))
 
-        repo.mergeUnits(keep, listOf(other))!!
+        val merged = repo.mergeUnits(keep, listOf(other))!!
         val logs = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
         assertEquals("all four reviews are on the survivor", 4, logs.size)
         assertEquals("two first-study rows exist post-merge", 2, logs.count { it.logType == "FIRST_STUDY" })
+        // The merge itself already counts the absorbed first study as the exposure it now is. It used to sum
+        // 2 + 2 = 4, and the correction below then quietly turned that into 3.
+        assertEquals("the merge counts graded reviews the way replay does", 3, merged.reviewCount)
 
         // Correct the LAST rating. Nothing about that edit should reset the topic to a brand-new memory.
         repo.editReviewRating(keep, logs.last().id, MemoryRating.Good, UnderstandingRating.Clear)
@@ -193,6 +196,12 @@ class MergeUnitsTest {
         assertEquals("counts were not folded in twice", 5, repo.getUnitById(keep)!!.reviewCount)
     }
 
+    /**
+     * The merged topic comes back on the earliest date any copy had; here that is the lapsed copy's DEFERRED
+     * date, later than its own memory date. That deferral is the user's, so it is kept as a deferral. The
+     * merge used to clear it while keeping the date, leaving a row due on a day neither clock explains (the
+     * export's self-check flagged it on the Samsung).
+     */
     @Test
     fun `merging preserves an in-progress relearn and never launders a deferral into modelDueAt`() = runBlocking {
         val now = System.currentTimeMillis()
@@ -213,6 +222,18 @@ class MergeUnitsTest {
 
         assertEquals("a relearn in progress survives the merge", "NeedsRelearn", merged.state)
         assertEquals("the earliest MODEL date wins, not the deferred one", now + 1 * day, merged.modelDueAt)
+        assertEquals("the topic keeps the date the user deferred it to", now + 3 * day, merged.nextReviewAt)
+        assertEquals("and says so: the user's deferral is kept, not laundered away", now + 3 * day, merged.deferredUntil)
+    }
+
+    @Test
+    fun `a merge of copies that were never deferred creates no deferral`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 3, dueAt = now + 12 * day)
+        val other = addUnit("آپاندیسیت", stability = 6.0, difficulty = 6.0, reviewCount = 2, dueAt = now + 4 * day)
+        val merged = repo.mergeUnits(keep, listOf(other))!!
+        assertEquals(now + 4 * day, merged.nextReviewAt)
+        assertEquals("the effective date is the earlier clock", merged.modelDueAt, merged.nextReviewAt)
         assertNull("a merge is not a user deferral", merged.deferredUntil)
     }
 
@@ -383,7 +404,9 @@ class MergeUnitsTest {
         val merged = repo.mergeUnits(keep, listOf(b, c))!!
         val one = repo.projectOntoCurrentModel(repo.getUnitById(solo)!!)
 
-        assertEquals("all three review counts add up", 6, merged.reviewCount)
+        // Six ratings, but in ONE history only the earliest first study seeds it; the other two copies' first
+        // studies are re-encoding exposures, which replay and the export's self-check do not count.
+        assertEquals("every graded review counts, the demoted first studies do not", 4, merged.reviewCount)
         assertEquals("identical states average to themselves", one.stability, merged.stability, 1e-9)
         assertEquals("and so do their difficulties", one.difficulty, merged.difficulty, 1e-9)
         assertEquals("earliest of all three", now + 3 * day, merged.nextReviewAt)

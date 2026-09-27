@@ -9,6 +9,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.MedReviewApplication
 import com.example.notifications.NotificationScheduler
+import kotlinx.coroutines.sync.withLock
 import java.io.OutputStream
 import java.time.LocalDateTime
 import java.time.YearMonth
@@ -25,7 +26,12 @@ import java.time.ZoneId
  * sync app mirrors (Drive, OneDrive, Syncthing...) survives losing the phone.
  *
  * Rules:
- * - never overwrite: every run writes a new, dated file (`yadora_backup_2026-09-24_2130.json`);
+ * - never overwrite: every run writes a new, dated file (`yadora_backup_2026-09-24_213045.json`);
+ * - one backup at a time: choosing a folder starts the daily job AND a "back up now", and on a phone the two ran
+ *   at once and left two identical files, the second renamed "… (1).json" by the storage provider and never
+ *   pruned (seen on a Samsung, 2026-09-27). Runs are serialised ([runLock]), names carry seconds, and a renamed
+ *   copy is recognised, so the day's older file is pruned like any other. "Back up now" always writes: it must
+ *   include everything up to the moment it is pressed;
  * - a write that fails part-way deletes its own file, so a broken backup never sits beside the good ones;
  * - old files are pruned only AFTER a successful write, and only files with exactly this name pattern:
  *   the newest backup of each of the last [KEEP_DAYS] days that have one, plus the newest of each of the
@@ -48,6 +54,18 @@ object AutoBackup {
     /** A scheduled run within this long of the last good one does nothing: one backup a day is the plan. */
     const val MIN_GAP_MS = 20L * 60 * 60 * 1000
 
+    /** Serialises every run: the daily job and "Back up now" must never write at the same moment. */
+    private val runLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Whether a run writes, decided from the last good backup alone (pure, so it is testable). A forced run ("Back
+     * up now", the first backup in a new folder) always writes; the daily job writes once a day.
+     */
+    fun shouldWrite(force: Boolean, now: Long, lastOkAt: Long): Boolean {
+        val age = now - lastOkAt
+        return force || lastOkAt <= 0L || age < 0L || age >= MIN_GAP_MS // a clock set back: write, don't trust the stamp
+    }
+
     /** When the learner last exported a backup by hand (Settings → Export full backup). */
     const val PREF_LAST_MANUAL_AT = "manual_backup_last_at"
     /** When the learner last dismissed Today's backup suggestion. */
@@ -63,15 +81,21 @@ object AutoBackup {
     fun shouldNudge(topics: Int, autoOn: Boolean, now: Long, lastManualAt: Long, dismissedAt: Long): Boolean =
         !autoOn && topics >= NUDGE_MIN_TOPICS && now - maxOf(lastManualAt, dismissedAt) > NUDGE_QUIET_MS
 
-    private val NAME = Regex("""yadora_backup_(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})\.json""")
+    /**
+     * A backup's name: date and time to the second. Also recognised: the older minute-only names, and a copy a
+     * storage provider renamed on a clash ("… (1).json"), so both are pruned like any other backup.
+     */
+    private val NAME = Regex("""yadora_backup_(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})?(?: \(\d+\))?\.json""")
 
     fun fileName(at: LocalDateTime): String =
-        "yadora_backup_%04d-%02d-%02d_%02d%02d.json".format(
-            java.util.Locale.ROOT, at.year, at.monthValue, at.dayOfMonth, at.hour, at.minute,
+        "yadora_backup_%04d-%02d-%02d_%02d%02d%02d.json".format(
+            java.util.Locale.ROOT, at.year, at.monthValue, at.dayOfMonth, at.hour, at.minute, at.second,
         )
 
-    private fun timeOf(name: String): LocalDateTime? = NAME.matchEntire(name)?.destructured?.let { (y, mo, d, h, mi) ->
-        runCatching { LocalDateTime.of(y.toInt(), mo.toInt(), d.toInt(), h.toInt(), mi.toInt()) }.getOrNull()
+    private fun timeOf(name: String): LocalDateTime? = NAME.matchEntire(name)?.groupValues?.let { g ->
+        runCatching {
+            LocalDateTime.of(g[1].toInt(), g[2].toInt(), g[3].toInt(), g[4].toInt(), g[5].toInt(), g[6].ifEmpty { "0" }.toInt())
+        }.getOrNull()
     }
 
     /** Which backups to delete from a folder holding [names]. Anything not named like a backup is never touched. */
@@ -118,8 +142,10 @@ object AutoBackup {
         }
         val existing = folder.list()
         val doomed = toDelete(existing.map { it.name }).toSet()
-        existing.filter { it.name in doomed && it.name != name }.forEach { runCatching { folder.delete(it) } }
-        return Outcome.Written(name)
+        // Never the file just written, whatever name the provider actually gave it.
+        existing.filter { it.name in doomed && it.name != name && it.name != entry.name && it.handle != entry.handle }
+            .forEach { runCatching { folder.delete(it) } }
+        return Outcome.Written(entry.name)
     }
 
     fun treeUri(context: Context): Uri? =
@@ -135,6 +161,9 @@ object AutoBackup {
             putString(PREF_TREE_URI, uri.toString())
             remove(PREF_LAST_ERROR_AT)
             remove(PREF_LAST_ERROR)
+            // A new folder has no backup yet: the last good one was written somewhere else.
+            remove(PREF_LAST_OK_AT)
+            remove(PREF_LAST_OK_FILE)
         }
         schedule(context)
     }
@@ -177,11 +206,13 @@ object AutoBackup {
      * Back up now if one is due ([force]: regardless). Records the outcome for Settings. Never throws: a
      * failure is recorded, and the next day's run tries again.
      */
-    suspend fun runNow(context: Context, force: Boolean): Outcome {
+    suspend fun runNow(context: Context, force: Boolean): Outcome = runLock.withLock { runLocked(context, force) }
+
+    private suspend fun runLocked(context: Context, force: Boolean): Outcome {
         val prefs = NotificationScheduler.transientPrefs(context)
         val tree = treeUri(context) ?: return Outcome.Skipped("automatic backup is off")
         val now = System.currentTimeMillis()
-        if (!force && now - prefs.getLong(PREF_LAST_OK_AT, 0L) < MIN_GAP_MS) return Outcome.Skipped("already backed up today")
+        if (!shouldWrite(force, now, prefs.getLong(PREF_LAST_OK_AT, 0L))) return Outcome.Skipped("already backed up today")
         val outcome = try {
             val app = context.applicationContext as MedReviewApplication
             val count = app.database.studyUnitDao().countAllOnce()
@@ -234,7 +265,14 @@ object AutoBackup {
         }
 
         override fun create(name: String): Folder.Entry? =
-            DocumentsContract.createDocument(resolver, dir, "application/json", name)?.let { Folder.Entry(name, it) }
+            DocumentsContract.createDocument(resolver, dir, "application/json", name)?.let { uri ->
+                // The provider may have changed the name (a clash becomes "… (1).json"): report the real one.
+                val actual = runCatching {
+                    resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                }.getOrNull()
+                Folder.Entry(actual ?: name, uri)
+            }
 
         override fun openOutput(entry: Folder.Entry): OutputStream =
             resolver.openOutputStream(entry.handle as Uri, "w") ?: throw java.io.IOException("cannot write ${entry.name}")

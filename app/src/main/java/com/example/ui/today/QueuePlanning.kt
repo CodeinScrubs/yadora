@@ -178,6 +178,15 @@ object OverdueRedistributor {
         return needed.coerceIn(MIN_RECOVERY_DAYS, MAX_RECOVERY_DAYS)
     }
 
+    /**
+     * Whether Today offers the recovery plan ("You were away" + Spread out): only for a backlog larger than one
+     * day's limit. A smaller one is cleared by the daily plan itself, most overdue first, today or (once today's
+     * limit is done) tomorrow; spreading it would only move reviews the plan could give sooner. The card used to
+     * appear for ANY overdue topic: on the owner's Samsung, after twelve reviews that day, it said "You were away"
+     * and offered to spread one review over three days.
+     */
+    fun offersRecovery(overdueCount: Int, dailyCapacity: Int): Boolean = overdueCount > dailyCapacity.coerceAtLeast(1)
+
     /** How many items land on each recovery day so [total] items fit in the planned window (min 1). */
     fun perDay(total: Int, dailyCapacity: Int): Int =
         Math.ceil(total / recoveryDays(total, dailyCapacity).toDouble()).toInt().coerceAtLeast(1)

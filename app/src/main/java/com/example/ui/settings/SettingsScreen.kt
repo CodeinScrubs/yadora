@@ -130,7 +130,7 @@ private fun AutoBackupCard(language: String, useJalali: Boolean, refresh: Int) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     if (lastOkAt > 0L) t("آخرین پشتیبان: ", "Letzte Sicherung: ", "Last backup: ") +
-                        com.example.ui.i18n.AppDate.dateTime(useJalali, lastOkAt)
+                        com.example.ui.i18n.AppDate.dateTime(useJalali, lastOkAt, language == "fa")
                     else t("هنوز پشتیبانی ساخته نشده.", "Noch keine Sicherung.", "No backup yet."),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -650,7 +650,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = if (language == "fa") "برخی گوشی‌ها (شیائومی، هواوی، اوپو، ویوو، سامسونگ) برنامه‌های پس‌زمینه را به‌شدت متوقف می‌کنند و ممکن است یادآوری‌ها قطع شوند. برای اطمینان: بهینه‌سازی باتری را برای این برنامه خاموش کنید و در صورت وجود، Autostart را روشن کنید." else if (language == "de") "Manche Handys (Xiaomi, Huawei, Oppo, Vivo, Samsung) stoppen Hintergrund-Apps aggressiv, was Erinnerungen stummschalten kann. Zur Sicherheit: Schalte die Akku-Optimierung für Yadora AUS und aktiviere Autostart, falls vorhanden." else "Some phones (Xiaomi, Huawei, Oppo, Vivo, Samsung) aggressively stop background apps, which can silence reminders. To be safe: turn OFF battery optimization for Yadora, and enable Autostart if your phone has it.",
+                            text = if (language == "fa") "برخی گوشی‌ها (شیائومی، هواوی، اوپو، ویوو، سامسونگ) برنامه‌های پس‌زمینه را به‌شدت متوقف می‌کنند و ممکن است یادآوری‌ها قطع شوند. برای اطمینان، بهینه‌سازی باتری را برای یادورا خاموش کن و اگر گوشی‌ات Autostart دارد، روشنش کن." else if (language == "de") "Manche Handys (Xiaomi, Huawei, Oppo, Vivo, Samsung) stoppen Hintergrund-Apps aggressiv, was Erinnerungen stummschalten kann. Zur Sicherheit: Schalte die Akku-Optimierung für Yadora AUS und aktiviere Autostart, falls vorhanden." else "Some phones (Xiaomi, Huawei, Oppo, Vivo, Samsung) aggressively stop background apps, which can silence reminders. To be safe: turn OFF battery optimization for Yadora, and enable Autostart if your phone has it.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1081,9 +1081,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = when (language) {
-                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر عقب افتادی، از دکمه 'توزیع مجدد مباحث' در صفحه امروز استفاده کن؛ عقب‌افتاده‌ها را بر اساس سقف روزانه‌ات پخش می‌کند، نه بیشتر از توانت."
-                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Wenn du in Rückstand gerätst, verteile ihn mit „Überfällige Themen verteilen“ auf der Heute-Seite — nach deinem Tageslimit, nicht mehr, als du schaffst."
-                                            else -> "Serious learning is a marathon, not a sprint. If you fall behind, use the 'Spread Out Overdue Topics' feature on the Today screen — it spreads the backlog across as many days as your daily limit needs, never more than you can do."
+                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر عقب‌افتاده‌ها از سقف روزانه‌ات بیشتر شوند، صفحهٔ امروز دکمهٔ «توزیع مجدد و پخش مباحث عقب‌افتاده» را نشان می‌دهد؛ آن‌ها را بر اساس سقف روزانه‌ات پخش می‌کند، نه بیشتر از توانت."
+                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Ist mehr überfällig als dein Tageslimit, bietet die Heute-Seite „Überfällige Themen verteilen“ an — verteilt nach deinem Tageslimit, nicht mehr, als du schaffst."
+                                            else -> "Serious learning is a marathon, not a sprint. When more is overdue than your daily limit, Today offers 'Spread Out Overdue Topics': it spreads the backlog across as many days as your daily limit needs, never more than you can do."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1154,7 +1154,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = if (examDate <= 0L) (if (language == "fa") "بدون تاریخ" else if (language == "de") "Kein Datum gesetzt" else "No date set")
-                               else com.example.ui.i18n.AppDate.date(useJalali, examDate),
+                               else com.example.ui.i18n.AppDate.date(useJalali, examDate, language == "fa"),
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1296,7 +1296,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            (if (language == "fa") "نسخهٔ " else "Version ") + com.example.BuildConfig.VERSION_NAME,
+                            if (language == "fa") "نسخهٔ " + com.example.ui.i18n.PersianDate.faDigits(com.example.BuildConfig.VERSION_NAME)
+                            else "Version " + com.example.BuildConfig.VERSION_NAME,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

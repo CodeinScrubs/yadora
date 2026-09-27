@@ -199,6 +199,25 @@ object NotificationScheduler {
         kotlin.math.abs(firstMillis - secondMillis) < COLLISION_WINDOW_MS
 
     /**
+     * True when a real reminder was posted less than the collision window before [now], so a fire now would be the
+     * same reminder again. Setting the clock forward past a slot delivers the time-change catch-up
+     * ([BootReceiver]) and the now-overdue alarm within a second of each other: on the emulator that posted and
+     * alerted twice and logged two NOTIF_SHOWN for one reminder. A shown time AFTER [now] (the clock was set back)
+     * is not recent.
+     */
+    fun shownJustBefore(lastShownAt: Long, now: Long): Boolean =
+        lastShownAt in (now - COLLISION_WINDOW_MS + 1)..now
+
+    fun shownJustBefore(context: Context): Boolean =
+        shownJustBefore(transientPrefs(context).getLong(PREF_LAST_SHOWN_AT, 0L), System.currentTimeMillis())
+
+    /**
+     * True when a real reminder was posted today, between [startOfToday] and [now]. A shown time after [now] means
+     * the clock was set back since, and counting it as "today" silenced that day's catch-up and safety sweep.
+     */
+    fun shownToday(lastShownAt: Long, startOfToday: Long, now: Long): Boolean = lastShownAt in startOfToday..now
+
+    /**
      * Arm the next reminder "nudge" (set time, or the next ~3h repeat through the day) PLUS the
      * guaranteed second daily slot — two independent exact alarms, so one missed fire never means a
      * silent day.
@@ -419,7 +438,7 @@ object NotificationScheduler {
         // real 11-day export: 22 notifications, all from the two fixed daily slots, zero nudges).
         // Keep the instant we already armed until it actually comes due.
         val armed = transientPrefs(context).getLong(PREF_NEXT_NUDGE_AT, 0L)
-        if (armed > now.timeInMillis) {
+        if (isLiveNudge(armed, now.timeInMillis)) {
             val armedHour = Calendar.getInstance().apply { timeInMillis = armed }.get(Calendar.HOUR_OF_DAY)
             if (armedHour in WAKING_START_HOUR until WAKING_END_HOUR) return armed
         }
@@ -440,6 +459,13 @@ object NotificationScheduler {
             add(Calendar.DAY_OF_YEAR, 1)
         }.timeInMillis
     }
+
+    /**
+     * True when [armed], the nudge instant saved when it was armed, is still the one to keep: in the future, and no
+     * further ahead than one repeat, which is how far it was when it was saved. Anything further means the clock was
+     * set back since; keeping it would silence the intra-day nudges until the old date comes round again.
+     */
+    fun isLiveNudge(armed: Long, now: Long): Boolean = armed > now && armed - now <= REPEAT_INTERVAL_MS
 
     @SuppressLint("MissingPermission")
     fun showReviewNotification(

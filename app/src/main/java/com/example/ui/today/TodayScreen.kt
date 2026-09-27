@@ -209,7 +209,7 @@ private fun UpcomingScheduleDialog(
                     byDay.forEach { (day, topics) ->
                         item {
                             Text(
-                                text = com.example.ui.i18n.AppDate.weekdayDate(useJalali, day),
+                                text = com.example.ui.i18n.AppDate.weekdayDate(useJalali, day, languageCode == "fa"),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
@@ -469,8 +469,8 @@ fun TodayScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = if (isFa) "امروز ${n(plan.doneToday)} مرور انجام دادی و به سقف روزانه‌ات رسیدی. ${n(plan.heldBack)} مرور دیگر می‌تواند تا فردا صبر کند."
-                                else if (strings.languageCode == "de") "Du hast heute ${plan.doneToday} Wiederholungen gemacht und dein Tageslimit erreicht. ${plan.heldBack} weitere können bis morgen warten."
-                                else "You did ${plan.doneToday} reviews today and reached your daily limit. ${plan.heldBack} more can wait until tomorrow.",
+                                else if (strings.languageCode == "de") "Du hast heute ${if (plan.doneToday == 1) "1 Wiederholung" else "${plan.doneToday} Wiederholungen"} gemacht und dein Tageslimit erreicht. ${plan.heldBack} ${if (plan.heldBack == 1) "weitere kann" else "weitere können"} bis morgen warten."
+                                else "You did ${if (plan.doneToday == 1) "1 review" else "${plan.doneToday} reviews"} today and reached your daily limit. ${plan.heldBack} more can wait until tomorrow.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -497,7 +497,9 @@ fun TodayScreen(
             }
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
+                // Room under the last card for the floating + button, which otherwise covered its end (on a phone it
+                // sat over the Upcoming section's expand arrow).
+                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (showBackupNudge) {
@@ -617,7 +619,7 @@ fun TodayScreen(
                                     val nextUp = upcoming.firstOrNull()
                                     Text(
                                         text = if (nextUp == null) (when (strings.languageCode) { "fa" -> "فعلاً چیزی در برنامه نیست."; "de" -> "Noch nichts geplant."; else -> "Nothing scheduled yet." })
-                                               else (when (strings.languageCode) { "fa" -> "مرور بعدی: "; "de" -> "Nächste: "; else -> "Next: " }) + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt),
+                                               else (when (strings.languageCode) { "fa" -> "مرور بعدی: "; "de" -> "Nächste: "; else -> "Next: " }) + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt, strings.languageCode == "fa"),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -675,7 +677,9 @@ fun TodayScreen(
                     }
                 } else {
                     if (overdue.isNotEmpty()) {
-                        item {
+                        // The recovery plan is offered only for a backlog bigger than one day's limit
+                        // (OverdueRedistributor.offersRecovery); a smaller one the daily plan clears by itself.
+                        if (OverdueRedistributor.offersRecovery(overdue.size, dailyLimit)) item {
                             val isFarsi = strings.languageCode == "fa"
                             val over = com.example.ui.theme.overdueTone()
                             val nOver = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(overdue.size) else overdue.size.toString()
@@ -1006,7 +1010,7 @@ fun StudyUnitCard(
                 // Date only — the schedule is day-granularity, so a clock time would claim a precision
                 // the scheduler doesn't have. Calendar (Jalali/Gregorian) follows the user preference.
                 val nextReviewText = if (unit.nextReviewAt < System.currentTimeMillis()) strings.dueNow
-                    else com.example.ui.i18n.AppDate.date(com.example.ui.i18n.LocalUseJalali.current, unit.nextReviewAt)
+                    else com.example.ui.i18n.AppDate.date(com.example.ui.i18n.LocalUseJalali.current, unit.nextReviewAt, strings.languageCode == "fa")
                 
                 Text(
                     text = strings.nextReview.format(nextReviewText),
