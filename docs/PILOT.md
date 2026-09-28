@@ -116,7 +116,7 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 | D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
 | D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
 | D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
-| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points, n ≥ 100 each | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
+| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
 | D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
 | D9 | Are at least 80% of first ratings given on the study day? | ≥ 80%, n ≥ 50 | The first-rating flow is being skipped. Look at "Save and rate now" and the Today prompt. |
 | D10 | Are fewer than 40% of successful reviews answered Partial/Confused? | < 40%, n ≥ 100 | The repair clock is adding a lot of load. Check its backoff in simulation. |
@@ -140,7 +140,13 @@ Why these thresholds:
   S′ = S · [1 + m · (SInc − 1)], where SInc is FSRS-6's own growth factor. Reading is anchored at m = 1. The
   multiplier is fitted with the 21 weights frozen, on successful recalls only, so it cannot trade variance
   with them. D7's comparison is observational: learners choose their method, and harder topics may draw
-  more questions. A fitted m is a candidate to simulate, not a measured effect. (Outside reviews, 2026-09-28:
+  more questions. The difference is therefore taken WITHIN each learner who used both methods at least 10
+  times (each their own control; amended 2026-09-28, before any data): pooled, a generous rater who mostly
+  does questions and a strict one who mostly reads would look like a method effect. It stays observational
+  (topics are still chosen by the learner). Stronger designs exist: weighting by the chance of choosing each
+  method, or the app suggesting a method at random for a few topics. The random suggestion steers how
+  participants study, so it is the owner's decision for a later study, not part of this pilot.
+  A fitted m is a candidate to simulate, not a measured effect. (Outside reviews, 2026-09-28:
   one plan multiplied stability itself, up to ×1.25; a follow-up answer used this gain form with m up to 2.2.
   Neither range has a source.)
 

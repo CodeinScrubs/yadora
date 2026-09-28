@@ -944,6 +944,40 @@ These were decided deliberately. Re-suggesting them wastes a session:
     - Chronotype-timed reminders. The learner already sets both times.
     - Flashcard machinery: atomic cards, learning steps, leeches, and load balancing (which would make an interval
       depend on other topics).
+- **Two more outside reports, 2026-09-28: a "foundations" essay written without access to this repository, and an
+  `Fsrs6.kt` audit with numerical-stability, causal-inference and queueing answers.**
+  - **Changed:** D7 compares methods WITHIN each learner who used both (`analyze.py`
+    `within_participant_difference`, pinned by `test_analyze.py`). Pooled, a generous rater who mostly does
+    questions and a strict one who mostly reads posed as a method effect.
+  - **False:**
+    - "The weights are not py-fsrs's defaults." The goldens py-fsrs 6.3.1 itself generated carry exactly these
+      (w0 0.212, w3 8.2956); the reports quoted older FSRS versions.
+    - "Grade ordinals are fragile." `Grade` has explicit values.
+    - "w20 can drive `factor` to 0 or infinity." The optimizer, restore and `analyze.py` all bound it to
+      [0.1, 0.8], so `factor` stays 0.14–1.87.
+    - "expm1/log1p are needed." Measured: at most a 6e-16 effect on S′, even at S = 365,000.
+    - "The on-device fit is Nelder-Mead." It is Adam with exact gradients.
+    - "Focal loss protects against misclicks." It is backwards: it keeps surprising outcomes at full weight, and it
+      is not a proper scoring rule, so it would bias the probabilities the scheduler runs on.
+    - "The Beta-binomial MAP is strictly concave." Not when a Beta parameter is below 1, as with its own κ = 3
+      Forgot and Easy priors.
+    - "log(1 + overdue) stops old topics swallowing the queue." Top-N by any increasing function of lateness is the
+      same order, and each topic takes one slot.
+    - "Same-day Again/Hard are untested." The goldens hold 66 of each, single-equation and composed.
+    - Package `com.codeinscrubs.yadora`, cloze/Markdown parsing, timing wheels, SIMD and graph diffusion do not
+      exist here.
+  - **Kept on purpose:**
+    - No S_MAX: a state ceiling was one of the deviations the goldens caught.
+    - `Fsrs6.intervalDays` stays raw: `MedScheduler` owns the 1–365 bounds and the fuzz (`IntervalCeilingTest`,
+      `SchedulerInvariantsTest`).
+    - `decay` and `factor` are recomputed per call: the optimizer has its own dual-number path, so this costs
+      nothing that matters.
+  - **Not adopted:** a Bayesian calibrator that overrides the grade; method multipliers shipped with default
+    values (1.55/0.85); a 15% "contrastive" stability bonus; pulling interleaving partners forward; circadian
+    routing of topics. Each is settled or pilot-gated.
+  - **The owner's call, later:** a randomised method suggestion for a future study (it steers how participants
+    study). A model separating slow forgetting from generous rating is weakly identified while reviews cluster
+    near 90% predicted recall; the question score stays the anchor.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
