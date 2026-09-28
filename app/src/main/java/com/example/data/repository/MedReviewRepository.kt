@@ -717,7 +717,12 @@ class MedReviewRepository(
 
     /** What one committed rating wrote, for the screen that asked for it. */
     data class RatedReview(
-        /** The row as it was scheduled from (already on the current model): the snapshot Undo restores. */
+        /**
+         * The row as it was STORED when the rating began: the snapshot Undo restores. A topic still on an older model
+         * is scheduled from a copy projected onto the current one, but a projection is persisted only by a commit, so
+         * Undo must put back the stored row. Putting back the projected copy labelled the row FSRS-6 over a history
+         * FSRS-5 wrote, which the export's self-check reports as MODEL_OWNERSHIP (seen on the Samsung, 2026-09-28).
+         */
         val before: StudyUnitEntity,
         val after: StudyUnitEntity,
         val logId: Long,
@@ -884,7 +889,7 @@ class MedReviewRepository(
         )
         val logId = commitReview(updatedUnit, log)
         return RatedReview(
-            before = unit, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
+            before = loaded, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
             memoryIntervalDays = nextInterval, effectiveDueAt = effectiveDueAt,
             repairPending = outcome.remediationDays != null,
         )
