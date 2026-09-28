@@ -26,7 +26,8 @@ What it checks, in the order the report gives it:
   2. Adherence: are reviews done near their dates, how big is the backlog, are first ratings given on the
      study day. A scheduling problem and a usage problem look alike in the numbers; this separates them.
   3. Calibration: does the model's predicted recall match what learners report? Pooled, per participant,
-     per review number, per first rating, per elapsed time, per method.
+     per review number, per first rating, per elapsed time, per method; for each weight set also the Brier
+     score, observed over expected, calibration-in-the-large and the calibration slope, with 95% intervals.
   4. The first interval: observed recall at the first review, per first rating, against the default weights.
   5. Self-ratings against question scores, where learners entered them.
   6. Review method: does the next review find a topic better or worse than predicted, by how it was reviewed?
@@ -470,6 +471,68 @@ def spearman(xs: List[float], ys: List[float]) -> Optional[float]:
     return cov / (vx * vy) if vx and vy else None
 
 
+def logistic_calibration(pairs: Sequence[Tuple[float, bool]]) -> dict:
+    """The standard checks of a probability model (as for clinical prediction models): the Brier score, observed
+    over expected (O/E, ideal 1), calibration-in-the-large (the intercept with logit(p) as an offset, ideal 0) and
+    the calibration slope (logistic regression of the outcome on logit(p), ideal 1; below 1 = predictions too
+    extreme), each with a 95% Wald interval. Descriptive only: no decision rule reads them. With predictions bunched
+    near the target the slope's interval is wide, and it is reported as it is. Added 2026-09-28."""
+    n = len(pairs)
+    if n == 0:
+        return {}
+    ys = [1.0 if y else 0.0 for _, y in pairs]
+    xs = [math.log(min(max(p, 1e-6), 1 - 1e-6) / (1 - min(max(p, 1e-6), 1 - 1e-6))) for p, _ in pairs]
+    expected = statistics.fmean(p for p, _ in pairs)
+    out = dict(brier=statistics.fmean((p - y) ** 2 for (p, _), y in zip(pairs, ys)),
+               oe=statistics.fmean(ys) / expected if expected > 0 else None)
+    if n < 50 or all(ys) or not any(ys):
+        return out
+
+    def sig(z):
+        return 1.0 / (1.0 + math.exp(-z)) if z >= 0 else math.exp(z) / (1.0 + math.exp(z))
+
+    a = 0.0  # calibration-in-the-large: logit P(y) = a + x (Newton on one parameter)
+    for _ in range(50):
+        mu = [sig(a + x) for x in xs]
+        info = sum(m * (1 - m) for m in mu)
+        step = sum(y - m for y, m in zip(ys, mu)) / info if info > 0 else 0.0
+        a += step
+        if abs(step) < 1e-10:
+            break
+    info = sum(m * (1 - m) for m in (sig(a + x) for x in xs))
+    if info > 0 and math.isfinite(a):
+        se = 1 / math.sqrt(info)
+        out.update(citl=a, citl_ci=(a - 1.96 * se, a + 1.96 * se))
+
+    al, be = 0.0, 1.0  # calibration slope: logit P(y) = al + be * x (Newton-Raphson on two parameters)
+    ok = False
+    for _ in range(100):
+        mu = [sig(al + be * x) for x in xs]
+        w = [m * (1 - m) for m in mu]
+        g0 = sum(y - m for y, m in zip(ys, mu))
+        g1 = sum((y - m) * x for y, m, x in zip(ys, mu, xs))
+        h00, h01, h11 = sum(w), sum(wi * x for wi, x in zip(w, xs)), sum(wi * x * x for wi, x in zip(w, xs))
+        det = h00 * h11 - h01 * h01
+        if det <= 1e-12:
+            break
+        d_al, d_be = (h11 * g0 - h01 * g1) / det, (h00 * g1 - h01 * g0) / det
+        al, be = al + d_al, be + d_be
+        if not (math.isfinite(al) and math.isfinite(be)):
+            break
+        if abs(d_al) + abs(d_be) < 1e-10:
+            ok = True
+            break
+    if ok:
+        mu = [sig(al + be * x) for x in xs]
+        w = [m * (1 - m) for m in mu]
+        h00, h01, h11 = sum(w), sum(wi * x for wi, x in zip(w, xs)), sum(wi * x * x for wi, x in zip(w, xs))
+        det = h00 * h11 - h01 * h01
+        if det > 1e-12:
+            se = math.sqrt(h00 / det)
+            out.update(slope=be, slope_ci=(be - 1.96 * se, be + 1.96 * se))
+    return out
+
+
 def calib_block(rows: List[Row], pred_attr="predicted") -> dict:
     pairs = [(getattr(r, pred_attr), r.success) for r in rows if getattr(r, pred_attr) is not None]
     n = len(pairs)
@@ -482,6 +545,7 @@ def calib_block(rows: List[Row], pred_attr="predicted") -> dict:
         log_loss=ym.log_loss(pairs), auc=ym.auc(pairs),
         rmse_bins=ym.rmse_bins([(getattr(r, pred_attr), r.success, r.elapsed_days or 0.0, max(r.review_number, 1),
                                  r.lapses_before) for r in rows if getattr(r, pred_attr) is not None]),
+        **logistic_calibration(pairs),
     )
 
 
@@ -849,6 +913,15 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
               f"{c['n']} reviews, reported recall {fmt_p(c['observed'])} (95% CI {fmt_p(c['observed_ci'][0])}–"
               f"{fmt_p(c['observed_ci'][1])}), mean predicted {fmt_p(c['predicted'])} raw / {fmt_p(cc.get('predicted'))} "
               f"after the per-user scale. Log loss {fmt(c['log_loss'])}, RMSE(bins) {fmt(c['rmse_bins'])}, AUC {fmt(c['auc'])}.")
+
+        def ci(block, key):
+            lo_hi = block.get(f"{key}_ci")
+            return "–" if key not in block else f"{fmt(block[key], 2)} ({fmt(lo_hi[0], 2)} to {fmt(lo_hi[1], 2)})"
+
+        rep.table(["predictions", "Brier", "O/E", "calibration-in-the-large (95% CI; ideal 0)",
+                   "calibration slope (95% CI; ideal 1)"],
+                  [[label, fmt(b.get("brier"), 4), fmt(b.get("oe"), 3), ci(b, "citl"), ci(b, "slope")]
+                   for label, b in (("raw model", c), ("with the per-user scale", cc))])
         summary.setdefault("calibration", {})[f"{model}/{sid}"] = dict(raw=c, calibrated=cc)
     bins = [(0, .5), (.5, .7), (.7, .8), (.8, .85), (.85, .9), (.9, .95), (.95, 1.0001)]
     rows_b = []

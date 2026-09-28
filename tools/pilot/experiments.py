@@ -12,6 +12,8 @@ and a Yadora twin whose policy knobs can be changed one at a time:
      simulated, that is earliest-due), the score Yadora used before 2026-09-24 (plus bonuses for weak states
      and past lapses), lowest predicted recall first, highest first, or most overdue relative to the
      interval. The limit fixes the workload, so knowledge is compared directly, on paired seeds.
+     YADORA_EXTRA_ORDERS=roi10,roi30,roi100,dr3 adds the backlog-triage orders outside reports proposed on
+     2026-09-28: recall deficit x recoverability, (R* - R)+ x (1 - exp(-S / tau)), and the largest 3-day loss.
   2. RELEARN. After "Forgot", come back in 1 day (Yadora), in 2, or at FSRS's own post-lapse interval.
   3. FIRST-STUDY CAP. The first interval capped at 5 days (Yadora), 3, 7, or not at all. Tested with
      honest first ratings AND with over-confident ones (the judgment-of-learning illusion the cap exists for).
@@ -63,7 +65,8 @@ from simulate import (  # noqa: E402
 @dataclass
 class Policy:
     name: str = "Yadora"
-    order: str = "yadora"            # yadora | previous | r_asc | r_desc | overdue_rel | due (= yadora here)
+    # yadora | previous | r_asc | r_desc | overdue_rel | due (= yadora here) | roiN | dr3 (proposals, 2026-09-28)
+    order: str = "yadora"
     relearn_days: Optional[float] = 1.0   # None = FSRS's own post-lapse interval at the target
     first_cap: Optional[float] = 5.0      # None = no cap
     max_interval: float = 365.0
@@ -205,6 +208,16 @@ def run(p: Policy, w: World, seed: int):
                 due.sort(key=lambda t: (-(day - t.last_day) / max(t.model_due - t.last_day - REVIEW_HOUR_FRACTION, 1.0), t.tid))
             elif p.order == "due":
                 due.sort(key=lambda t: (t.model_due, t.tid))
+            elif p.order.startswith("roi"):
+                # An outside report's "practical index" (2026-09-28): the recall deficit below the target times a
+                # recoverability factor, (R* - R)+ * (1 - exp(-S / tau)), highest first; tau in days from the name.
+                tau = float(p.order[3:])
+                due.sort(key=lambda t: (-max(p.retention - sched.retrievability(day - t.last_day, t.s), 0.0)
+                                        * (1.0 - math.exp(-t.s / tau)), t.model_due, t.tid))
+            elif p.order == "dr3":
+                # The same reports' "marginal retention gain": the recall three more days of waiting would cost.
+                due.sort(key=lambda t: (-(sched.retrievability(day - t.last_day, t.s)
+                                          - sched.retrievability(day - t.last_day + 3, t.s)), t.model_due, t.tid))
             for t in due[: w.daily_limit]:
                 r_true = mem.r(t, day)
                 recall_at_review.append(r_true)
@@ -364,6 +377,13 @@ def main():
                   ("before 2026-09-24: + weak-state and lapse bonuses", "previous"),
                   ("lowest recall first", "r_asc"), ("highest recall first", "r_desc"),
                   ("most overdue relative to interval", "overdue_rel")]
+        # YADORA_EXTRA_ORDERS=roi10,roi30,roi100,dr3 tests the backlog-triage orders outside reports proposed on
+        # 2026-09-28 against Yadora's order and lowest recall first, on the same paired seeds.
+        extra = [o for o in os.environ.get("YADORA_EXTRA_ORDERS", "").split(",") if o]
+        if extra:
+            named = {"dr3": "largest 3-day recall loss first"}
+            orders = [orders[0], orders[2]] + [
+                (named.get(o) or f"(R* - R)+ x (1 - e^(-S/{o[3:]}d))", o) for o in extra]
 
         def paired(xs, ys):
             d = [100 * (x - y) for x, y in zip(xs, ys)]
