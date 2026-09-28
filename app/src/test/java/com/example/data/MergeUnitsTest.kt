@@ -91,8 +91,8 @@ class MergeUnitsTest {
         // 2 + 2 = 4, and the correction below then quietly turned that into 3.
         assertEquals("the merge counts graded reviews the way replay does", 3, merged.reviewCount)
 
-        // Correct the LAST rating. Nothing about that edit should reset the topic to a brand-new memory.
-        repo.editReviewRating(keep, logs.last().id, MemoryRating.Good, UnderstandingRating.Clear)
+        // Correct the LAST rating (Good to Hard). Nothing about that edit should reset the topic to a brand-new memory.
+        repo.editReviewRating(keep, logs.last().id, MemoryRating.Hard, UnderstandingRating.Clear)
         val after = repo.getUnitById(keep)!!
 
         val freshSeed = MedScheduler.firstStudy(UnderstandingRating.Partial, false).state.stability
@@ -132,7 +132,7 @@ class MergeUnitsTest {
 
         repo.mergeUnits(keep, listOf(other))!!
         val logs = db.reviewLogDao().getLogsForUnit(keep).first().sortedBy { it.reviewedAt }
-        repo.editReviewRating(keep, logs.first().id, MemoryRating.Good, UnderstandingRating.Clear)
+        repo.editReviewRating(keep, logs.first().id, MemoryRating.Easy, UnderstandingRating.Clear)
         val after = repo.getUnitById(keep)!!
 
         assertEquals("the re-study is not a graded retrieval", 2, after.reviewCount)

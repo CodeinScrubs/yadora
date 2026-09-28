@@ -300,12 +300,17 @@ def run_other(sc: Scenario, classes: List[List[int]], seed: int, daily_cost: Lis
         for day in range(sc.days - cram_days, sc.days):
             budgets[day] += total / 2 / cram_days
 
+    # EQUAL TIME, causally: a review is started while any of the day's time is left and costs what its outcome
+    # costs (1, or fail_cost when forgotten), so a day can end over budget. That overspend used to be forgiven,
+    # which gave this twin 2.3-2.6% more time than the Yadora twin (an outside audit, 2026-09-27); it now comes
+    # off the next day, so the totals agree to within one review. No review's outcome is known before it starts.
+    debt = 0.0
     for day in range(sc.days):
         for grade in classes[day]:
             t = Topic(len(topics), day, 0, 0, day)
             mem.seed(t, grade)
             topics.append(t)
-        budget = budgets[day]
+        budget = budgets[day] - debt
         pool = [t for t in topics if t.last_day < day]
         if budget > 0 and pool:
             kind = order_kind
@@ -322,6 +327,7 @@ def run_other(sc: Scenario, classes: List[List[int]], seed: int, daily_cost: Lis
                 budget -= c
                 cost += c
                 reviews += 1
+        debt = max(0.0, -budget)
         know.append(knowledge(mem, topics, day))
     return finish(sc, mem, topics, know, reviews, cost, 0)
 

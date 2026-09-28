@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 
 class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() {
@@ -90,32 +91,42 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
         }
     }
 
-    val dueUnits: StateFlow<List<StudyUnitEntity>> = repository.activeUnits.combine(dayTick) { units, _ ->
+    /** One midnight timer for the whole screen, shared by everything that depends on the date. */
+    private val sharedDayTick = dayTick.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
+
+    /**
+     * The active topics, read ONCE per database change (or midnight) and shared by every list below. Each list
+     * used to collect repository.activeUnits on its own, so every write ran the full-library query five times,
+     * with five midnight timers beside it (an outside audit counted the queries, 2026-09-27). The day bounds are
+     * still read at each emission, so the lists reclassify at midnight exactly as before.
+     */
+    private val activeNow = repository.activeUnits.combine(sharedDayTick) { units, _ -> units }
+        .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
+
+    val dueUnits: StateFlow<List<StudyUnitEntity>> = activeNow.map { units ->
         val end = endOfToday()
         units.filter { TodayBuckets.isDueByEndOfToday(it.nextReviewAt, end) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val overdueUnits = repository.activeUnits.combine(dayTick) { units, _ ->
+    val overdueUnits = activeNow.map { units ->
         val start = startOfToday()
         units.filter { TodayBuckets.isOverdue(it.nextReviewAt, start) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val dueTodayUnits = repository.activeUnits.combine(dayTick) { units, _ ->
+    val dueTodayUnits = activeNow.map { units ->
         val start = startOfToday()
         val end = endOfToday()
         units.filter { TodayBuckets.isDueToday(it.nextReviewAt, start, end) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val upcomingUnits: StateFlow<List<StudyUnitEntity>> = repository.activeUnits.combine(dayTick) { units, _ ->
-        val end = endOfToday()
-        units.filter { TodayBuckets.isUpcoming(it.nextReviewAt, end) }.sortedBy { it.nextReviewAt }.take(5)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
     // The full upcoming list (not capped at 5), for the "what's coming" calendar dialog.
-    val allUpcoming: StateFlow<List<StudyUnitEntity>> = repository.activeUnits.combine(dayTick) { units, _ ->
+    val allUpcoming: StateFlow<List<StudyUnitEntity>> = activeNow.map { units ->
         val end = endOfToday()
         units.filter { TodayBuckets.isUpcoming(it.nextReviewAt, end) }.sortedBy { it.nextReviewAt }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val upcomingUnits: StateFlow<List<StudyUnitEntity>> = allUpcoming.map { it.take(5) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -127,8 +138,8 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
 
     /** Reviews done today (first ratings excluded): what the daily limit counts. Resets at midnight. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val reviewsDoneToday: StateFlow<Int> = dayTick
-        .flatMapLatest { repository.observeReviewsSince(startOfToday()) }
+    val reviewsDoneToday: StateFlow<Int> = sharedDayTick
+        .flatMapLatest { repository.observeReviewsBetween(startOfToday(), endOfToday()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     fun redistributeOverdueUnits(context: android.content.Context) {

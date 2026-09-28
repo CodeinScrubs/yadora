@@ -84,7 +84,8 @@ class ReplayEqualsLiveTest {
             24 * day, live.understandingDueAt!! - live.lastReviewedAt!!)
         assertEquals("and that is the date the topic returns on", live.understandingDueAt, live.nextReviewAt)
 
-        repo.editReviewRating(unitId, logId, MemoryRating.Good, UnderstandingRating.Partial) // no-op correction
+        // A pure replay (an unchanged correction now changes nothing at all, so it cannot stand in for one).
+        repo.editReviewRating(unitId, -1L, MemoryRating.Good, UnderstandingRating.Clear)
         val replayed = repo.getUnitById(unitId)!!
         assertEquals("stability", live.stability, replayed.stability, 1e-9)
         assertEquals("interval", live.currentIntervalDays, replayed.currentIntervalDays, 1e-9)
@@ -139,7 +140,8 @@ class ReplayEqualsLiveTest {
             assertTrue("the scale really moved ($learned)", Math.abs(learned - 0.8) > 0.1 && Math.abs(learned - 1.25) > 0.1)
 
             MedScheduler.calibrationScale = 1.25 // a stale value in memory, which the correction must not use
-            repo.editReviewRating(unitId, firstLogId, MemoryRating.Good, UnderstandingRating.Clear) // no-op rating, new scale
+            // Only the understanding changes: a new decision (so the new scale), with every memory state left alone.
+            repo.editReviewRating(unitId, firstLogId, MemoryRating.Good, UnderstandingRating.Partial)
             val replayed = repo.getUnitById(unitId)!!
             val replayedLogs = db.reviewLogDao().getLogsForUnitOnce(unitId)
 
@@ -425,11 +427,11 @@ class ReplayEqualsLiveTest {
         val unitId = repo.insertUnit(newUnit("Nephrotic syndrome", at(0, 19)))
         liveReview(unitId, at(0, 20), MemoryRating.Good, UnderstandingRating.Clear)                 // evening first check-in
         liveReview(unitId, at(3, 9), MemoryRating.Good, UnderstandingRating.Clear)                  // 61 hours later
-        val logId = liveReview(unitId, at(4, 22), MemoryRating.Hard, UnderstandingRating.Partial)  // 37 hours later
+        liveReview(unitId, at(4, 22), MemoryRating.Hard, UnderstandingRating.Partial)              // 37 hours later
         liveReview(unitId, at(5, 7), MemoryRating.Easy, UnderstandingRating.Clear)                  // 9 hours later
         val live = repo.getUnitById(unitId)!!
 
-        repo.editReviewRating(unitId, logId, MemoryRating.Hard, UnderstandingRating.Partial) // a no-op correction
+        repo.editReviewRating(unitId, -1L, MemoryRating.Good, UnderstandingRating.Clear) // a pure replay
         val replayed = repo.getUnitById(unitId)!!
 
         assertEquals("stability", live.stability, replayed.stability, 1e-9)
@@ -649,7 +651,7 @@ class ReplayEqualsLiveTest {
             val logId = liveReview(unitId, studiedAt + 2 * day, MemoryRating.Good, UnderstandingRating.Clear)
             MedScheduler.calibrationScale = 1.0
 
-            repo.editReviewRating(unitId, logId, MemoryRating.Good, UnderstandingRating.Clear)
+            repo.editReviewRating(unitId, logId, MemoryRating.Hard, UnderstandingRating.Clear)
             val edited = db.reviewLogDao().getLogsForUnitOnce(unitId).first { it.id == logId }
             assertEquals("the corrected row was scheduled with the learned scale", learned, edited.calibrationScaleAtReview, 1e-12)
         } finally {

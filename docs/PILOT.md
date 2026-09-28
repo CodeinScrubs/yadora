@@ -17,9 +17,12 @@ the short Persian guide in [PILOT_GUIDE_FA.md](PILOT_GUIDE_FA.md). The reasoning
 - which review methods hold up.
 
 **Cannot:** anything about intervals longer than ~2 months, and the twin claim itself (there is no control
-twin). The twin question is answered afterwards by rerunning `tools/pilot/simulate.py` on weights fitted to
-the pilot's own learners. A randomised control arm inside the app was rejected on purpose: withholding
-reviews from a friend's topics is exactly the downside the standard forbids.
+twin). Rerunning `tools/pilot/simulate.py` on weights fitted to the pilot's own learners makes the simulated
+memory more like theirs, which makes the simulated twin result more credible; it is still a simulation, in
+which both twins' memories are a model, and it observes no real control. A randomised control arm inside the
+app was rejected on purpose: withholding reviews from a friend's topics is exactly the downside the standard
+forbids. A study comparing Yadora with another accepted way of reviewing (both groups review) would be a
+separate decision.
 
 ## Setup (week 0)
 

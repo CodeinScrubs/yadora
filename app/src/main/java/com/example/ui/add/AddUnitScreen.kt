@@ -142,19 +142,21 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             loaded = loaded,
                             fresh = fresh,
                             form = TopicEdit.Form(
-                                title = title, subjectId = subjectId, systemId = systemId, studyType = studyType,
+                                // The form shows neither the collection nor the study type any more, so it keeps
+                                // the row's: passing the new-topic defaults here wiped a restored or older topic's
+                                // collection on every save.
+                                title = title, subjectId = subjectId, systemId = fresh.systemId, studyType = fresh.studyType,
                                 recallPrompt = prompt.ifBlank { null }, keyPoints = keyPoints, notes = notes, source = source,
                                 highYield = highYield, studiedAt = studiedAt, nextReviewAt = nextReviewAt,
                             ),
                             now = System.currentTimeMillis(),
                         )
-                        var updated = plan.updated
                         // Turning IMPORTANT ON responds immediately (#15): recompute the current interval
                         // under the tighter retention target from the stored memory state, never later than
                         // what was already scheduled. A subsequent history edit recomputes from the logs
                         // (which store per-review importance), so this is a one-time convenience reschedule.
-                        val lastReviewedAt = fresh.lastReviewedAt
-                        if (plan.tightenForImportant && lastReviewedAt != null) {
+                        suspend fun tightenedForImportant(row: StudyUnitEntity): StudyUnitEntity {
+                            val lastReviewedAt = row.lastReviewedAt ?: return row
                             // The per-user interval correction, refreshed from the logs right before it is
                             // used — the review session and a rating correction do the same.
                             runCatching { repository.refreshMemoryModel() }
@@ -163,32 +165,42 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                             // together with the model that produced it, and re-deriving the interval on
                             // the wrong curve would set a date the next real review then disagrees with.
                             val tighter = MedScheduler.scheduledIntervalDays(
-                                fresh.stability,
+                                row.stability,
                                 MedScheduler.effectiveRetention(true),
-                                MedScheduler.MemoryModel.of(fresh.memoryModel),
+                                MedScheduler.MemoryModel.of(row.memoryModel),
                                 // ...and its own weight set, for the same reason.
-                                fresh.parameterSetId,
+                                row.parameterSetId,
                             ).coerceIn(MedScheduler.MIN_INTERVAL_DAYS, MedScheduler.MAX_INTERVAL_DAYS)
                             val tighterNext = lastReviewedAt + (tighter * 86400000).toLong()
-                            if (tighterNext < updated.nextReviewAt) {
-                                updated = updated.copy(
-                                    nextReviewAt = tighterNext,
-                                    modelDueAt = tighterNext,
-                                    // The model reclaimed the schedule — a stale deferral marker would
-                                    // make this honest-scheduling data lie about who chose the date.
-                                    deferredUntil = null,
-                                    currentIntervalDays = tighter,
-                                )
-                            }
+                            return if (tighterNext < row.nextReviewAt) row.copy(
+                                nextReviewAt = tighterNext,
+                                modelDueAt = tighterNext,
+                                // The model reclaimed the schedule — a stale deferral marker would
+                                // make this honest-scheduling data lie about who chose the date.
+                                deferredUntil = null,
+                                currentIntervalDays = tighter,
+                            ) else row
                         }
                         // The study date is the replay origin: when it moves, the schedule is recomputed
                         // from it atomically with the edit — the whole history of a rated topic, the due
                         // date of an unrated one. Unrated topics used to skip this, so moving their study
                         // date in this form left them due on the old day.
                         if (plan.studyDateChanged) {
-                            repository.updateUnitReplayingHistory(updated)
+                            repository.updateUnitReplayingHistory(plan.updated)
+                            // Important switched on in the same save: tighten the REPLAYED row. It used to be
+                            // tightened first and then overwritten by the replay, which recomputes from the logs
+                            // (they record the importance each review had), so the switch did nothing until the
+                            // next review (found by an outside review, 2026-09-27).
+                            if (plan.tightenForImportant) {
+                                repository.getUnitById(editingId)?.let { replayed ->
+                                    val tightened = tightenedForImportant(replayed)
+                                    if (tightened != replayed) repository.updateUnit(tightened)
+                                }
+                            }
                         } else {
-                            repository.updateUnit(updated)
+                            repository.updateUnit(
+                                if (plan.tightenForImportant) tightenedForImportant(plan.updated) else plan.updated
+                            )
                         }
                         true
                     }

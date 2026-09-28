@@ -318,6 +318,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   come from Anki histories, where elapsed time is a difference of day numbers). Accepted cost: the
   count depends on the device time zone, so a history replayed after moving continents can shift by
   a day — rare and bounded, unlike the queue mismatch. FSRS-5 keeps fractional ms; it is frozen.
+  An outside audit (2026-09-27) showed the shift can matter: two reviews an hour apart across midnight
+  became a same-day pair after a move, and the current interval went from 40 to 26 days. Since then an
+  UNCHANGED rating correction replays nothing, so only a real correction made after a move can shift a
+  history; the complete fix is a per-log day or zone record (a schema change), not taken yet.
 - **FSRS-6 is fed COMPLETED WHOLE DAYS** (`MedScheduler.completedModelDays`). The reference
   measures a review's age in whole days and the weights were fitted that way, so fractional
   elapsed time runs the model outside its fitted domain — and on a day-granularity app it also
@@ -416,7 +420,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   `Fsrs6` and central finite differences by `Fsrs6OptimizerTest`. THE GATE is Yadora's, not py-fsrs's:
   the history is cut in time into five chunks, each of the last four is predicted by a fit on the reviews
   before it (`FOLDS`), and the pooled per-review log loss must beat the weights in use with a one-sided
-  paired z of at least `Fsrs6Optimizer.ACCEPT_Z` (2.33, i.e. 1%). Measured by `Fsrs6OptimizerGateTest`:
+  paired z of at least `Fsrs6Optimizer.ACCEPT_Z` (2.33: a nominal one-sided 1% if every review were
+  independent; reviews of one topic are not, and the fit is repeated, so the real rate of adopting a
+  worse set is NOT established — 0 in 40 below has a 95% upper bound of about 7%). Measured by `Fsrs6OptimizerGateTest`:
   a learner the defaults describe was adopted 0 times in 40 refits; moderate departures 0 in 10 (once
   real reviews correct the state, the defaults' predictions differ too little); a strong departure 9 in
   10 at ~9,000 reviews and not yet at ~4,000. Only then
@@ -555,8 +561,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   chronologically FIRST review log of a topic. A merged topic legitimately carries
   several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each
   as a seed silently reset the merged FSRS state on any later rating correction or
-  study-date edit. `editReviewRating` normalizes the extra rows to `RECALL` as it
-  replays, so histories merged by older builds self-heal.
+  study-date edit. The replay keeps the extra rows as `FIRST_STUDY` re-encoding exposures (see the
+  exposure entry below); it does not rewrite them to `RECALL`.
 - **`MedScheduler.review` takes a REQUIRED model parameter.** A default is a trap: a new call site
   that forgets it schedules on the retired model, compiles, runs and looks right. Tests that pin
   FSRS-5-only behaviour (the retired ×0.9/×0.8 understanding multiplier) now say `FSRS_5` out loud
@@ -629,15 +635,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
   a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
   Use it, extended if needed, rather than reasoning from one worked example when a policy number is
-  on the table. Results as of 2026-09-24 (re-run after the queue-order change) are in `docs/RESEARCH.md`
-  §2: Yadora ahead by 4.5–7.9 points in every realistic scenario (8/8 seeds), about half the forgetting
+  on the table. Results as of 2026-09-27 (re-run after the equal-time fix below) are in `docs/RESEARCH.md`
+  §2: Yadora ahead by 5.4–8.0 points in every realistic scenario (8/8 seeds), about half the forgetting
   of the other twin at equal time; the only loss is an announced-exam cram needing 96–193 topic reviews
-  a day; and the equal-time advantage peaks at the 0.90 default target.
+  a day; and the equal-time advantage is largest at 0.85–0.90 (a tie within noise; 0.90 stays the
+  default because it knows 2.5 points more for 1.27× the reviews).
 - **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
   today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
   be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
   simulation found one losing case: an announced exam where the other twin saves time for a final push.
-  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.7%). It reads NO
+  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.5%). It reads NO
   exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
   honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
   (their first rating belongs on the study day), topics due today stay with today's plan, and topics the
@@ -706,8 +713,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
     self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
     live row; and the twin claim holds on the real schedule.
-  - **Measured:** exam-day recall 96.6% against 90.1% for a random-review twin at equal time; 100% of topics at
-    90%+; weakest tenth 92.7%.
+  - **Measured:** exam-day recall 96.6% against 90.4% for a random-review twin at equal time (the twin's time
+    matches Yadora's to within one review since 2026-09-27; before, it got a few percent more and scored 90.1%);
+    100% of topics at 90%+; weakest tenth 92.7%.
   - **CI:** `analyze.py` replays the export (25,236 logs, all exact) in the "Pilot toolkit agrees with the app"
     step, and exits non-zero on a single mismatch. Runtime is about 65 s.
   - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
@@ -718,8 +726,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   last six months cost more reviews and bought less. For a fast forgetter or a heavy load it was worse than
   nothing: the extra reviews overflow the daily limit and the weakest tenth fell from ~90% to ~81%. The Settings
   exam copy said "raise the retention target months ahead" and now says this instead. Against a fixed-interval
-  ladder at equal time the AVERAGE is close (+0.2–1.3 points), but the ladder leaves its weakest tenth at 71–82%
-  where Yadora keeps 88–90%. Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Do not claim a large
+  ladder at equal time the AVERAGE is close (+0.2–1.4 points at 0.90; at 0.95 level, except under a heavy load), but the ladder leaves its
+  weakest tenth at 70–82% where Yadora keeps 88–90%. Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Against
+  random or oldest-first review it is +3 to +9 in every world (least for a slow forgetter). Do not claim a large
   algorithmic lead over another FSRS app: the lead is the product around the model (the final push, reliable free
   reminders, the honest plan, backups).
 - **Automatic backup** (`data/AutoBackup`, 2026-09-24). Data loss was the second-loudest complaint about the
@@ -751,6 +760,32 @@ These were decided deliberately. Re-suggesting them wastes a session:
     automatic backup into a synced folder covers a new phone).
   - **Their bugs Yadora avoids:** reminders when nothing is due, paywalled reminders, a retention setting that
     would not stick, the wrong default language, silent task limits. Keep avoiding them.
+- **Two outside audits, 2026-09-27: what was real, what changed, what did not** (the owner asked for them to
+  be checked; every item was verified against the code and every fix has a test that fails without it).
+  - **Fixed:** `studyUnits: null`, a null review list or an unknown `memoryModel` is refused before anything is
+    replaced, and a topic the file marks deleted is restored archived (`BackupRoundTripTest`). A rating
+    correction that changes nothing replays nothing, runs in one transaction with one-shot reads, and stamps
+    every replayed log with the model and weight set that computed it (`AuditFindingsTest`). `rateUnit` is one
+    transaction from read to write; the purge chooses and deletes in one transaction; Undo restores only the
+    fields a review writes, so an edit made since survives. The daily limit counts reviews whose time falls on
+    today, both ends. The review card re-reads its topic when the learner comes back to it (the pencil, or the
+    app from the background) and each queued topic before it is shown; answers already chosen are kept per
+    topic id (`ReviewSessionRefreshTest`). A personal-model fit re-checks the switch and the history inside the
+    transaction that would adopt it, one fit runs at a time, and merged topics are left out of the fit as
+    `analyze.py` leaves them out. Today reads the library once per change instead of five times. Switching
+    Important on while moving the study date now tightens the replayed schedule; saving an edit keeps the
+    collection and study type the form no longer shows (both found while checking the reports). The twins in
+    `simulate.py`, `residency.py` and `TwoYearSoakTest` carry a day's overspend into the next day, so "equal
+    time" holds to within one review (it gave them 2.3–2.6% more time, which had understated Yadora's lead).
+  - **Kept, on purpose:** calendar-day replay across time zones (entry above); a real correction on a merged
+    topic replays its combined history, which replaces the weighted average (the dialog says the whole schedule
+    is recalculated; recording merge checkpoints would need a schema change); a topic answered Good + Confused
+    again and again can reach Strong and a long interval once the repair clock backs off past the memory date
+    (YADORA-6, the owner's choice; an "unresolved understanding" state would be a product decision); a
+    projection that meets an unreadable rating skips it (restore already refuses such ratings).
+  - **Not true:** one report said the reminders use `AlarmManager.setAlarmClock()` (they use
+    `setExactAndAllowWhileIdle`), that the 81% weakest-tenth result came from exam-date compression (it came from
+    raising the target to 0.95), and promised "100%" exam outcomes. Its scorecard is not evidence.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

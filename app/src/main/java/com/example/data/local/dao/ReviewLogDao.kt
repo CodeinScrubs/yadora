@@ -53,15 +53,29 @@ interface ReviewLogDao {
     suspend fun getRecentRecallLogsOnce(model: String, parameterSetId: Long, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
 
     /**
-     * Reviews committed since [since], first ratings excluded: what the daily limit counts. A first
-     * rating logs a study that already happened, so it never uses up the day's reviews.
+     * Reviews whose time falls between [since] and [until] (one local day), first ratings excluded: what the
+     * daily limit counts. A first rating logs a study that already happened, so it never uses up the day's
+     * reviews. BOTH ends: a review stamped on a later day (the phone's clock was ahead and then corrected) used
+     * to count against today as well, holding back a review that was due (an outside audit, 2026-09-27). Each
+     * review now counts against exactly one day, the one its time says.
      */
-    @Query("SELECT COUNT(*) FROM review_logs WHERE reviewedAt >= :since AND logType != 'FIRST_STUDY'")
-    suspend fun countReviewsSince(since: Long): Int
+    @Query("SELECT COUNT(*) FROM review_logs WHERE reviewedAt >= :since AND reviewedAt <= :until AND logType != 'FIRST_STUDY'")
+    suspend fun countReviewsBetween(since: Long, until: Long): Int
 
-    /** [countReviewsSince] as a Flow, for the Today screen. */
-    @Query("SELECT COUNT(*) FROM review_logs WHERE reviewedAt >= :since AND logType != 'FIRST_STUDY'")
-    fun observeReviewsSince(since: Long): Flow<Int>
+    /** [countReviewsBetween] as a Flow, for the Today screen. */
+    @Query("SELECT COUNT(*) FROM review_logs WHERE reviewedAt >= :since AND reviewedAt <= :until AND logType != 'FIRST_STUDY'")
+    fun observeReviewsBetween(since: Long, until: Long): Flow<Int>
+
+    @Query("SELECT COALESCE(MAX(id), 0) FROM review_logs")
+    suspend fun maxLogId(): Long
+
+    /**
+     * An identity of the history up to log [maxId]: how many logs and when. A wipe, a restore or an undo changes
+     * it; a new review (a higher id) or a rating correction (same times) does not. The personal-model refit reads
+     * it before fitting and again where it would adopt the result.
+     */
+    @Query("SELECT COUNT(*) || ':' || COALESCE(SUM(reviewedAt), 0) FROM review_logs WHERE id <= :maxId")
+    suspend fun historyFingerprint(maxId: Long): String
 
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")

@@ -237,6 +237,10 @@ object BackupManager {
                     )
                 }
                 "studyUnits" -> {
+                    // REQUIRED, and a LIST. The reader treats JSON null as "no records", so `"studyUnits": null`
+                    // used to pass as an empty library and replace every topic with nothing (found by an outside
+                    // audit, 2026-09-27; the safety copy still held the data). A real empty library is [].
+                    requireList(reader, "studyUnits")
                     sawUnits = true
                     reader.forEachRecord { _, o ->
                         units += StudyUnitEntity(
@@ -254,7 +258,10 @@ object BackupManager {
                             nextReviewAt = o.optLong("nextReviewAt", System.currentTimeMillis()),
                             currentIntervalDays = o.optDouble("currentIntervalDays", 0.0),
                             reviewCount = o.optInt("reviewCount", 0), lapseCount = o.optInt("lapseCount", 0),
-                            archived = o.optBoolean("archived", false),
+                            // Soft-deleted implies archived: every active query reads `archived = 0` alone. An
+                            // edited file saying deleted-but-active would put a topic in Today that the purge then
+                            // removes, so the deletion the file records wins (restorable from Recently deleted).
+                            archived = o.optBoolean("archived", false) || o.longOrNull("deletedAt") != null,
                             // Pre-v5 backups: the effective date was the only date — same backfill the migration uses.
                             modelDueAt = o.optLong("modelDueAt", o.optLong("nextReviewAt", System.currentTimeMillis())),
                             deferredUntil = o.longOrNull("deferredUntil"),
@@ -263,6 +270,8 @@ object BackupManager {
                             // Pre-v6 files predate the model split, and everything in them was FSRS-5 by
                             // definition. Falling back to the entity default would claim the same thing, but
                             // saying it explicitly keeps the intent obvious at the restore site.
+                            // An EXPLICIT model this build does not know (a backup from a newer Yadora) is refused
+                            // below instead of being read as FSRS-5: a stability means nothing on the wrong curve.
                             memoryModel = o.optString("memoryModel", "FSRS-5").ifBlank { "FSRS-5" },
                             // Pre-v7 files have no key points; absent reads as none, the same as the migration.
                             keyPoints = o.strOrNull("keyPoints"),
@@ -287,7 +296,7 @@ object BackupManager {
                         activatedAt = o.longOrNull("activatedAt"), retiredAt = o.longOrNull("retiredAt"),
                     )
                 }
-                "reviewLogs" -> reader.forEachRecord { i, o ->
+                "reviewLogs" -> reader.also { requireList(it, "reviewLogs") }.forEachRecord { i, o ->
                     val memory = o.optString("memoryRating", "")
                     val understanding = o.optString("understandingRating", "")
                     val unitRef = o.optLong("studyUnitId", -1L)
@@ -359,6 +368,12 @@ object BackupManager {
         }
         reader.endObject()
         require(sawUnits) { "This file is not a Yadora backup." }
+        val knownModels = com.example.domain.srs.MedScheduler.MemoryModel.entries.mapTo(HashSet()) { it.id }
+        units.forEachIndexed { i, u ->
+            require(u.memoryModel in knownModels) {
+                "Topic ${i + 1} uses a memory model this version of Yadora does not know (${u.memoryModel}) — update the app first."
+            }
+        }
 
         require(parameterSets.all { it.id > 0 }) { "Damaged backup: memory model with invalid id" }
         require(parameterSets.map { it.id }.toSet().size == parameterSets.size) { "Damaged backup: duplicate memory model ids" }
@@ -572,6 +587,10 @@ object BackupManager {
         runCatching { context.cacheDir.resolve("exports").deleteRecursively() }
         runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
     }
+
+    /** A section that holds records must be a list: null or anything else is a damaged file, never "none". */
+    private fun requireList(reader: android.util.JsonReader, name: String) =
+        require(reader.peek() == android.util.JsonToken.BEGIN_ARRAY) { "Damaged backup: \"$name\" is not a list" }
 
     private fun JSONObject.strOrNull(key: String): String? = if (isNull(key)) null else optString(key)
     private fun JSONObject.longOrNull(key: String): Long? = if (isNull(key)) null else optLong(key)
