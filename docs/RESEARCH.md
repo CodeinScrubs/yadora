@@ -46,35 +46,42 @@ twin reviews exactly what the app would schedule: the same FSRS-6 code path, fir
 fuzz, priority order, daily limit and per-user calibration. The other twin reviews without a schedule.
 Both twins' true memory follows FSRS-6. A review that finds the topic forgotten costs 1.5× a successful
 one, since relearning is slower. A year later, both are quizzed on every topic they studied. 8 random
-seeds per row, mean ± sd, one year:
+seeds per row, mean ± sd, one year.
+
+Equal time means equal to within one review. The other twin starts a review while any of the day's time is
+left, and a forgotten topic costs more than a remembered one, so a day can end over budget; since
+2026-09-27 that overspend comes off the next day. Before, it was forgiven, and the other twin got 2.3–2.6%
+more time than the Yadora twin (found by an outside audit). The table was re-run after the fix; the gains
+moved by −0.3 to +0.5 points, mostly up, since the other twin lost its extra time.
 
 | scenario | Yadora twin | other twin | gain | Yadora wins | average over the year (Yadora / other) |
 |---|---|---|---|---|---|
-| other twin reviews at random | 95.0% | 88.4% | **+6.6** | 8/8 | 95.3% / 89.8% |
-| other twin reviews what was studied recently | 95.0% | 89.8% | **+5.2** | 8/8 | 95.3% / 90.8% |
-| other twin cycles, oldest first (the disciplined no-app student) | 95.0% | 90.1% | **+4.9** | 8/8 | 95.3% / 91.6% |
-| learner forgets 2× faster than the model assumes | 95.1% | 87.6% | **+7.5** | 8/8 | 95.3% / 88.7% |
-| learner forgets 2× slower | 94.9% | 89.2% | **+5.7** | 8/8 | 95.5% / 91.1% |
-| 30% of forgotten reviews rated Hard (inflated ratings) | 92.4% | 86.1% | **+6.3** | 8/8 | 93.2% / 87.9% |
-| skips 30% of days | 95.0% | 88.1% | **+6.9** | 8/8 | 95.3% / 89.5% |
-| 3-week holiday mid-year | 95.0% | 88.0% | **+7.0** | 8/8 | 95.2% / 89.6% |
-| all at once: forgets 2× faster, 30% inflated, skips 30%, disciplined other twin | 92.3% | 86.1% | **+6.2** | 8/8 | 92.7% / 88.2% |
-| heavy load: 6 new topics a day, daily limit 30 | 93.8% | 85.9% | **+7.9** | 8/8 | 95.1% / 89.1% |
+| other twin reviews at random | 95.0% | 88.3% | **+6.7** | 8/8 | 95.3% / 89.6% |
+| other twin reviews what was studied recently | 95.0% | 89.6% | **+5.5** | 8/8 | 95.3% / 90.7% |
+| other twin cycles, oldest first (the disciplined no-app student) | 95.0% | 89.6% | **+5.4** | 8/8 | 95.3% / 91.2% |
+| learner forgets 2× faster than the model assumes | 95.1% | 87.1% | **+8.0** | 8/8 | 95.3% / 88.5% |
+| learner forgets 2× slower | 94.9% | 88.9% | **+6.0** | 8/8 | 95.5% / 90.8% |
+| 30% of forgotten reviews rated Hard (inflated ratings) | 92.4% | 85.7% | **+6.7** | 8/8 | 93.2% / 87.6% |
+| skips 30% of days | 95.0% | 88.4% | **+6.6** | 8/8 | 95.3% / 89.7% |
+| 3-week holiday mid-year | 95.0% | 88.2% | **+6.8** | 8/8 | 95.2% / 89.5% |
+| all at once: forgets 2× faster, 30% inflated, skips 30%, disciplined other twin | 92.3% | 86.1% | **+6.1** | 8/8 | 92.7% / 88.1% |
+| heavy load: 6 new topics a day, daily limit 30 | 93.8% | 85.9% | **+7.9** | 8/8 | 95.1% / 89.0% |
 
 Put as forgetting, the Yadora twin forgets 5.0% of the year's topics. The random-review twin forgets
-11.6% and the disciplined cycler 9.9%. That is **about half the forgetting for the same hours**.
+11.7% and the disciplined cycler 10.4%. That is **about half the forgetting for the same hours**.
 
 ### 2.1 The one way the other twin can win, and what closed it
 
 If the other twin saves **all** review time for a four-week cram right before an **announced** exam, they
-score higher on that day: 98.3% vs 95.0%, or 96.6% when only half is saved. But the cram needs **193**
-(or 100) topic reviews a day for four weeks, which is not humanly possible for real medical topics. And
-the crammer's knowledge averages **66.5%** over the year (84.7% for half), against Yadora's 95.3%. In
+score higher on that day: 98.2% vs 95.0%, or 96.7% when only half is saved. But the cram needs **193**
+(or 96) topic reviews a day for four weeks, which is not humanly possible for real medical topics. And
+the crammer's knowledge averages **66.5%** over the year (83.8% for half), against Yadora's 95.3%. In
 clinical terms, the crammer knows it on exam day and not the rest of the year.
 
 The realistic version gives both twins the same daily hours all year and the same final push: 30 topics
 a day for the last four weeks. The Yadora twin spends its push on the topics predicted weakest; the other
-twin reviews everything oldest-first. **Yadora wins again: 96.4% vs 91.7%, 8/8.**
+twin reviews everything oldest-first. **Yadora wins again: 96.4% vs 91.5%, 8/8** (91.7% if the other
+twin reviewed at random before the push).
 
 Until now, reviewing ahead in Yadora meant opening topics one at a time from the Library. So the app now
 has **Review ahead** (Today, once the day's reviews are done). It offers rated topics that are not yet
@@ -97,16 +104,17 @@ Same twins, the Yadora twin at different targets, the other twin given the same 
 
 | target | Yadora twin | other twin | gain | reviews per topic per year |
 |---|---|---|---|---|
-| 0.80 | 89.7% | 84.1% | +5.6 | 3.7 |
-| 0.85 | 92.5% | 86.3% | +6.3 | 4.5 |
-| **0.90** | **95.0%** | 88.4% | **+6.6** | 5.7 |
-| 0.93 | 96.5% | 90.4% | +6.0 | 7.3 |
-| 0.95 | 97.4% | 91.7% | +5.7 | 9.2 |
-| 0.97 | 98.4% | 94.4% | +4.0 | 13.0 |
+| 0.80 | 89.7% | 83.9% | +5.7 | 3.7 |
+| 0.85 | 92.5% | 85.8% | +6.7 | 4.5 |
+| **0.90** | **95.0%** | 88.3% | **+6.7** | 5.7 |
+| 0.93 | 96.5% | 90.7% | +5.8 | 7.3 |
+| 0.95 | 97.4% | 91.8% | +5.6 | 9.2 |
+| 0.97 | 98.4% | 94.5% | +4.0 | 13.0 |
 
-The advantage of scheduling at equal time peaks at 0.90, the default. Higher targets buy absolute
-knowledge at a steep price: 0.95 gives +2.4 points for 1.6× the reviews, 0.97 gives +3.4 points for
-2.3×. That matches the Settings guide, so the default stays.
+The advantage of scheduling at equal time is largest at 0.85–0.90 (a tie within noise; before the
+equal-time fix it peaked at 0.90 alone). 0.90 stays the default: it knows 2.5 points more than 0.85 for
+1.27× the reviews. Higher targets buy absolute knowledge at a steep price: 0.95 gives +2.4 points for
+1.6× the reviews, 0.97 gives +3.4 points for 2.3×. That matches the Settings guide.
 
 ### 2.4 The remaining scheduling choices, tested one at a time
 
@@ -184,7 +192,9 @@ should choose.
 
 The owner's case, simulated directly (`tools/pilot/residency.py`, 6 seeds). A candidate studies 4 new topics
 (chapters, lectures, question blocks) on 6 days a week for two years, about 2,500 topics, and sits the exam on
-the last day. Every twin gets exactly the Yadora twin's review time, day by day.
+the last day. Every twin gets exactly the Yadora twin's review time, day by day. Re-run 2026-09-27 after the
+equal-time fix (§2): a comparison twin's overspend now comes off its next day. Yadora's own numbers do not depend
+on that and are unchanged; the other twins moved by a few tenths of a point.
 
 Exam day, a learner the defaults describe. The first number is the average recall over every topic studied in
 the two years; the second is the share of topics at 90% or more; the third is the recall of the weakest tenth:
@@ -192,13 +202,15 @@ the two years; the second is the share of topics at 90% or more; the third is th
 | twin | Yadora at the default 0.90 | + Review ahead in the last 4 weeks (up to 60 a day) |
 |---|---|---|
 | **Yadora** | **95.2% · 96% · 90.0%** | **96.4% · 100% · 92.2%** |
-| reviews at random | 87.7% · 65% · 52.0% | 90.8% · 72% · 59.0% |
-| reviews oldest first (the disciplined student) | 89.3% · 69% · 55.4% | 90.9% · 73% · 58.2% |
-| fixed ladder: 1, 3, 7, 14, 30, 60, 120, 240, 365 days | 95.0% · 86% · 79.6% | 96.1% · 91% · 85.3% |
+| reviews at random | 87.7% · 65% · 51.9% | 90.9% · 72% · 59.4% |
+| reviews oldest first (the disciplined student) | 89.1% · 69% · 55.3% | 90.8% · 73% · 57.9% |
+| fixed ladder: 1, 3, 7, 14, 30, 60, 120, 240, 365 days | 94.9% · 86% · 79.0% | 96.0% · 90% · 84.4% |
 | plain FSRS-6, no product layer, at equal time | 95.0% · 98% · 90.5% | (no such feature) |
 
-Yadora wins every seed against random and oldest-first review, in every world and every strategy tested: +5 to
-+9 points on exam day. With the final push it reaches **100% of topics at 90%+**, where the other twins reach
+Yadora wins every seed against random and oldest-first review, in every world and every strategy tested: +3 to
++9 points on exam day. The gap is smallest for a learner who forgets more slowly than the defaults assume (+3 to
++6), whose unreviewed topics fade least. (Until 2026-09-27 this said +5 to +9, which the slow forgetter's rows
+never supported.) With the final push Yadora reaches **100% of topics at 90%+**, where the other twins reach
 72–73%.
 
 Across learners, Yadora's exam-day average · share at 90%+ · weakest tenth, and its reviews a day:
@@ -220,9 +232,12 @@ forgetter or a heavy load it is worse than doing nothing: the extra reviews over
 weakest tenth drops from about 90% to 81%. The Settings copy used to recommend raising the target, and now says
 this instead.
 
-**Against a fixed ladder or a plain FSRS app**, at equal time the averages are close. Yadora is ahead by 0.2–1.3
-points against the ladder (3–6 seeds out of 6) and by 0.2–0.4 against plain FSRS-6 (4–5 of 6). The difference is
-the tail. The ladder leaves its weakest tenth at 71–82% on exam day, against Yadora's 88–90%. That is why "no topic left behind" is a claim only a model-based schedule can make. Plain
+**Against a fixed ladder or a plain FSRS app**, at equal time the averages are close. At the playbook's settings
+(0.90, with or without the push) Yadora is ahead by 0.2–1.4 points against the ladder (3–6 seeds out of 6) and by
+0.2–0.4 against plain FSRS-6 (4–5 of 6). With the target raised to 0.95 the ladder draws level in three of the four
+worlds (−0.4 to +0.2 points; for the slow forgetter at 0.95 it is 0.4 ahead and Yadora wins 0 of 6), and stays 1.1–1.3
+behind only under the heavy load. The difference is the tail. The ladder leaves its weakest tenth at
+70–82% on exam day, against Yadora's 88–90%. That is why "no topic left behind" is a claim only a model-based schedule can make. Plain
 FSRS-6 at equal time matches Yadora's tail; Yadora's lead over it is the per-user calibration (largest for learners
 the defaults misjudge) and the final push, which a plain FSRS app has no feature for.
 
@@ -232,7 +247,7 @@ the defaults misjudge) and the final push, which a plain FSRS app has no feature
   today's plan, the daily limit, the queue order, the calibration refresh, deferrals, a holiday and 40 Review ahead
   topics a day in the last four weeks.
 - **Exam day:** 96.6% recall, with every topic at 90%+ and the weakest tenth at 92.7%. The twin who spent the same
-  time on random reviews reaches 90.1%.
+  time on random reviews reaches 90.4%.
 - **Every invariant held** on every day.
 - **Independent replay:** the export replays 25,236 of 25,236 logs exactly in `analyze.py`. CI runs that replay on
   every change.

@@ -635,15 +635,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
   a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
   Use it, extended if needed, rather than reasoning from one worked example when a policy number is
-  on the table. Results as of 2026-09-24 (re-run after the queue-order change) are in `docs/RESEARCH.md`
-  §2: Yadora ahead by 4.5–7.9 points in every realistic scenario (8/8 seeds), about half the forgetting
+  on the table. Results as of 2026-09-27 (re-run after the equal-time fix below) are in `docs/RESEARCH.md`
+  §2: Yadora ahead by 5.4–8.0 points in every realistic scenario (8/8 seeds), about half the forgetting
   of the other twin at equal time; the only loss is an announced-exam cram needing 96–193 topic reviews
-  a day; and the equal-time advantage peaks at the 0.90 default target.
+  a day; and the equal-time advantage is largest at 0.85–0.90 (a tie within noise; 0.90 stays the
+  default because it knows 2.5 points more for 1.27× the reviews).
 - **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
   today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
   be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
   simulation found one losing case: an announced exam where the other twin saves time for a final push.
-  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.7%). It reads NO
+  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.5%). It reads NO
   exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
   honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
   (their first rating belongs on the study day), topics due today stay with today's plan, and topics the
@@ -725,8 +726,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   last six months cost more reviews and bought less. For a fast forgetter or a heavy load it was worse than
   nothing: the extra reviews overflow the daily limit and the weakest tenth fell from ~90% to ~81%. The Settings
   exam copy said "raise the retention target months ahead" and now says this instead. Against a fixed-interval
-  ladder at equal time the AVERAGE is close (+0.2–1.3 points), but the ladder leaves its weakest tenth at 71–82%
-  where Yadora keeps 88–90%. Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Do not claim a large
+  ladder at equal time the AVERAGE is close (+0.2–1.4 points at 0.90; at 0.95 level, except under a heavy load), but the ladder leaves its
+  weakest tenth at 70–82% where Yadora keeps 88–90%. Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Against
+  random or oldest-first review it is +3 to +9 in every world (least for a slow forgetter). Do not claim a large
   algorithmic lead over another FSRS app: the lead is the product around the model (the final push, reliable free
   reminders, the honest plan, backups).
 - **Automatic backup** (`data/AutoBackup`, 2026-09-24). Data loss was the second-loudest complaint about the
