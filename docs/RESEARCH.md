@@ -351,7 +351,9 @@ by the topic's state. The difficulty version was tested in §2.4. A stability ve
 0.90 + slope × clamp(log₁₀(S / 20 d) / 1.5, −1, 1), so a young topic may drift a little lower before review (a
 review at lower recall buys more stability) and a mature one is held a little higher (a lapse there throws away
 months). At equal time, paired seed by seed against the flat target (points, mean ± standard error; 16 seeds for
-the first world, 8 for the next four, 6 for three years):
+the first world, 8 for the next four, 6 for three years). The first five rows were measured before the
+calibration change above; the heavy-load row was re-measured after it (2026-09-28, with the out-of-range guard:
+every seed inside its sweep). The change made the heavy-load cost larger (before it: −1.63 / −3.41 / −6.17):
 
 | learner | slope | year-end quiz | year average | weakest tenth |
 |---|---|---|---|---|
@@ -360,11 +362,11 @@ the first world, 8 for the next four, 6 for three years):
 | forgets 2× faster | +0.02 / +0.03 / +0.05 | +0.39 / +0.41 / +0.76 | +0.23 / +0.16 / +0.28 | +0.41 / +0.19 / −0.35 |
 | 30% of lapses rated Hard | +0.02 / +0.03 / +0.05 | +0.26 / +0.53 / +0.60 | −0.07 / +0.05 / +0.05 | +0.56 / +0.84 / +0.02 (±0.3–0.7) |
 | three years | +0.02 / +0.03 / +0.05 | +0.13 / +0.36 / +0.53 | +0.25 / +0.35 / +0.34 | +0.22 / +0.49 / +0.38 |
-| **heavy load: 6 new a day, limit 30** | +0.02 / +0.03 / +0.05 | +0.09 / +0.19 / +0.07 | +0.14 / +0.19 / +0.22 | **−1.63 / −3.41 / −6.17** (±0.6) |
+| **heavy load: 6 new a day, limit 30** | +0.02 / +0.03 / +0.05 | −0.04 / +0.12 / −0.10 | +0.17 / +0.24 / +0.21 | **−3.88 / −3.66 / −7.56** (±0.7–0.9) |
 
 When the daily limit has room it is a real gain, 0.4–0.8 points at the quiz without hurting the tail. When the
 limit binds, which is the medical student's normal case, the extra reviews of mature topics take the slots the
-weakest topics need, and the weakest tenth pays 1.6–6.2 points. Like the difficulty target, that is a trade-off
+weakest topics need, and the weakest tenth pays 3.7–7.6 points. Like the difficulty target, that is a trade-off
 rather than a free gain, so the target stays flat; a version that knows about the day's load would be new work,
 best designed against pilot data.
 
