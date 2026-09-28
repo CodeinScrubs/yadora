@@ -156,6 +156,31 @@ class AuditFindingsTest {
         assertEquals(1, db.reviewLogDao().getLogsForUnitOnce(id).size)
     }
 
+    /**
+     * Undo puts back the row as it was STORED. A topic still on an older model is shown and rated projected onto
+     * the current one, and Undo used to put that projected copy back: the row then said FSRS-6 over a history
+     * FSRS-5 wrote, which the research export's self-check reports as MODEL_OWNERSHIP. Found on the Samsung,
+     * 2026-09-28.
+     */
+    @Test
+    fun `undo puts back the row as stored, not the copy projected for the screen`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val id = topic("Hypothyroidism", now - 20 * day)
+        rate(id, now - 20 * day, MemoryRating.Good)
+        rate(id, now - 10 * day, MemoryRating.Good)
+        // A topic an older build wrote: its row and its logs on FSRS-5.
+        db.reviewLogDao().getLogsForUnitOnce(id).forEach { db.reviewLogDao().insertLog(it.copy(schedulerVersion = "FSRS-5")) }
+        repo.updateUnit(repo.getUnitById(id)!!.copy(memoryModel = "FSRS-5"))
+        val stored = repo.getUnitById(id)!!
+
+        val rated = rate(id, now, MemoryRating.Good)
+        assertEquals("the review itself runs on the current model", MedScheduler.CURRENT_MODEL.id, rated.after.memoryModel)
+        repo.undoReview(rated.before, rated.logId)
+
+        assertEquals("undo leaves the row exactly as it was stored", stored, repo.getUnitById(id))
+        assertEquals(2, db.reviewLogDao().getLogsForUnitOnce(id).size)
+    }
+
     /** The personal fit leaves merged topics out, as the pilot analysis does. */
     @Test
     fun `merged topics are left out of the personal fit`() = runBlocking {

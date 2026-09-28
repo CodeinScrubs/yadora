@@ -491,10 +491,14 @@ class ReviewViewModel(
                 }
                 // The undone log is gone, so the streak the buttons preview with must be re-read.
                 currentUnrepairedStreak = repository.unrepairedStreak(historyItem.unitBeforeRating.id)
-                // The row as undo left it: its schedule from before the rating, its content as it is now.
-                _currentUnit.value = repository.getUnitById(historyItem.unitBeforeRating.id)
+                // The row as undo left it: its schedule from before the rating, its content as it is now, projected
+                // for the buttons exactly as advanceUnit does. The snapshot is the STORED row, possibly on an older
+                // model, so it is never shown in place of that: a topic that cannot be re-read and projected gives
+                // way to the card that was on screen (fail closed, as advanceUnit does).
+                val restored = repository.getUnitById(historyItem.unitBeforeRating.id)
+                    ?.takeIf { it.deletedAt == null && !it.archived }
                     ?.let { runCatching { repository.projectOntoCurrentModel(it) }.getOrNull() }
-                    ?: historyItem.unitBeforeRating
+                if (restored != null) _currentUnit.value = restored else advanceUnit()
             } catch (t: Throwable) {
                 ratedStack.add(historyItem) // undo failed: keep the history item so Undo stays possible
             } finally {

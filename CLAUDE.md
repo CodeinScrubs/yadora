@@ -73,6 +73,17 @@ rules. The R8 release, signed with the SDK debug key only to install over the de
 launch, a rating and its Undo, "Back up now", a full restore and the automatic-backup worker, with no crash. The
 phone's research export replayed through `analyze.py` with 0 mismatches and 0 self-check issues (D1 OK).
 
+Verified 2026-09-28 on the Samsung (the audit fixes, from test backups made from `DeviceSeedBackupTest`'s seed). Restore
+refused a file whose topic list is null and one naming an unknown memory model (Toast "Restore failed — invalid
+backup", the library byte-identical after each), and a topic the file marked deleted but not archived came back
+archived. An edit save kept a collection and study type the form does not show. A rating correction saved unchanged
+wrote nothing (the row, every log column and the event count identical); a real one replayed, and Good→Hard→Good
+restored S and D exactly (the corrected row takes today's calibration, by design). Back from the pencil, the card
+re-read its topic (Important on: Easy ~5d→~4d, Medium ~2d→~1d) and the commit matched the preview (1.1076 d). An
+FSRS-5 topic shown in a session was not written. That pass found the Undo defect in the Undo entry below. The export
+then replayed through `analyze.py`: 140 logs, 0 mismatches, 0 self-check issues; `smoke.sh` and `test_reminder.sh`
+clean.
+
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
 nothing. After a reboot wait up to two minutes past `sys.boot_completed` before judging whether reminders
@@ -786,6 +797,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Not true:** one report said the reminders use `AlarmManager.setAlarmClock()` (they use
     `setExactAndAllowWhileIdle`), that the 81% weakest-tenth result came from exam-date compression (it came from
     raising the target to 0.95), and promised "100%" exam outcomes. Its scorecard is not evidence.
+- **Undo puts back the row as it was STORED** (`MedReviewRepository.RatedReview.before`, 2026-09-28). A topic still on
+  an older model or weight set is shown and scheduled from a copy projected onto the current one, and Undo used to
+  write that copy back: on the Samsung, rate-then-Undo left a row labelled FSRS-6 over a history FSRS-5 wrote, which the
+  export's self-check reports as MODEL_OWNERSHIP (and a new `updatedAt`). The snapshot is now the row the commit read
+  inside its transaction, before projecting it. After Undo the session shows the re-read row projected, and a topic that
+  cannot be re-read and projected gives way to the next card (fail closed, as `advanceUnit`). `AuditFindingsTest` pins
+  it; the old code failed it on exactly those two fields.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
