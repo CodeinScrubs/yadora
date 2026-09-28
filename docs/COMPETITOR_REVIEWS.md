@@ -59,9 +59,9 @@ for this app's scheduling:
 - **Plain FSRS-6** is the same memory model with none of Yadora's product layer. It stands in for the current
   version.
 
-**On the average**, all three are close: at equal time and the default target Yadora is ahead by 0.2–1.4 points
+**On the average**, all three are close: at equal time and the default target Yadora is ahead by 0.1–1.5 points
 against the ladder and 0.2–0.4 against plain FSRS-6. **On the tail**, the ladder leaves the weakest tenth of topics at
-70–82% recall on exam day, against 88–90% for Yadora.
+72–83% recall on exam day, against 89–92% for Yadora.
 
 **With the final push**, Yadora puts 99–100% of topics at 90%+ on exam day. A plain FSRS app has no feature for
 that final push. Details: [RESEARCH.md](RESEARCH.md) §2.5.
