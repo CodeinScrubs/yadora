@@ -85,8 +85,8 @@ object ReviewAhead {
  * a study that already happened, and its schedule is counted from the moment it is rated. Holding it
  * behind the limit would push that anchor to another day, so every first rating is offered, first.
  *
- * Reviews are ordered by [MedScheduler.priorityScore] (Important first, then the most overdue), the same
- * score the backlog plan uses.
+ * Reviews are ordered by [MedScheduler.priorityScore] (Important, lateness, and how much a review now would
+ * strengthen the topic), the same score the backlog plan uses.
  */
 object DailyPlan {
 
@@ -110,6 +110,29 @@ object DailyPlan {
 
     fun isFirstRating(unit: StudyUnitEntity): Boolean = unit.reviewCount == 0
 
+    /** [MedScheduler.priorityScore] for a stored topic, the one ordering the plan and the Spread-out plan share. */
+    fun priority(unit: StudyUnitEntity, now: Long): Double = MedScheduler.priorityScore(
+        unit.highYield, unit.modelDueAt, now, unit.nextReviewAt, unit.understandingDueAt, queueMemory(unit),
+    )
+
+    /** Most urgent first; each score is computed once. Ties go to the earlier date, then the lower id. */
+    fun byPriority(units: List<StudyUnitEntity>, now: Long): List<StudyUnitEntity> = units
+        .map { it to priority(it, now) }
+        .sortedWith(
+            compareByDescending<Pair<StudyUnitEntity, Double>> { it.second }
+                .thenBy { it.first.nextReviewAt }.thenBy { it.first.id },
+        )
+        .map { it.first }
+
+    /** The memory state the review value reads; null for an unrated topic, which is ordered by lateness alone. */
+    private fun queueMemory(unit: StudyUnitEntity): MedScheduler.QueueMemory? {
+        val last = unit.lastReviewedAt ?: return null
+        if (unit.reviewCount == 0) return null
+        return MedScheduler.QueueMemory(
+            unit.stability, unit.difficulty, last, MedScheduler.MemoryModel.of(unit.memoryModel), unit.parameterSetId,
+        )
+    }
+
     /**
      * @param due every active topic due by the end of today.
      * @param reviewsDoneToday reviews (not first ratings) already committed today.
@@ -122,11 +145,7 @@ object DailyPlan {
         now: Long,
         ignoreLimit: Boolean = false,
     ): Plan {
-        val ordered = due.sortedWith(
-            compareByDescending<StudyUnitEntity> {
-                MedScheduler.priorityScore(it.highYield, it.modelDueAt, now, it.nextReviewAt, it.understandingDueAt)
-            }.thenBy { it.nextReviewAt }.thenBy { it.id },
-        )
+        val ordered = byPriority(due, now)
         val (firstRatings, reviews) = ordered.partition { isFirstRating(it) }
         val done = reviewsDoneToday.coerceAtLeast(0)
         val allowance = if (ignoreLimit) reviews.size else (MedScheduler.safeDailyLimit(dailyLimit) - done).coerceAtLeast(0)
@@ -159,6 +178,14 @@ object TodayBuckets {
  * from the DB write so the spread (how many per day, which day, what target time) can be tested.
  */
 object OverdueRedistributor {
+    /**
+     * What the recovery plan spreads: overdue REVIEWS. A never-rated topic is left due: its first rating logs a
+     * study that already happened and its schedule counts from that rating, so the daily plan offers it first and
+     * never holds it back ([DailyPlan]). Spreading it moved that anchor days past the study (found on the emulator,
+     * 2026-09-29: two first ratings deferred to the third day), and the card counted it among "reviews waiting".
+     */
+    fun spreadable(overdue: List<StudyUnitEntity>): List<StudyUnitEntity> = overdue.filterNot { DailyPlan.isFirstRating(it) }
+
     /** Shortest plan: even a small backlog gets at least a couple of days of breathing room. */
     const val MIN_RECOVERY_DAYS = 3
 
@@ -184,7 +211,7 @@ object OverdueRedistributor {
 
     /**
      * Whether Today offers the recovery plan ("You were away" + Spread out): only for a backlog larger than one
-     * day's limit. A smaller one is cleared by the daily plan itself, most overdue first, today or (once today's
+     * day's limit. A smaller one is cleared by the daily plan itself, most urgent first, today or (once today's
      * limit is done) tomorrow; spreading it would only move reviews the plan could give sooner. The card used to
      * appear for ANY overdue topic: on the owner's Samsung, after twelve reviews that day, it said "You were away"
      * and offered to spread one review over three days.

@@ -316,7 +316,7 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and this one only touches a topic reviewed twice on one calendar day and rated Hard, where it cuts
   stability by more than half, 100 days to 45. The app almost never produces that: the daily plan offers
   a topic again only on a later day, Review ahead leaves out topics reviewed today (2026-09-28), and the
-  soak's 24,335 reviews contain none. What remains is a deliberate second review from the Library and the
+  soak's 24,673 reviews contain none. What remains is a deliberate second review from the Library and the
   fall-back-night hour in the due-date entry above); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
   stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
@@ -571,7 +571,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   three-day window turned 100 overdue topics into ~34 a day for a user whose daily limit is 10 — a
   plan they cannot execute, which teaches them the dates mean nothing. Days are derived from the
   daily limit and capped at 14; past that the plan overloads rather than pushing memory reviews
-  months out. Keep the Settings copy honest about it.
+  months out. Keep the Settings copy honest about it. It spreads overdue REVIEWS only
+  (`OverdueRedistributor.spreadable`, 2026-09-29): a never-rated topic stays due, where the daily plan offers it
+  first, because its schedule counts from the rating. Spreading it moved that anchor days past the study (seen on
+  the emulator), and the card counted it among "reviews waiting".
 - **Duplicate detection normalizes Persian/Arabic** (`TopicTitle`). SQL `lower(trim(title))` is byte
   equality with an ASCII-only lowercase, so Farsi yeh vs Arabic yeh and keheh vs Arabic kaf —
   chosen by the keyboard, not the writer, and visually identical — produced two topics with no
@@ -611,27 +614,41 @@ These were decided deliberately. Re-suggesting them wastes a session:
   stays on its old model until a real review commits. `NeglectedTopicTest` sweeps neglect from one
   day to a century across every state/rating/understanding combination (finite, bounded, ordered,
   never throws), and `ReplayEqualsLiveTest` pins the row as byte-identical after repeated reads.
-- **The queue order is IMPORTANT FIRST, THEN THE MOST OVERDUE, and nothing else** (`priorityScore`,
-  2026-09-24). Important adds 100 (= 20 days of lateness); lateness adds 5 per day on the model's clock,
-  uncapped so nothing can starve. The score used to add +80/+40/+20 for NeedsRelearn/Learning/Building
-  and +10 per lapse (capped at 5). With the daily limit binding, those bonuses spent the day's slots on
-  the topics a review strengthens least while stronger ones slid further past due. In five simulated
-  backlogs (16 paired seeds each; `experiments.py --only order`) lateness alone knew more through the
-  year in all five (+0.12 to +0.55 points) and at the one-year quiz in four (+0.12 to +0.32; the fifth
-  equal within noise), never less; both bonuses cost, the lapse term more in most worlds. So a topic
-  that just lapsed is not jumped ahead of older debt: its relearn step is a due DATE, and under a backlog
-  it waits its turn like every other due topic. `MAX_SCORED_LAPSES` now caps only the Library's "weakest first" sort. The order
-  matters only when more is due than the day allows; it is not replayed, so no POLICY bump. Do not add
-  weakness or lapse bonuses back without a simulation that beats this. Two outside reports (2026-09-28)
-  called uncapped lateness a "FIFO trap" and proposed two replacements:
-  - ranking by recall deficit × recoverability, (R* − R)+ · (1 − e^(−S/τ)), τ = 10–100 d;
-  - ranking by the largest 3-day recall loss.
-
-  On the same five backlogs both lost. The recoverability index lost 0.4–2.0 points at the quiz in four worlds
-  and tied only after the holiday. The 3-day-loss order lost 0.6–8.0 points in all five
-  (`YADORA_EXTRA_ORDERS=roi10,roi30,roi100,dr3`, RESEARCH §2.4). The premise was wrong for FSRS-6: a topic 30 days
-  overdue still sits at 59–88% predicted recall, not ~5%, and the daily drop in recall is largest right after a
-  review. The reports also described the pre-2026-09-24 score, bonuses included.
+- **The queue order is IMPORTANCE, LATENESS and a CAPPED REVIEW VALUE, nothing else** (`priorityScore`,
+  2026-09-29; validated at the owner's request, "switch only if everything holds"). Important adds 100 (= 20 days of
+  lateness); lateness adds 5 per day on the model's and the repair clock, uncapped so nothing can starve; the review
+  value, (1 − R) · R · the relative stability gain of a Good review NOW, read on the topic's own model and weight set
+  (`MedScheduler.reviewValue`), adds 80 × itself, capped at 200 (= 40 days of lateness). Unrated topics score
+  lateness alone. So among topics equally late, the one a review would strengthen most comes first: a young topic
+  whose recall is falling before a mature one whose flat curve can wait.
+  - **Measured** (`experiments.py --only order`, RESEARCH §2.4, 16 paired seeds): where the limit binds for weeks,
+    +0.42 to +1.53 points at the one-year quiz against lateness alone and +2.1 to +4.8 on the weakest tenth; after
+    a holiday a tie; at the default load equal within noise. With 30% of lapses rated Hard +0.90, with a true curve
+    twice as steep as the model's +2.36. On the real app (`TwoYearSoakTest`'s learner at a limit of 25, one seed):
+    exam day 94.1% → 95.6%, weakest tenth 66.6% → 76.4%.
+  - **The price:** the longest wait past due rose from 22–65 days to 24–84 across seven worlds. The cap makes the
+    bound a rule: no topic is passed over by one more than 40 days less overdue (60 if that one is Important). It
+    also stops an extreme state (a tiny stability, a personal set with a steep gain) from jumping the queue.
+  - **Where it came from:** an outside report's "Whittle index + concave aging" (2026-09-28): the same value with
+    lateness as 10·ln(1 + days). That form knew more still (+0.1 to +3.9 at the quiz, +7.9 to +15.1 on the
+    weakest tenth) but let topics wait 153–291 days past due. It is the owner's call if that trade is ever wanted;
+    do not switch silently. Also rejected: its write-off below 10% recall (FSRS-6 reaches it only after about
+    three million stabilities), its +60 repair bonus and its Important multiplier. Weights 40/100/160 and caps
+    100/300 were tried: more weight gains a little and waits longer; a cap of 100 lost up to half the gain; 300
+    never bound.
+  - **Lowest recall first and relative lateness lift the weakest tenth most** (+5.5 to +16.5 against this order)
+    but lose 1.7–3.0 points on the average, which is what an exam sampling the syllabus measures, and leave mature
+    topics unreviewed for 227–312 days. Not adopted.
+  - **History:** until 2026-09-24 the score also added +80/+40/+20 for NeedsRelearn/Learning/Building and +10 per
+    lapse (capped at 5). Set by label, large and blind to recall, they lost to lateness alone in all five backlogs
+    (+0.12 to +0.55 through the year). Do not add them back. `MAX_SCORED_LAPSES` caps only the Library's "weakest
+    first" sort. Two outside reports (2026-09-28) called uncapped lateness a "FIFO trap" and proposed ranking by
+    recall deficit × recoverability, (R* − R)+ · (1 − e^(−S/τ)), or by the largest 3-day recall loss; both lost to
+    lateness alone (0.4–2.0 and 0.6–8.0 points at the quiz; RESEARCH §2.4). Their premise was wrong for FSRS-6: a
+    topic 30 days overdue still sits at 59–88% predicted recall.
+  - The order matters only when more is due than the day allows. It is not replayed, so no POLICY bump.
+    `PriorityScoreTest` pins the terms, the cap and the fallbacks; the Spread-out plan uses the same order
+    (`DailyPlan.byPriority`).
 - **Retention is clamped on read** (`MedScheduler.safeRetention`), not just on write.
   Prefs store a `Float` and FSRS consumes a `Double`, so even a value clamped to
   exactly `0.99` reads back fractionally outside the band `FsrsParameters` accepts —
@@ -664,16 +681,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
   a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
   Use it, extended if needed, rather than reasoning from one worked example when a policy number is
-  on the table. Results as of 2026-09-28 (re-run after the equal-time fix and the calibration cap below) are in `docs/RESEARCH.md`
-  §2: Yadora ahead by 5.1–8.1 points in every realistic scenario (8/8 seeds), about half the forgetting
-  of the other twin at equal time; the only loss is an announced-exam cram needing 96–193 topic reviews
+  on the table. Results as of 2026-09-29 (re-run with the new queue order) are in `docs/RESEARCH.md`
+  §2: Yadora ahead by 5.0–8.4 points in every realistic scenario (8/8 seeds), about half the forgetting
+  of the other twin at equal time; the only loss is an announced-exam cram needing 100–200 topic reviews
   a day; and the equal-time advantage is largest at 0.85–0.90 (a tie within noise; 0.90 stays the
   default because it knows 2.5 points more for 1.3× the reviews).
 - **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
   today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
   be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
   simulation found one losing case: an announced exam where the other twin saves time for a final push.
-  With the same realistic push, Yadora spending it weakest-first wins again (96.5% vs 91.5%). It reads NO
+  With the same realistic push, Yadora spending it weakest-first wins again (96.5% vs 91.8%). It reads NO
   exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
   honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
   (their first rating belongs on the study day), topics due today stay with today's plan, and topics the
@@ -682,9 +699,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   `ReviewAhead.isCandidate` is the one rule, used by the queue and by the Today button, so the button
   never opens an empty session.
 - **Scheduling choices are checked against their alternatives by simulation** (`tools/pilot/experiments.py`,
-  results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: most overdue first
-  (see the queue-order entry above) beat the old weakness/lapse bonuses, lowest recall first and lateness
-  relative to the interval; "highest recall first" is 4–7 points worse.
+  results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: see the queue-order entry
+  above (lateness plus a capped review value since 2026-09-29, ahead of lateness alone, the old weakness/lapse
+  bonuses, lowest recall first and relative lateness at the quiz); "highest recall first" is 7–8 points worse
+  wherever the limit binds for weeks.
   The relearn step (1 d vs 2 d vs FSRS's post-lapse interval), the first-study cap (3/5/7 d/none) and the
   maximum interval (180/365/none over three years) are all within noise of each other at EQUAL TIME;
   the cap keeps ~0.2 points over the year when first ratings are overconfident and costs nothing when
@@ -746,22 +764,25 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
     self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
     live row; and the twin claim holds on the real schedule.
-  - **Measured:** exam-day recall 96.9% against 90.5% for a random-review twin at equal time (the twin's time
+  - **Measured:** exam-day recall 96.9% against 90.6% for a random-review twin at equal time (the twin's time
     matches Yadora's to within one review since 2026-09-27; before, it got a few percent more and scored 90.1%);
-    100% of topics at 90%+; weakest tenth 93.1%; 24,335 reviews. (Before the calibration stopped lengthening
-    intervals, 2026-09-28: 96.6%, 92.7% and 22,804 reviews.)
-  - **CI:** `analyze.py` replays the export (26,767 logs, all exact) in the "Pilot toolkit agrees with the app"
+    100% of topics at 90%+; weakest tenth 93.1%; 24,673 reviews. (Before the calibration stopped lengthening
+    intervals, 2026-09-28: 96.6%, 92.7% and 22,804 reviews. The 2026-09-29 queue order changed neither figure at
+    this limit, which rarely binds; it changed which random draw each review gets, and the count, from 24,335.)
+  - **CI:** `analyze.py` replays the export (27,105 logs, all exact) in the "Pilot toolkit agrees with the app"
     step, and exits non-zero on a single mismatch. Runtime is about 65 s.
   - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
     measured numbers, re-measure and record why.
 - **The exam playbook is 0.90 plus Review ahead, NOT a higher target** (`tools/pilot/residency.py`,
   `docs/RESEARCH.md` §2.5, 2026-09-24). Over two years at equal time, staying at 0.90 and using Review ahead in
   the last four weeks brought 99–100% of topics to 90%+ recall on exam day. Raising the target to 0.95 for the
-  last six months cost more reviews and bought less. For a fast forgetter or a heavy load it was worse than
-  nothing: the extra reviews overflow the daily limit and the weakest tenth fell from ~90% to ~81%. The Settings
-  exam copy said "raise the retention target months ahead" and now says this instead. Against a fixed-interval
-  ladder at equal time the AVERAGE is close (+0.1–1.5 points at 0.90; at 0.95 level, except under a heavy load), but the ladder leaves its
-  weakest tenth at 72–83% where Yadora keeps 89–92% (re-run 2026-09-28 with the calibration cap). Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Against
+  last six months cost more reviews and bought no more than the push (the same average or less, a weaker tail).
+  For a fast forgetter or a heavy load the extra reviews overflow the daily limit and the weakest tenth fell from
+  ~90% to 85–87% (~81% with the queue order before 2026-09-29). The Settings exam copy said "raise the retention
+  target months ahead" and now says this instead. Against a fixed-interval ladder at equal time the AVERAGE is
+  close (+0.2–1.4 points at 0.90; at 0.95 level only for a slow forgetter), but the ladder leaves its weakest tenth
+  at 72–83% where Yadora keeps 90–92% (re-run 2026-09-29 with the new queue order). Against plain FSRS-6 at equal
+  time Yadora is +0.3–0.5. Against
   random or oldest-first review it is +3 to +9 in every world (least for a slow forgetter). Do not claim a large
   algorithmic lead over another FSRS app: the lead is the product around the model (the final push, reliable free
   reminders, the honest plan, backups).
@@ -978,6 +999,26 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **The owner's call, later:** a randomised method suggestion for a future study (it steers how participants
     study). A model separating slow forgetting from generous rating is weakly identified while reviews cluster
     near 90% predicted recall; the question score stays the anchor.
+- **Four "deliverables" from another assistant, 2026-09-28: a guarded `Fsrs6.kt`, a method-effect analysis, a queue
+  index and a cap relaxation.** Each was checked against the code, and the queue index in the simulator.
+  - **Adopted in changed form:** the queue's review value (the queue-order entry above). As proposed, with
+    ln(1 + days) lateness, it let topics wait 150–290 days past due under a heavy load; the app keeps linear
+    lateness and caps the value. Its write-off below 10% recall, its +60 repair bonus and its Important multiplier
+    were not taken.
+  - **Rejected:**
+    - The "guarded" kernel clamps stability at 3,650 days and the interval inside `Fsrs6`. 848 golden vectors
+      have a stability above 3,650 going in or coming out (384 of the 2,112 composed steps start there and 288
+      end there), and 49 of the 88 interval points lie outside [1, 365], so it would fail conformance: the fifth
+      deviation again. `MedScheduler` owns the interval bounds.
+    - Its premises: "`Fsrs6Optimizer.LOWER = 0.01`" (LOWER is py-fsrs's per-weight array, and w20's bounds are
+      0.1–0.8); "a Yadora pilot set, not py-fsrs 6.3.1's defaults" (false, entry above); "optimal review value
+      scales with recall probability" (MEMORIZE's scales with 1 − recall).
+    - The method analysis scores Hard (grade 2) as a failure (`grade ≥ 3`); FSRS and Yadora count Hard as a
+      recall. Its weighted model passes `freq_weights` to statsmodels' `Logit`, which takes no frequency weights
+      (GLM does), and it names `sm.PanelOLS`, which is in linearmodels, not statsmodels. D7's within-learner
+      comparison stands; a randomised method suggestion stays the owner's call.
+    - The interval-sensitivity gate would lift the calibration cap on self-ratings alone, with the same
+      Hard-as-failure error. The cap stays until an objective signal exists (the calibration entry above).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

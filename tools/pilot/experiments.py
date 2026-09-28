@@ -8,12 +8,15 @@ Uses the same learner and memory model as simulate.py (FSRS-6 true memory, hones
 and a Yadora twin whose policy knobs can be changed one at a time:
 
   1. ORDER. Which due topics get today's slots when the daily limit binds (after a holiday, under a heavy
-     load): Yadora's order (Important first, then the most overdue; without the Important flag, which is not
-     simulated, that is earliest-due), the score Yadora used before 2026-09-24 (plus bonuses for weak states
-     and past lapses), lowest predicted recall first, highest first, or most overdue relative to the
-     interval. The limit fixes the workload, so knowledge is compared directly, on paired seeds.
+     load): Yadora's order since 2026-09-29 (5 points a day of lateness plus 80 x the review value, capped at
+     200; the Important flag is not simulated), lateness alone (Yadora's order from 2026-09-24), the score
+     Yadora used before that (plus bonuses for weak states and past lapses), lowest predicted recall first,
+     highest first, or most overdue relative to the interval. The limit fixes the workload, so knowledge is
+     compared directly, on paired seeds; the table also reports the weakest tenth and the longest any due
+     topic waited past its due day (the starvation check).
      YADORA_EXTRA_ORDERS=roi10,roi30,roi100,dr3 adds the backlog-triage orders outside reports proposed on
-     2026-09-28: recall deficit x recoverability, (R* - R)+ x (1 - exp(-S / tau)), and the largest 3-day loss.
+     2026-09-28: recall deficit x recoverability, (R* - R)+ x (1 - exp(-S / tau)), and the largest 3-day loss;
+     whittle[:V:A] and valuelin:V:L[:C] are the review-value variants compared on 2026-09-29.
   2. RELEARN. After "Forgot", come back in 1 day (Yadora), in 2, or at FSRS's own post-lapse interval.
   3. FIRST-STUDY CAP. The first interval capped at 5 days (Yadora), 3, 7, or not at all. Tested with
      honest first ratings AND with over-confident ones (the judgment-of-learning illusion the cap exists for).
@@ -58,7 +61,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import yadora_model as ym  # noqa: E402
 from simulate import (  # noqa: E402
     FIRST_GRADES, REVIEW_HOUR_FRACTION, SUCCESS_GRADES, Topic, TrueMemory, knowledge, mastery, pick, priority,
-    priority_before_2026_09_24,
+    priority_before_2026_09_24, priority_lateness_only,
 )
 
 
@@ -159,6 +162,9 @@ def oracle_interval(true_model: ym.Fsrs6, t: Topic, grade: int, p: Policy, first
     return min(max(raw, ym.MIN_INTERVAL_DAYS), p.max_interval), raw
 
 
+MAX_WAIT = [0]  # the longest wait (days past due) seen since the caller last reset it
+
+
 def run(p: Policy, w: World, seed: int):
     """One Yadora twin under policy p. Returns (final quiz, mean knowledge, reviews, weakest tenth on the last
     day, mean TRUE recall at review): the last is the retention the learner actually experiences."""
@@ -196,8 +202,25 @@ def run(p: Policy, w: World, seed: int):
                 topics.append(t)
         if not on_holiday(w, day):
             due = [t for t in topics if t.due_day <= day and t.last_day < day]
+            if due:  # the longest any due topic has waited, for starvation checks
+                MAX_WAIT[0] = max(MAX_WAIT[0], day - min(t.due_day for t in due))
             if p.order == "yadora":
-                due.sort(key=lambda t: (-priority(t, day), t.model_due, t.tid))
+                due.sort(key=lambda t: (-priority(t, day, sched), t.model_due, t.tid))
+            elif p.order.startswith("valuelin"):
+                # The review value with LINEAR lateness instead of ln(1 + days): "valuelin:V:L" = V * value + L * days late
+                # on the model's clock. Tested 2026-09-29 because ln(1 + days) let topics wait months under a heavy load.
+                # "valuelin:V:L:C" also caps the value term at C points, so it can move a topic at most C / L days.
+                parts = p.order.split(":")
+                v_w, l_w = float(parts[1]), float(parts[2])
+                v_cap = float(parts[3]) if len(parts) > 3 else math.inf
+
+                def value_linear(t):
+                    r = sched.retrievability(day - t.last_day, t.s)
+                    gain = sched.next_state(ym.State(t.s, t.d), day - t.last_day, ym.GOOD).stability
+                    return min(v_w * (1 - r) * r * max((gain - t.s) / t.s, 0.0), v_cap) + l_w * max(day - t.model_due, 0.0)
+                due.sort(key=lambda t: (-value_linear(t), t.model_due, t.tid))
+            elif p.order == "lateness":
+                due.sort(key=lambda t: (-priority_lateness_only(t, day), t.model_due, t.tid))
             elif p.order == "previous":
                 due.sort(key=lambda t: (-priority_before_2026_09_24(t, day), t.model_due, t.tid))
             elif p.order == "r_asc":
@@ -214,6 +237,21 @@ def run(p: Policy, w: World, seed: int):
                 tau = float(p.order[3:])
                 due.sort(key=lambda t: (-max(p.retention - sched.retrievability(day - t.last_day, t.s), 0.0)
                                         * (1.0 - math.exp(-t.s / tau)), t.model_due, t.tid))
+            elif p.order.startswith("whittle"):
+                # A later report's "Whittle + concave aging" (2026-09-28): value * (1 - R) * R * relative stability gain
+                # of a Good review now, + aging * ln(1 + days overdue); topics under 10% recall "written off" last.
+                # "whittle" = 40 and 10, as proposed; "whittle:V:A" sets them, to test how much the weights matter.
+                parts = p.order.split(":")
+                w_value, w_aging = (float(parts[1]), float(parts[2])) if len(parts) == 3 else (40.0, 10.0)
+
+                def whittle(t):
+                    r = sched.retrievability(day - t.last_day, t.s)
+                    if r < 0.10:
+                        return -1e9
+                    gain = sched.next_state(ym.State(t.s, t.d), day - t.last_day, ym.GOOD).stability
+                    return (w_value * (1 - r) * r * max((gain - t.s) / t.s, 0.0)
+                            + w_aging * math.log(1 + max(day - t.due_day, 0)))
+                due.sort(key=lambda t: (-whittle(t), t.model_due, t.tid))
             elif p.order == "dr3":
                 # The same reports' "marginal retention gain": the recall three more days of waiting would cost.
                 due.sort(key=lambda t: (-(sched.retrievability(day - t.last_day, t.s)
@@ -373,39 +411,52 @@ def main():
             ("learner forgets 2x slower, 5 new/day, limit 15", World(days=days, new_per_study_day=5, daily_limit=15, k_true=2.0)),
             ("heavy load, 40% of first ratings one grade too high", World(days=days, new_per_study_day=6, daily_limit=15, first_overconfident=0.4)),
         ]
-        orders = [("Yadora: most overdue first", "yadora"),
+        orders = [("Yadora since 2026-09-29: lateness + capped review value", "yadora"),
+                  ("2026-09-24 to 09-29: most overdue first", "lateness"),
                   ("before 2026-09-24: + weak-state and lapse bonuses", "previous"),
                   ("lowest recall first", "r_asc"), ("highest recall first", "r_desc"),
                   ("most overdue relative to interval", "overdue_rel")]
         # YADORA_EXTRA_ORDERS=roi10,roi30,roi100,dr3 tests the backlog-triage orders outside reports proposed on
-        # 2026-09-28 against Yadora's order and lowest recall first, on the same paired seeds.
+        # 2026-09-28 against Yadora's order and lowest recall first, on the same paired seeds; whittle, whittle:V:A,
+        # valuelin:V:L and valuelin:V:L:C are the queue-value variants tested on 2026-09-29 (see run()).
         extra = [o for o in os.environ.get("YADORA_EXTRA_ORDERS", "").split(",") if o]
         if extra:
-            named = {"dr3": "largest 3-day recall loss first"}
-            orders = [orders[0], orders[2]] + [
-                (named.get(o) or f"(R* - R)+ x (1 - e^(-S/{o[3:]}d))", o) for o in extra]
+            named = {"dr3": "largest 3-day recall loss first", "whittle": "Whittle proxy + 10 ln(1 + overdue)"}
+            orders = [orders[0], orders[1], orders[3]] + [
+                (named.get(o) or (f"(R* - R)+ x (1 - e^(-S/{o[3:]}d))" if o.startswith("roi") else o), o) for o in extra]
 
         def paired(xs, ys):
             d = [100 * (x - y) for x, y in zip(xs, ys)]
             se = statistics.stdev(d) / math.sqrt(len(d)) if len(d) > 1 else float("nan")
             return f"{statistics.fmean(d):+.2f} ± {se:.2f}"
 
+        def with_wait(o, w, seed):
+            MAX_WAIT[0] = 0
+            r = run(Policy(order=o), w, seed)
+            return r, MAX_WAIT[0]
+
         for wname, w in worlds:
-            runs = {o: [run(Policy(order=o), w, 900 + s) for s in range(order_seeds)] for _, o in orders}
+            runs, waits = {}, {}
+            for _, o in orders:
+                pairs = [with_wait(o, w, 900 + s) for s in range(order_seeds)]
+                runs[o], waits[o] = [r for r, _ in pairs], max(x for _, x in pairs)
             ref = runs["yadora"]
             print(f"**{wname}** ({order_seeds} paired seeds)\n")
-            print("| order | final quiz | vs Yadora | average over the year | vs Yadora | reviews |")
-            print("|---|---|---|---|---|---|")
+            print("| order | final quiz | vs Yadora | average over the year | vs Yadora | weakest tenth | vs Yadora "
+                  "| reviews | longest wait past due |")
+            print("|---|---|---|---|---|---|---|---|---|")
             for oname, o in orders:
                 rs = runs[o]
                 f = statistics.fmean(r[0] for r in rs)
                 m = statistics.fmean(r[1] for r in rs)
                 n = statistics.fmean(r[2] for r in rs)
+                wt = statistics.fmean(r[3] for r in rs)
                 if o == "yadora":
-                    print(f"| {oname} | {pct(f)} | | {pct(m)} | | {n:.0f} |")
+                    print(f"| {oname} | {pct(f)} | | {pct(m)} | | {pct(wt)} | | {n:.0f} | {waits[o]} d |")
                 else:
                     print(f"| {oname} | {pct(f)} | {paired([r[0] for r in rs], [r[0] for r in ref])} | "
-                          f"{pct(m)} | {paired([r[1] for r in rs], [r[1] for r in ref])} | {n:.0f} |")
+                          f"{pct(m)} | {paired([r[1] for r in rs], [r[1] for r in ref])} | "
+                          f"{pct(wt)} | {paired([r[3] for r in rs], [r[3] for r in ref])} | {n:.0f} | {waits[o]} d |")
             print()
 
     base_world = World(days=days)

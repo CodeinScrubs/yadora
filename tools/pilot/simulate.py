@@ -171,16 +171,35 @@ def target_on(sc: Scenario, day: int) -> float:
     return sc.retention
 
 
-def priority(t: Topic, day: int) -> float:
-    """MedScheduler.priorityScore without high-yield (not simulated): lateness on the model's clock."""
-    return max(day - t.model_due, 0.0) * 5.0
+QUEUE_VALUE_WEIGHT, QUEUE_VALUE_CAP, LATENESS_PER_DAY = 80.0, 200.0, 5.0  # MedScheduler's, since 2026-09-29
+_DEFAULT_MODEL = ym.Fsrs6()
+
+
+def review_value(t: Topic, day: int, sched: Optional[ym.Fsrs6] = None) -> float:
+    """MedScheduler.reviewValue: (1 - R) * R * the relative stability gain of a Good review now."""
+    m = sched or _DEFAULT_MODEL
+    elapsed = day - t.last_day
+    r = m.retrievability(elapsed, t.s)
+    gain = m.next_state(ym.State(t.s, t.d), elapsed, ym.GOOD).stability
+    return (1 - r) * r * max((gain - t.s) / t.s, 0.0)
+
+
+def priority(t: Topic, day: int, sched: Optional[ym.Fsrs6] = None) -> float:
+    """MedScheduler.priorityScore without Important (not simulated): 5 points a day late on the model's clock, plus
+    QUEUE_VALUE_WEIGHT * the review value, capped at QUEUE_VALUE_CAP (40 days of lateness). Since 2026-09-29."""
+    return priority_lateness_only(t, day) + min(QUEUE_VALUE_WEIGHT * review_value(t, day, sched), QUEUE_VALUE_CAP)
+
+
+def priority_lateness_only(t: Topic, day: int) -> float:
+    """The score Yadora used from 2026-09-24 to 2026-09-29: lateness on the model's clock, 5 points a day."""
+    return max(day - t.model_due, 0.0) * LATENESS_PER_DAY
 
 
 def priority_before_2026_09_24(t: Topic, day: int) -> float:
     """The score Yadora used until 2026-09-24, kept so experiments.py can show why it changed."""
     score = {"NeedsRelearn": 80.0, "Learning": 40.0, "Building": 20.0}.get(t.state, 0.0)
     score += min(t.lapses, 5) * 10.0
-    return score + priority(t, day)
+    return score + priority_lateness_only(t, day)
 
 
 def mastery(s: float, forgot: bool) -> str:
@@ -232,7 +251,7 @@ def run_yadora(sc: Scenario, classes: List[List[int]], seed: int):
         day_cost, day_reviews = 0.0, 0
         if not on_holiday(sc, day) and not (sc.skip_day_rate and rng.random() < sc.skip_day_rate):
             due = [t for t in topics if t.due_day <= day and t.last_day < day]
-            due.sort(key=lambda t: (-priority(t, day), t.model_due, t.tid))
+            due.sort(key=lambda t: (-priority(t, day, sched), t.model_due, t.tid))
             todo = due[: sc.daily_limit]
             if sc.sweep_days and day >= sc.days - sc.sweep_days and len(todo) < sc.sweep_capacity:
                 chosen = {t.tid for t in todo}
