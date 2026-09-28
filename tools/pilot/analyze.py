@@ -884,7 +884,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             summary["participants"][pid]["scale_raw"] = raw
             summary["participants"][pid]["scale_app"] = shr
     rep.p("Per-user interval scale (RecallCalibration; 1 = the defaults fit this learner; above 1 = remembers longer "
-          "than predicted). 'raw' is the moment estimate on the evidence rows, 'app' what the app applies after shrinkage:")
+          "than predicted). 'raw' is the moment estimate on the evidence rows, 'app' what the app applies after shrinkage "
+          "(never above 1 since 2026-09-28: generous ratings look exactly like slower forgetting, so only 'raw' shows "
+          "a slower forgetter):")
     rep.table(["participant", "evidence reviews", "raw scale", "app scale"], rows_k)
 
     # ---- first interval ----------------------------------------------------------------------------------

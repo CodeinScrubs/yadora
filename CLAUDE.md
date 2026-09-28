@@ -309,8 +309,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   mean reversion must target the **unclamped** `D₀(Easy)` (−4.77, not the clamped 1.0 — py-fsrs
   passes `clamp=False` there and `clamp=True` only when seeding a new card); a lapse is bounded
   by the **short-term branch** `S / e^(w17·w18)` ≈ 0.9518·S, not by `S`; the same-day multiplier
-  is floored at 1 for **Good and Easy only** (6.3.1 lists just those two — an unreleased `main`
-  commit adds Hard; we pin the release); and the stability floor is 0.001, not 0.01.
+  is floored at 1 for **Good and Easy only** (6.3.1 lists just those two; py-fsrs 6.3.2, August 2026,
+  added Hard, and the pin stays at 6.3.1 on purpose: adopting a new reference means a new model identity,
+  and this one only touches a topic reviewed twice on one calendar day and rated Hard, which the app
+  almost never produces); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
   stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
   functions alone left the seams unchecked — branch selection, argument order, final clamps — and
@@ -393,7 +395,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   last 600 real recall reviews on the live model: the stability scale at which the model's predicted
   recall count equals the observed count (method of moments on the RAW stored predictions, so it
   never chases the corrected schedule), shrunk toward 1 in log space by `n / (n + 120)` and clamped
-  to 0.5–2. It multiplies the memory interval only, before the caps — equivalent to a per-user
+  to 0.5–1: since 2026-09-28 it shortens intervals but NEVER lengthens them (entry below); scales up to 2
+  that older builds stored still replay unchanged (`safeScale`). It multiplies the memory interval only, before the caps — equivalent to a per-user
   retention adjustment — and never touches stability or difficulty. It is refreshed from the logs
   right before anything schedules with it (session start, the Important toggle, a rating
   correction) — NOT at app start, where a startup thread raced the session — each log stores the
@@ -646,16 +649,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   identical-twins test (same classes, same review time, Yadora vs review without a schedule, a quiz
   a year later) across learner types, inflated ratings, missed days, cramming and retention targets.
   Use it, extended if needed, rather than reasoning from one worked example when a policy number is
-  on the table. Results as of 2026-09-27 (re-run after the equal-time fix below) are in `docs/RESEARCH.md`
-  §2: Yadora ahead by 5.4–8.0 points in every realistic scenario (8/8 seeds), about half the forgetting
+  on the table. Results as of 2026-09-28 (re-run after the equal-time fix and the calibration cap below) are in `docs/RESEARCH.md`
+  §2: Yadora ahead by 5.1–8.1 points in every realistic scenario (8/8 seeds), about half the forgetting
   of the other twin at equal time; the only loss is an announced-exam cram needing 96–193 topic reviews
   a day; and the equal-time advantage is largest at 0.85–0.90 (a tie within noise; 0.90 stays the
-  default because it knows 2.5 points more for 1.27× the reviews).
+  default because it knows 2.5 points more for 1.3× the reviews).
 - **Review ahead** (2026-09-24, `ui/today/ReviewAhead`, Today once the day is done). Rated topics not due
   today, weakest predicted recall first (each topic read on its OWN model and weight set; one that cannot
   be predicted is left out), 20 per session, `ReviewSession(ahead = true)`. It exists because the twin
   simulation found one losing case: an announced exam where the other twin saves time for a final push.
-  With the same realistic push, Yadora spending it weakest-first wins again (96.4% vs 91.5%). It reads NO
+  With the same realistic push, Yadora spending it weakest-first wins again (96.5% vs 91.5%). It reads NO
   exam date and compresses no interval: every review it offers is an ordinary early review FSRS scores
   honestly, and the calibration evidence rules already drop early reviews. Unrated topics are left out
   (their first rating belongs on the study day), topics due today stay with today's plan, and topics the
@@ -724,10 +727,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
     self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
     live row; and the twin claim holds on the real schedule.
-  - **Measured:** exam-day recall 96.6% against 90.4% for a random-review twin at equal time (the twin's time
+  - **Measured:** exam-day recall 96.9% against 90.5% for a random-review twin at equal time (the twin's time
     matches Yadora's to within one review since 2026-09-27; before, it got a few percent more and scored 90.1%);
-    100% of topics at 90%+; weakest tenth 92.7%.
-  - **CI:** `analyze.py` replays the export (25,236 logs, all exact) in the "Pilot toolkit agrees with the app"
+    100% of topics at 90%+; weakest tenth 93.1%; 24,335 reviews. (Before the calibration stopped lengthening
+    intervals, 2026-09-28: 96.6%, 92.7% and 22,804 reviews.)
+  - **CI:** `analyze.py` replays the export (26,767 logs, all exact) in the "Pilot toolkit agrees with the app"
     step, and exits non-zero on a single mismatch. Runtime is about 65 s.
   - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
     measured numbers, re-measure and record why.
@@ -737,8 +741,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   last six months cost more reviews and bought less. For a fast forgetter or a heavy load it was worse than
   nothing: the extra reviews overflow the daily limit and the weakest tenth fell from ~90% to ~81%. The Settings
   exam copy said "raise the retention target months ahead" and now says this instead. Against a fixed-interval
-  ladder at equal time the AVERAGE is close (+0.2–1.4 points at 0.90; at 0.95 level, except under a heavy load), but the ladder leaves its
-  weakest tenth at 70–82% where Yadora keeps 88–90%. Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Against
+  ladder at equal time the AVERAGE is close (+0.1–1.5 points at 0.90; at 0.95 level, except under a heavy load), but the ladder leaves its
+  weakest tenth at 72–83% where Yadora keeps 89–92% (re-run 2026-09-28 with the calibration cap). Against plain FSRS-6 at equal time Yadora is +0.2–0.4. Against
   random or oldest-first review it is +3 to +9 in every world (least for a slow forgetter). Do not claim a large
   algorithmic lead over another FSRS app: the lead is the product around the model (the final push, reliable free
   reminders, the honest plan, backups).
@@ -804,6 +808,39 @@ These were decided deliberately. Re-suggesting them wastes a session:
   inside its transaction, before projecting it. After Undo the session shows the re-read row projected, and a topic that
   cannot be re-read and projected gives way to the next card (fail closed, as `advanceUnit`). `AuditFindingsTest` pins
   it; the old code failed it on exactly those two fields.
+- **The calibration NEVER LENGTHENS intervals** (`RecallCalibration.MAX_ESTIMATE = 1`, the owner's decision
+  2026-09-28, on `tools/pilot/experiments.py` section 7). A learner who calls some forgotten topics "Hard" gives
+  the calibration exactly the evidence a slow forgetter gives (more "recalls" than predicted), and self-ratings
+  cannot tell them apart. Lengthening every interval for the first turned out to be most of what inflated
+  ratings cost: at a 0.90 target, with 30% of lapses rated Hard it caused 1.8 of the 2.9 points lost at the
+  year-end quiz and the weakest tenth fell to 75%; with 60%, 4.1 of 7.2 points and 59%. Capped at x1 those
+  learners keep almost all of it (93.8% and 92.0% at the quiz, weakest tenth 79.9% and 67.5%); an honest
+  average learner knows 0.3 points more for about 3% more reviews (the estimate's upward noise no longer
+  stretches anything); a fast forgetter keeps its full correction. The cost falls on the honest SLOW forgetter:
+  about 16% more reviews than strictly needed, for 1.1 points more knowledge. The raw estimate
+  (`momentScale`) stays unclamped, and `analyze.py` reports it, so the pilot still sees slow forgetters. Do
+  not lift the cap without an objective signal that separates slow forgetting from generous rating (the
+  question score, once the pilot shows what it means). The personal weight set learns from the same ratings
+  and can still lengthen intervals after its gate; that risk is known and not yet addressed.
+- **What is left to improve in the algorithm, checked 2026-09-28** (`experiments.py` sections 6 and 8,
+  `docs/RESEARCH.md` §2.7). Do not re-run these as open questions.
+  - **The memory model is at its ceiling in simulation.** An ORACLE twin that schedules from the learner's true
+    memory, under the same product rules, beats Yadora at equal time by at most 0.25 points at the year-end
+    quiz and 0.3 over the year, for a learner the defaults describe, one who forgets 2x faster or slower, a
+    first study worth half, and a steeper curve. No better model can buy more than that: FSRS-7 (which now
+    exists, predicts better on the benchmark, has 34 weights and no pinned py-fsrs release), a personal fit,
+    anything. Do not chase a new model for retention gains.
+  - **The one large gap is inflated ratings.** The oracle's weakest tenth sits 10 points above Yadora's for a
+    learner who calls 30% of lapses Hard. That is missing information, not missing mathematics; the calibration
+    cap above recovers about half of it, and the rest needs honest ratings or an objective signal.
+  - **A stability-adaptive target (lower for young topics, higher for mature ones; a one-parameter version of
+    cost-optimal scheduling) is NOT adopted.** It buys 0.4–0.8 points at the quiz when the daily limit has room,
+    but when the limit binds (a heavy load, the medical student's normal case) it costs the weakest tenth 1.6 to
+    6.2 points: the extra reviews of mature topics take the slots weak topics need. Like the difficulty-adaptive
+    target, a trade-off, and a load-aware version would be new work.
+  - **No outcome can be guaranteed.** Even an identical twin with identical time loses some exams by the luck of
+    which topics are asked (about 8% of 100-question exams against the disciplined no-app twin), and a different
+    student can study more, start ahead or review better. Never claim a guaranteed score; MARKETING.md applies.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

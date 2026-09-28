@@ -90,7 +90,13 @@ def test_calibration_recovers_planted_scale():
             rec.append(rnd.random() < p_true)
         k = ym.moment_scale(pred, rec, m)
         assert abs(math.log(k / planted)) < 0.12, (planted, k)
-    print("calibration: planted scales 0.6 / 1.0 / 1.7 recovered")
+        # What the app applies never lengthens intervals (RecallCalibration since 2026-09-28), but still shortens.
+        applied = ym.calibration_scale(pred, rec, m)
+        if planted > 1.0:
+            assert applied == 1.0, (planted, applied)
+        elif planted < 1.0:
+            assert applied < 0.9, (planted, applied)
+    print("calibration: planted scales 0.6 / 1.0 / 1.7 recovered; the applied scale never lengthens")
 
 
 def test_intervals_match_app_ladder():

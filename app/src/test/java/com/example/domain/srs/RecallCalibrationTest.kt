@@ -109,7 +109,23 @@ class RecallCalibrationTest {
 
         val many = 100_000
         assertEquals(RecallCalibration.MIN_SCALE, RecallCalibration.scale(DoubleArray(many) { 0.9 }, BooleanArray(many) { false }), 1e-12)
-        assertEquals(RecallCalibration.MAX_SCALE, RecallCalibration.scale(DoubleArray(many) { 0.9 }, BooleanArray(many) { true }), 1e-12)
+        assertEquals(RecallCalibration.MAX_ESTIMATE, RecallCalibration.scale(DoubleArray(many) { 0.9 }, BooleanArray(many) { true }), 1e-12)
+    }
+
+    /**
+     * The correction only ever shortens intervals. A learner who reports more recalls than predicted may
+     * really forget slower, or may be calling forgotten topics "Hard"; the ratings cannot tell which, and
+     * lengthening for the second is what inflated ratings cost most (experiments.py section 7, 2026-09-28).
+     */
+    @Test
+    fun `a learner who seems to remember longer is never given longer intervals, a faster forgetter still gets shorter ones`() {
+        val (slowP, slowR) = plant(1.7, 20_000, 21)
+        assertTrue("the raw estimate still sees the slower forgetting", RecallCalibration.momentScale(slowP, slowR) > 1.5)
+        assertEquals("but the schedule's scale stays at one", 1.0, RecallCalibration.scale(slowP, slowR), 0.0)
+
+        val (fastP, fastR) = plant(0.6, 20_000, 22)
+        val fast = RecallCalibration.scale(fastP, fastR)
+        assertTrue("a faster forgetter's intervals still shrink ($fast)", fast < 0.7 && fast >= RecallCalibration.MIN_SCALE)
     }
 
     @Test
@@ -119,6 +135,7 @@ class RecallCalibrationTest {
         assertEquals(RecallCalibration.MAX_SCALE, RecallCalibration.safeScale(10.0), 0.0)
         assertEquals(RecallCalibration.MIN_SCALE, RecallCalibration.safeScale(0.01), 0.0)
         assertEquals(0.83, RecallCalibration.safeScale(0.83), 0.0)
+        assertEquals("a scale an older build stored replays unchanged", 1.7, RecallCalibration.safeScale(1.7), 0.0)
     }
 
     // --- Where it reaches ---------------------------------------------------------------------------

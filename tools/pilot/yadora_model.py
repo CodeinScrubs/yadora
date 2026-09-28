@@ -51,7 +51,8 @@ CAL_PRIOR_REVIEWS = 120
 CAL_WINDOW = 600
 CAL_MIN_ELAPSED_DAYS = 3.0
 CAL_EARLY_FRACTION = 0.5
-CAL_MIN_SCALE, CAL_MAX_SCALE = 0.5, 2.0
+CAL_MIN_SCALE, CAL_MAX_SCALE = 0.5, 2.0   # the band a stored scale replays within (older builds stored up to 2)
+CAL_MAX_ESTIMATE = 1.0                    # a NEW estimate never lengthens intervals (RecallCalibration, 2026-09-28)
 
 
 @dataclass(frozen=True)
@@ -244,7 +245,16 @@ def moment_scale(predicted: Sequence[float], recalled: Sequence[bool], model: Fs
 
 
 def calibration_scale(predicted: Sequence[float], recalled: Sequence[bool], model: Fsrs6 = Fsrs6()) -> float:
-    """RecallCalibration.scale: the moment scale shrunk toward 1 in log space by n/(n+120), clamped."""
+    """RecallCalibration.scale: the moment scale shrunk toward 1 in log space by n/(n+120), clamped to
+    [CAL_MIN_SCALE, CAL_MAX_ESTIMATE]: it shortens intervals, never lengthens them (since 2026-09-28)."""
+    n = len(predicted)
+    if n == 0:
+        return 1.0
+    return min(calibration_scale_uncapped(predicted, recalled, model), CAL_MAX_ESTIMATE)
+
+
+def calibration_scale_uncapped(predicted: Sequence[float], recalled: Sequence[bool], model: Fsrs6 = Fsrs6()) -> float:
+    """The estimate as builds before 2026-09-28 applied it (clamped to 0.5-2): kept for experiments.py's comparison."""
     n = len(predicted)
     if n == 0:
         return 1.0

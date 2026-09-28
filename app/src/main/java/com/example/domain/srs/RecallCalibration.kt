@@ -34,6 +34,17 @@ import kotlin.math.pow
  * correction earns its weight only as evidence accumulates: ~45 % of the raw estimate at 100
  * reviews, ~77 % at 400, ~93 % at 1,600.
  *
+ * IT NEVER LENGTHENS INTERVALS (2026-09-28, the owner's decision on the simulation below). A learner
+ * who calls some forgotten topics "Hard" produces exactly the evidence a slow forgetter produces: more
+ * "recalls" than predicted. Self-ratings alone cannot tell the two apart, and lengthening every interval
+ * for the first is what inflated ratings cost most (`tools/pilot/experiments.py`, section 7): with 30%
+ * of lapses rated Hard it caused 1.8 of the 2.9 points lost at the year-end quiz and sank the weakest
+ * tenth of topics to 75%; at 60%, 4.1 of 7.2 points and 59%. Capped at x1, those learners keep almost
+ * all of it back, an honest average learner knows 0.3 points more for 3% more reviews (the estimate's
+ * upward noise no longer stretches anything), and a fast forgetter keeps its full correction. The cost
+ * falls on the honest slow forgetter, who now reviews about 16% more than strictly needed and knows 1.1
+ * points more for it. Under-reviewing is what fails an exam; over-reviewing costs time.
+ *
  * All constants are POLICY, chosen by the reasoning above, not fitted. Real Yadora data could
  * later replace them; the estimator's shape would not change.
  */
@@ -81,9 +92,16 @@ object RecallCalibration {
     fun isEvidence(elapsedDays: Double, previousIntervalDays: Double): Boolean =
         elapsedDays >= MIN_ELAPSED_DAYS && elapsedDays >= EARLY_REVIEW_FRACTION * previousIntervalDays
 
-    /** Beyond these the model is simply wrong for this learner in a way one scale cannot express. */
+    /**
+     * The band the scheduler may multiply by (see [safeScale]). Beyond these the model is simply wrong for
+     * this learner in a way one scale cannot express. MAX_SCALE stays 2 because builds before 2026-09-28
+     * stored scales up to 2 on their logs, and replay must reproduce those intervals exactly.
+     */
     const val MIN_SCALE = 0.5
     const val MAX_SCALE = 2.0
+
+    /** The most a NEW estimate may be: 1, so the correction only ever shortens intervals (class note). */
+    const val MAX_ESTIMATE = 1.0
 
     /** The raw root is searched inside a wider band before shrinking, so a strong signal is not clipped twice. */
     private const val SEARCH_MIN = 0.25
@@ -128,12 +146,16 @@ object RecallCalibration {
         return exp((lo + hi) / 2)
     }
 
-    /** The scale the schedule uses: [momentScale] shrunk toward 1 by the prior, then clamped. */
+    /**
+     * The scale the schedule uses: [momentScale] shrunk toward 1 by the prior, then clamped to
+     * [MIN_SCALE]..[MAX_ESTIMATE], so it shortens intervals for a learner who forgets faster than predicted
+     * and never lengthens them (class note). [momentScale] stays unclamped for analysis.
+     */
     fun scale(predicted: DoubleArray, recalled: BooleanArray, p: Fsrs6Parameters = defaults): Double {
         val n = predicted.size
         if (n == 0) return 1.0
         val raw = momentScale(predicted, recalled, p)
         val weight = n.toDouble() / (n + PRIOR_REVIEWS)
-        return exp(weight * ln(raw)).coerceIn(MIN_SCALE, MAX_SCALE)
+        return exp(weight * ln(raw)).coerceIn(MIN_SCALE, MAX_ESTIMATE)
     }
 }

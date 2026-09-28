@@ -54,33 +54,38 @@ left, and a forgotten topic costs more than a remembered one, so a day can end o
 more time than the Yadora twin (found by an outside audit). The table was re-run after the fix; the gains
 moved by −0.3 to +0.5 points, mostly up, since the other twin lost its extra time.
 
+Re-run again on 2026-09-28, after the calibration stopped lengthening intervals (§2.7). The Yadora twin now
+reviews a little more (5.9 reviews per topic a year at 0.90, against 5.7) and knows more (95.3% against 95.0%).
+The other twin gets the same extra time, so the gains moved by −0.5 to +0.2 points; where ratings are inflated
+or the learner forgets slower, Yadora's own knowledge rose 0.9–1.4 points.
+
 | scenario | Yadora twin | other twin | gain | Yadora wins | average over the year (Yadora / other) |
 |---|---|---|---|---|---|
-| other twin reviews at random | 95.0% | 88.3% | **+6.7** | 8/8 | 95.3% / 89.6% |
-| other twin reviews what was studied recently | 95.0% | 89.6% | **+5.5** | 8/8 | 95.3% / 90.7% |
-| other twin cycles, oldest first (the disciplined no-app student) | 95.0% | 89.6% | **+5.4** | 8/8 | 95.3% / 91.2% |
-| learner forgets 2× faster than the model assumes | 95.1% | 87.1% | **+8.0** | 8/8 | 95.3% / 88.5% |
-| learner forgets 2× slower | 94.9% | 88.9% | **+6.0** | 8/8 | 95.5% / 90.8% |
-| 30% of forgotten reviews rated Hard (inflated ratings) | 92.4% | 85.7% | **+6.7** | 8/8 | 93.2% / 87.6% |
-| skips 30% of days | 95.0% | 88.4% | **+6.6** | 8/8 | 95.3% / 89.7% |
-| 3-week holiday mid-year | 95.0% | 88.2% | **+6.8** | 8/8 | 95.2% / 89.5% |
-| all at once: forgets 2× faster, 30% inflated, skips 30%, disciplined other twin | 92.3% | 86.1% | **+6.1** | 8/8 | 92.7% / 88.1% |
-| heavy load: 6 new topics a day, daily limit 30 | 93.8% | 85.9% | **+7.9** | 8/8 | 95.1% / 89.0% |
+| other twin reviews at random | 95.3% | 88.4% | **+6.9** | 8/8 | 95.6% / 89.7% |
+| other twin reviews what was studied recently | 95.3% | 90.2% | **+5.1** | 8/8 | 95.6% / 90.8% |
+| other twin cycles, oldest first (the disciplined no-app student) | 95.3% | 90.1% | **+5.2** | 8/8 | 95.6% / 91.5% |
+| learner forgets 2× faster than the model assumes | 95.1% | 87.6% | **+7.5** | 8/8 | 95.3% / 88.4% |
+| learner forgets 2× slower | 95.8% | 90.2% | **+5.6** | 8/8 | 96.1% / 91.6% |
+| 30% of forgotten reviews rated Hard (inflated ratings) | 93.8% | 87.1% | **+6.7** | 8/8 | 94.3% / 88.5% |
+| skips 30% of days | 95.3% | 88.8% | **+6.5** | 8/8 | 95.5% / 89.9% |
+| 3-week holiday mid-year | 95.3% | 88.7% | **+6.6** | 8/8 | 95.4% / 89.7% |
+| all at once: forgets 2× faster, 30% inflated, skips 30%, disciplined other twin | 92.6% | 86.5% | **+6.0** | 8/8 | 93.0% / 88.1% |
+| heavy load: 6 new topics a day, daily limit 30 | 94.0% | 85.8% | **+8.1** | 8/8 | 95.2% / 89.1% |
 
-Put as forgetting, the Yadora twin forgets 5.0% of the year's topics. The random-review twin forgets
-11.7% and the disciplined cycler 10.4%. That is **about half the forgetting for the same hours**.
+Put as forgetting, the Yadora twin forgets 4.7% of the year's topics. The random-review twin forgets
+11.6% and the disciplined cycler 9.9%. That is **about half the forgetting for the same hours**.
 
 ### 2.1 The one way the other twin can win, and what closed it
 
 If the other twin saves **all** review time for a four-week cram right before an **announced** exam, they
-score higher on that day: 98.2% vs 95.0%, or 96.7% when only half is saved. But the cram needs **193**
-(or 96) topic reviews a day for four weeks, which is not humanly possible for real medical topics. And
-the crammer's knowledge averages **66.5%** over the year (83.8% for half), against Yadora's 95.3%. In
+score higher on that day: 98.2% vs 95.3%, or 96.8% when only half is saved. But the cram needs **198**
+(or 99) topic reviews a day for four weeks, which is not humanly possible for real medical topics. And
+the crammer's knowledge averages **66.6%** over the year (84.0% for half), against Yadora's 95.6%. In
 clinical terms, the crammer knows it on exam day and not the rest of the year.
 
 The realistic version gives both twins the same daily hours all year and the same final push: 30 topics
 a day for the last four weeks. The Yadora twin spends its push on the topics predicted weakest; the other
-twin reviews everything oldest-first. **Yadora wins again: 96.4% vs 91.5%, 8/8** (91.7% if the other
+twin reviews everything oldest-first. **Yadora wins again: 96.5% vs 91.5%, 8/8** (91.6% if the other
 twin reviewed at random before the push).
 
 Until now, reviewing ahead in Yadora meant opening topics one at a time from the Library. So the app now
@@ -92,9 +97,11 @@ decision that the exam date feeds nothing stands.
 ### 2.2 What inflated ratings cost
 
 Rating 30% of forgotten reviews as Hard still leaves the Yadora twin ahead of the other twin at equal
-time. But it costs the learner 2.6 points of absolute knowledge (95.0 → 92.4%), because the scheduler
-stretches intervals on topics that had actually been lost. At 60% the cost is 7.3 points. **Honest "Forgot"
-ratings are worth more than any parameter in this document.** The review screen already asks what the
+time. But it costs the learner 1.5 points of absolute knowledge (95.3 → 93.8%), because the scheduler
+stretches intervals on topics that had actually been lost. At 60% the cost is 3.5 points. Until 2026-09-28
+it was 2.6 and 7.3: the calibration read the generous ratings as slower forgetting and stretched every
+interval on top; it no longer lengthens intervals (§2.7). **Honest "Forgot" ratings are still worth more than
+any parameter in this document.** The review screen already asks what the
 learner had *before* rereading, and each button says what it means. The pilot now checks ratings against
 question scores (D6).
 
@@ -104,17 +111,17 @@ Same twins, the Yadora twin at different targets, the other twin given the same 
 
 | target | Yadora twin | other twin | gain | reviews per topic per year |
 |---|---|---|---|---|
-| 0.80 | 89.7% | 83.9% | +5.7 | 3.7 |
-| 0.85 | 92.5% | 85.8% | +6.7 | 4.5 |
-| **0.90** | **95.0%** | 88.3% | **+6.7** | 5.7 |
-| 0.93 | 96.5% | 90.7% | +5.8 | 7.3 |
-| 0.95 | 97.4% | 91.8% | +5.6 | 9.2 |
-| 0.97 | 98.4% | 94.5% | +4.0 | 13.0 |
+| 0.80 | 89.9% | 83.8% | +6.1 | 3.7 |
+| 0.85 | 92.8% | 86.1% | +6.7 | 4.5 |
+| **0.90** | **95.3%** | 88.4% | **+6.9** | 5.9 |
+| 0.93 | 96.7% | 90.5% | +6.3 | 7.6 |
+| 0.95 | 97.7% | 92.3% | +5.4 | 9.8 |
+| 0.97 | 98.6% | 94.7% | +3.8 | 14.4 |
 
-The advantage of scheduling at equal time is largest at 0.85–0.90 (a tie within noise; before the
-equal-time fix it peaked at 0.90 alone). 0.90 stays the default: it knows 2.5 points more than 0.85 for
-1.27× the reviews. Higher targets buy absolute knowledge at a steep price: 0.95 gives +2.4 points for
-1.6× the reviews, 0.97 gives +3.4 points for 2.3×. That matches the Settings guide.
+The advantage of scheduling at equal time is largest at 0.85–0.90 (a tie within noise). 0.90 stays the
+default: it knows 2.5 points more than 0.85 for 1.3× the reviews. Higher targets buy absolute knowledge at a
+steep price: 0.95 gives +2.4 points for 1.7× the reviews, 0.97 gives +3.3 points for 2.4×. That matches the
+Settings guide.
 
 ### 2.4 The remaining scheduling choices, tested one at a time
 
@@ -194,33 +201,35 @@ The owner's case, simulated directly (`tools/pilot/residency.py`, 6 seeds). A ca
 (chapters, lectures, question blocks) on 6 days a week for two years, about 2,500 topics, and sits the exam on
 the last day. Every twin gets exactly the Yadora twin's review time, day by day. Re-run 2026-09-27 after the
 equal-time fix (§2): a comparison twin's overspend now comes off its next day. Yadora's own numbers do not depend
-on that and are unchanged; the other twins moved by a few tenths of a point.
+on that and are unchanged; the other twins moved by a few tenths of a point. Re-run again on 2026-09-28 after
+the calibration stopped lengthening intervals (§2.7): the Yadora twin now reviews 1–9% more (the slow forgetter
+most) and knows 0.0–0.6 points more on exam day at the default target; the tables below are that run.
 
 Exam day, a learner the defaults describe. The first number is the average recall over every topic studied in
 the two years; the second is the share of topics at 90% or more; the third is the recall of the weakest tenth:
 
 | twin | Yadora at the default 0.90 | + Review ahead in the last 4 weeks (up to 60 a day) |
 |---|---|---|
-| **Yadora** | **95.2% · 96% · 90.0%** | **96.4% · 100% · 92.2%** |
-| reviews at random | 87.7% · 65% · 51.9% | 90.9% · 72% · 59.4% |
-| reviews oldest first (the disciplined student) | 89.1% · 69% · 55.3% | 90.8% · 73% · 57.9% |
-| fixed ladder: 1, 3, 7, 14, 30, 60, 120, 240, 365 days | 94.9% · 86% · 79.0% | 96.0% · 90% · 84.4% |
-| plain FSRS-6, no product layer, at equal time | 95.0% · 98% · 90.5% | (no such feature) |
+| **Yadora** | **95.4% · 99.6% · 90.8%** | **96.5% · 100% · 92.6%** |
+| reviews at random | 87.9% · 66% · 52.0% | 91.0% · 73% · 59.3% |
+| reviews oldest first (the disciplined student) | 89.5% · 70% · 55.6% | 91.0% · 74% · 58.3% |
+| fixed ladder: 1, 3, 7, 14, 30, 60, 120, 240, 365 days | 95.2% · 87% · 81.1% | 96.2% · 91% · 86.0% |
+| plain FSRS-6, no product layer, at equal time | 95.2% · 99.6% · 90.9% | (no such feature) |
 
 Yadora wins every seed against random and oldest-first review, in every world and every strategy tested: +3 to
 +9 points on exam day. The gap is smallest for a learner who forgets more slowly than the defaults assume (+3 to
 +6), whose unreviewed topics fade least. (Until 2026-09-27 this said +5 to +9, which the slow forgetter's rows
 never supported.) With the final push Yadora reaches **100% of topics at 90%+**, where the other twins reach
-72–73%.
+73–74%.
 
 Across learners, Yadora's exam-day average · share at 90%+ · weakest tenth, and its reviews a day:
 
 | learner | default 0.90 | + final push | target 0.95 for the last 6 months | 0.95 for the last 6 months + push |
 |---|---|---|---|---|
-| as the defaults assume | 95.2 · 96% · 90.0 (27/day) | **96.4 · 100% · 92.2** (28/day) | 96.3 · 97% · 89.7 (30/day) | 96.7 · 99% · 91.6 (31/day) |
-| forgets 2× faster | 95.1 · 96% · 89.7 (36/day) | **95.6 · 99% · 91.1** (36/day) | 95.2 · 92% · 81.1 (36/day) | 95.9 · 94% · 86.7 (37/day) |
-| forgets 2× slower | 95.3 · 95% · 89.9 (21/day) | **97.1 · 100% · 93.2** (22/day) | 96.6 · 97% · 90.6 (25/day) | 97.4 · 100% · 93.5 (25/day) |
-| 6 new topics a day | 94.8 · 92% · 88.5 (39/day) | 95.2 · 95% · 89.8 (39/day) | 94.8 · 90% · 81.2 (39/day) | 95.3 · 92% · 85.1 (39/day) |
+| as the defaults assume | 95.4 · 99.6% · 90.8 (28/day) | **96.5 · 100% · 92.6** (29/day) | 96.5 · 98.5% · 90.2 (31/day) | 96.9 · 99.9% · 91.9 (31/day) |
+| forgets 2× faster | 95.1 · 96% · 89.9 (36/day) | **95.6 · 99.7% · 91.1** (36/day) | 95.2 · 93% · 81.8 (36/day) | 95.8 · 94% · 86.3 (37/day) |
+| forgets 2× slower | 95.9 · 100% · 91.6 (23/day) | **97.4 · 100% · 93.9** (24/day) | 97.1 · 99.9% · 92.1 (27/day) | 97.6 · 100% · 93.9 (28/day) |
+| 6 new topics a day | 95.1 · 97% · 89.4 (40/day) | **95.3 · 98.7% · 90.5** (40/day) | 94.9 · 92% · 81.2 (40/day) | 95.5 · 93% · 85.5 (40/day) |
 
 **The exam playbook that follows:**
 
@@ -233,23 +242,23 @@ weakest tenth drops from about 90% to 81%. The Settings copy used to recommend r
 this instead.
 
 **Against a fixed ladder or a plain FSRS app**, at equal time the averages are close. At the playbook's settings
-(0.90, with or without the push) Yadora is ahead by 0.2–1.4 points against the ladder (3–6 seeds out of 6) and by
-0.2–0.4 against plain FSRS-6 (4–5 of 6). With the target raised to 0.95 the ladder draws level in three of the four
-worlds (−0.4 to +0.2 points; for the slow forgetter at 0.95 it is 0.4 ahead and Yadora wins 0 of 6), and stays 1.1–1.3
-behind only under the heavy load. The difference is the tail. The ladder leaves its weakest tenth at
-70–82% on exam day, against Yadora's 88–90%. That is why "no topic left behind" is a claim only a model-based schedule can make. Plain
+(0.90, with or without the push) Yadora is ahead by 0.1–1.5 points against the ladder (3–6 seeds out of 6) and by
+0.2–0.4 against plain FSRS-6 (5–6 of 6). With the target raised to 0.95 the ladder draws level in three of the four
+worlds (−0.1 to +0.3 points), and stays 1.2 behind only under the heavy load. The difference is the tail. The
+ladder leaves its weakest tenth at 72–83% on exam day, against Yadora's 89–92%. That is why "no topic left behind" is a claim only a model-based schedule can make. Plain
 FSRS-6 at equal time matches Yadora's tail; Yadora's lead over it is the per-user calibration (largest for learners
 the defaults misjudge) and the final push, which a plain FSRS app has no feature for.
 
 **Checked on the real code.** `TwoYearSoakTest` runs the same case through the app itself:
 
-- **What it runs:** 730 days, 2,432 topics and 22,804 reviews, through the review screen's own commit path, with
+- **What it runs:** 730 days, 2,432 topics and 24,335 reviews, through the review screen's own commit path, with
   today's plan, the daily limit, the queue order, the calibration refresh, deferrals, a holiday and 40 Review ahead
   topics a day in the last four weeks.
-- **Exam day:** 96.6% recall, with every topic at 90%+ and the weakest tenth at 92.7%. The twin who spent the same
-  time on random reviews reaches 90.4%.
+- **Exam day:** 96.9% recall, with every topic at 90%+ and the weakest tenth at 93.1%. The twin who spent the same
+  time on random reviews reaches 90.5%. (Before the calibration stopped lengthening intervals: 96.6%, 92.7% and
+  22,804 reviews.)
 - **Every invariant held** on every day.
-- **Independent replay:** the export replays 25,236 of 25,236 logs exactly in `analyze.py`. CI runs that replay on
+- **Independent replay:** the export replays 26,767 of 26,767 logs exactly in `analyze.py`. CI runs that replay on
   every change.
 
 ### 2.6 What the simulation cannot tell
@@ -262,6 +271,105 @@ the defaults misjudge) and the final push, which a plain FSRS app has no feature
 - The understanding repair clock and the Important flag are not simulated.
 - The equal-time assumption holds the other twin to Yadora's time. It does not model the Yadora twin
   spending logging time: a minute or so per topic by estimate, which is real but small.
+
+### 2.7 Is anything left to improve? (2026-09-28)
+
+The owner asked whether anything in the mathematics could still buy more retention for fewer reviews. Three
+things were checked: what the field has published since FSRS-6, how far Yadora is from the best any scheduler
+could do, and the two policy ideas not yet tested (`tools/pilot/experiments.py`, sections 6–8; 8 seeds a year
+unless stated).
+
+**The field.** FSRS-7 now exists. On the public benchmark (about 10,000 Anki collections, one review a day
+counted) it predicts better than FSRS-6: log loss 0.3370 against 0.3460, RMSE(bins) 0.0593 against 0.0653.
+It was built for fractional intervals and same-day reviews, has 34 parameters against 21, and py-fsrs, the
+reference Yadora pins, has not released it. It is not adoptable under the rule that a model is taken only with a
+pinned reference and goldens, and the headroom below bounds what it could buy. py-fsrs 6.3.2 released the
+same-day "Hard" stability floor that 6.3.1 lacked (see CLAUDE.md); it only touches a topic reviewed twice on one
+calendar day and rated Hard, which the app almost never produces, so the pin stays at 6.3.1.
+
+**Headroom.** An ORACLE twin schedules from the learner's true memory (true stability, true curve, true speed
+of forgetting) under the same product rules. Nothing can know more, so its advantage at equal time is the most
+any better memory model could buy: FSRS-7, a personal weight set, anything.
+
+| learner | Yadora: year-end quiz · year average · weakest tenth | oracle, same review time | what perfect knowledge adds |
+|---|---|---|---|
+| a learner the defaults describe | 95.0% · 95.1% · 89.9% | 95.1% · 95.3% · 90.4% | +0.1 · +0.3 · +0.5 |
+| forgets 2× faster | 95.1% · 95.2% · 90.2% | 95.1% · 95.4% · 90.6% | +0.0 · +0.3 · +0.4 |
+| forgets 2× slower | 94.7% · 95.2% · 89.3% | 95.0% · 95.3% · 90.1% | +0.3 · +0.1 · +0.8 |
+| a first study worth half what the defaults say | 95.2% · 95.2% · 90.3% | 95.2% · 95.5% · 90.7% | +0.0 · +0.3 · +0.5 |
+| a steeper forgetting curve (decay 0.30 against 0.15) | 95.4% · 95.5% · 90.0% | 95.5% · 95.7% · 90.8% | +0.1 · +0.2 · +0.8 |
+| 30% of lapses rated Hard | 92.1% · 92.9% · 75.1% | 92.2% · 92.7% · 85.3% | +0.0 · −0.2 · **+10.3** |
+
+(Measured with the calibration as it was before the change below; the conclusion does not depend on it.)
+
+For every honest learner simulated, perfect knowledge of the learner's memory buys at most a quarter of a point
+at the year-end quiz and 0.1–0.3 points over the year. The model side is at its ceiling in these worlds: the
+default weights plus the one-number calibration already schedule almost as well as the truth. The exception is
+inflated ratings. The average is unchanged, but the oracle's weakest tenth sits ten points higher, because it
+knows which "Hard" answers were really lapses. That gap is missing information, not missing mathematics.
+
+**Calibration when ratings are inflated.** A learner who calls some lapses "Hard" looks, to the calibration,
+exactly like a slow forgetter, so it lengthens every interval on top of the stretched topics themselves. At the
+learner's own 0.90 target:
+
+| learner | before: may lengthen up to ×2 | **now: never lengthens** | calibration off | between: never past ×1.25 |
+|---|---|---|---|---|
+| honest, the defaults describe them | 95.0% · 89.9% · 5,321 | **95.3% · 90.7% · 5,499** | 95.2% · 90.5% · 5,347 | 95.1% · 90.1% · 5,414 |
+| honest, forgets 2× faster | 95.1% · 90.2% · 7,123 | **95.1% · 90.2% · 7,137** | 94.3% · 89.2% · 6,499 | 95.0% · 90.2% · 7,050 |
+| honest, forgets 2× slower | 94.7% · 89.3% · 4,070 | **95.8% · 91.6% · 4,705** | 95.8% · 91.6% · 4,710 | 95.2% · 90.4% · 4,304 |
+| 30% of lapses rated Hard | 92.1% · 75.1% · 4,061 | **93.8% · 79.9% · 4,774** | 93.9% · 80.7% · 4,782 | 93.0% · 77.8% · 4,344 |
+| 60% of lapses rated Hard | 87.9% · 59.0% · 2,954 | **92.0% · 67.5% · 4,126** | 92.0% · 67.7% · 4,105 | 90.8% · 64.1% · 3,702 |
+| 30% rated Hard and forgets 2× faster | 92.4% · 74.1% · 5,587 | **92.7% · 75.6% · 5,745** | 92.7% · 75.8% · 5,640 | 92.2% · 73.5% · 5,634 |
+
+Each cell: year-end quiz · weakest tenth · reviews in the year. A cap at ×1.5 and a prior three times stronger
+against lengthening sit between the first two columns.
+
+The calibration caused most of what inflated ratings cost: 1.8 of the 2.9 points lost at 30% inflation, and
+4.1 of 7.2 at 60%, with the weakest tenth falling to 75% and 59%. A calibration that may shorten intervals
+but never lengthens them keeps what honest learners need (the fast forgetter's correction intact), recovers
+nearly all of that loss, and even helps an honest average learner (+0.3 points: the estimate's upward noise no
+longer stretches anything). Its cost falls on the honest slow forgetter: about 16% more reviews than strictly
+needed, for 1.1 points more knowledge (true recall at review 91.8% where 90% was asked). Under-reviewing is what
+fails an exam; over-reviewing costs time. **This changed the app (2026-09-28, the owner's decision):**
+`RecallCalibration` now never lengthens intervals. The raw estimate is still computed and reported by
+`analyze.py`, so the pilot still sees who forgets slower.
+
+**A stability-adaptive target (evaluated, not adopted).** Cost-optimal scheduling (SSP-MMC) varies the target
+by the topic's state. The difficulty version was tested in §2.4. A stability version was new: target =
+0.90 + slope × clamp(log₁₀(S / 20 d) / 1.5, −1, 1), so a young topic may drift a little lower before review (a
+review at lower recall buys more stability) and a mature one is held a little higher (a lapse there throws away
+months). At equal time, paired seed by seed against the flat target (points, mean ± standard error; 16 seeds for
+the first world, 8 for the next four, 6 for three years):
+
+| learner | slope | year-end quiz | year average | weakest tenth |
+|---|---|---|---|---|
+| the defaults describe them | +0.02 / +0.03 / +0.05 | +0.17 / +0.38 / +0.70 (±0.04–0.07) | +0.08 / +0.06 / +0.21 | +0.15 / +0.39 / +0.46 |
+| forgets 2× slower | +0.02 / +0.03 / +0.05 | +0.23 / +0.41 / +0.83 | +0.07 / +0.14 / +0.21 | +0.51 / +0.63 / +0.95 |
+| forgets 2× faster | +0.02 / +0.03 / +0.05 | +0.39 / +0.41 / +0.76 | +0.23 / +0.16 / +0.28 | +0.41 / +0.19 / −0.35 |
+| 30% of lapses rated Hard | +0.02 / +0.03 / +0.05 | +0.26 / +0.53 / +0.60 | −0.07 / +0.05 / +0.05 | +0.56 / +0.84 / +0.02 (±0.3–0.7) |
+| three years | +0.02 / +0.03 / +0.05 | +0.13 / +0.36 / +0.53 | +0.25 / +0.35 / +0.34 | +0.22 / +0.49 / +0.38 |
+| **heavy load: 6 new a day, limit 30** | +0.02 / +0.03 / +0.05 | +0.09 / +0.19 / +0.07 | +0.14 / +0.19 / +0.22 | **−1.63 / −3.41 / −6.17** (±0.6) |
+
+When the daily limit has room it is a real gain, 0.4–0.8 points at the quiz without hurting the tail. When the
+limit binds, which is the medical student's normal case, the extra reviews of mature topics take the slots the
+weakest topics need, and the weakest tenth pays 1.6–6.2 points. Like the difficulty target, that is a trade-off
+rather than a free gain, so the target stays flat; a version that knows about the day's load would be new work,
+best designed against pilot data.
+
+**The guarantee.** No schedule can promise that a student scores higher than others. Others may study more,
+start ahead, or use better review methods, and one exam samples only some topics. Even the ideal case, an
+identical twin with identical study time, is not certain: with the one-year results (Yadora 95.3% against
+88.4% for random review and 90.1% for the disciplined oldest-first student), and exam questions drawn from the
+studied topics, the Yadora twin outscores the disciplined twin on about 84% of 50-question exams, 92% of
+100-question exams and 98% of 200-question exams (independent answers assumed; correlated answers make it
+somewhat more certain). What can be said honestly is the twin result itself, stated as a simulation, until the
+pilot measures real learners.
+
+**What moves real outcomes more than any parameter left.** Honest "Forgot" ratings (above). Doing the reviews
+at all. Reviewing by retrieval (questions, explaining from memory) rather than rereading alone: in the
+literature the testing effect is worth about half a standard deviation over restudy (Rowland 2014, g = 0.50;
+Adesope et al. 2017, g = 0.51 against restudying), far more than any interval rule left to tune. The Settings guide already says so; the pilot
+records the method (D7) so Yadora's own data can confirm it.
 
 ## 3. What changed in the app because of this research
 
@@ -287,6 +395,9 @@ the defaults misjudge) and the final push, which a plain FSRS app has no feature
 5. **Queue order: Important first, then the most overdue** (§2.4). The bonuses for weak states and past
    lapses are gone: under a backlog they spent the day's slots where a review buys least, and every
    simulated backlog knew more without them.
+6. **The calibration never lengthens intervals** (§2.7, 2026-09-28). Generous ratings look exactly like
+   slower forgetting, and stretching every interval for them was most of what inflated ratings cost. It still
+   shortens intervals for a learner who forgets faster.
 
 ## 4. Considered and not changed
 
@@ -302,6 +413,12 @@ the defaults misjudge) and the final push, which a plain FSRS app has no feature
 - **A randomised in-app control arm** (withholding reviews from some topics to measure the effect): it
   would give the participant exactly the downside the twin standard forbids. The pilot measures the model
   instead, and the twin question is answered by simulation on the fitted model (§5).
+- **FSRS-7**: better predictions on the flashcard benchmark, but no pinned py-fsrs release, and §2.7's oracle
+  shows a better model can add at most a few tenths of a point. Revisit when a reference exists and pilot data
+  say the default curve misfits topics.
+- **State-dependent targets** (by difficulty, §2.4; by stability, §2.7): each buys a few tenths of a point
+  and makes the weakest topics pay, the stability version badly when the daily limit binds.
+- **Guaranteeing a score**: impossible for any scheduler (§2.7), and ruled out by MARKETING.md.
 
 ## 5. What the pilot must answer
 
