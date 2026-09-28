@@ -204,8 +204,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   addition. That is required: forgetting is physical, so FSRS must be fed true elapsed time, and a
   calendar-based due date would make preview/commit/replay depend on the device time zone at the
   moment each ran. The cost, measured and pinned by `DueDateDstTest`, is that a review between 23:00
-  and midnight on a DST spring-forward night slips one day. Accepted; do NOT "fix" it by switching
-  to calendar addition.
+  and midnight on a DST spring-forward night slips one day, and its mirror image: a review between
+  midnight and 01:00 on the fall-back day comes due one calendar day EARLY (a one-day interval that same
+  evening; pinned since 2026-09-28, when the test's comment still said a date never arrives early).
+  Accepted; do NOT "fix" it by switching to calendar addition.
 - **The recall prompt is an OPTIONAL per-topic field** (restored 2026-09 by user decision, after
   being cut as v1 bloat), worded since 2026-09-23 as SCOPE — "What does this topic cover?" — not as a
   quiz question, because a review is not a recall test. A bare title like "Appendicitis" leaves open
@@ -311,8 +313,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
   by the **short-term branch** `S / e^(w17·w18)` ≈ 0.9518·S, not by `S`; the same-day multiplier
   is floored at 1 for **Good and Easy only** (6.3.1 lists just those two; py-fsrs 6.3.2, August 2026,
   added Hard, and the pin stays at 6.3.1 on purpose: adopting a new reference means a new model identity,
-  and this one only touches a topic reviewed twice on one calendar day and rated Hard, which the app
-  almost never produces); and the stability floor is 0.001, not 0.01.
+  and this one only touches a topic reviewed twice on one calendar day and rated Hard, where it cuts
+  stability by more than half, 100 days to 45. The app almost never produces that: the daily plan offers
+  a topic again only on a later day, Review ahead leaves out topics reviewed today (2026-09-28), and the
+  soak's 24,335 reviews contain none. What remains is a deliberate second review from the Library and the
+  fall-back-night hour in the due-date entry above); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
   stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
   functions alone left the seams unchecked — branch selection, argument order, final clamps — and
@@ -507,7 +512,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **The scientific basis of the product-layer choices** (do not "simplify" these away):
   power-law forgetting `R = (1 + FACTOR·t/S)^-0.5` is FSRS-4.5+/5's deliberate replacement for
   the exponential curve because it fits real review data better; scheduling at ~0.90 retention
-  (slider 0.85–0.97; 0.90 is the workload optimum, 0.95–0.97 buys more recall at roughly
+  (slider 0.85–0.97; 0.90 is the practical default — in Yadora's own sweep the equal-time advantage is a
+  tie across 0.85–0.90, and 0.90 knows more in absolute terms — 0.95–0.97 buys more recall at roughly
   1.4–2× the reviews, but is NOT the exam playbook: see "The exam playbook" below) sits in the workload-optimal band from FSRS's own retention simulations
   and matches Bjork's desirable-difficulty argument that retrieval should be effortful but
   successful; and `FIRST_STUDY_MAX_DAYS` exists because a self-rating taken immediately after
@@ -825,11 +831,15 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **What is left to improve in the algorithm, checked 2026-09-28** (`experiments.py` sections 6 and 8,
   `docs/RESEARCH.md` §2.7). Do not re-run these as open questions.
   - **The memory model is at its ceiling in simulation.** An ORACLE twin that schedules from the learner's true
-    memory, under the same product rules, beats Yadora at equal time by at most 0.25 points at the year-end
-    quiz and 0.3 over the year, for a learner the defaults describe, one who forgets 2x faster or slower, a
-    first study worth half, and a steeper curve. No better model can buy more than that: FSRS-7 (which now
-    exists, predicts better on the benchmark, has 34 weights and no pinned py-fsrs release), a personal fit,
-    anything. Do not chase a new model for retention gains.
+    memory, under the same product rules and the same fixed-target rule, beats Yadora at equal review count by
+    at most 0.25 points at the year-end quiz and 0.3 over the year, for a learner the defaults describe, one who
+    forgets 2x faster or slower, a first study worth half, and a steeper curve. That is what a better MODEL could
+    add under this rule in these worlds: FSRS-7 (which now exists, predicts better on the benchmark, has 34
+    weights and no pinned py-fsrs release), a personal fit. It is NOT a bound on everything (an outside audit,
+    2026-09-28, rightly said the docs overclaimed it): a different rule can add more (the stability-adaptive
+    target below does while the limit has room), and the simulated learners' true memory is itself FSRS-6-shaped,
+    so only the pilot can show whether real topics leave more room. Do not chase a new model for retention gains
+    without pilot evidence that the curve misfits.
   - **The one large gap is inflated ratings.** The oracle's weakest tenth sits 10 points above Yadora's for a
     learner who calls 30% of lapses Hard. That is missing information, not missing mathematics; the calibration
     cap above recovers about half of it, and the rest needs honest ratings or an objective signal.
@@ -841,6 +851,52 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **No outcome can be guaranteed.** Even an identical twin with identical time loses some exams by the luck of
     which topics are asked (about 8% of 100-question exams against the disciplined no-app twin), and a different
     student can study more, start ahead or review better. Never claim a guaranteed score; MARKETING.md applies.
+- **Five more outside reports, 2026-09-28: what was real, what changed, what did not** (each item checked against
+  the code; every fix has a test that fails without it).
+  - **Fixed:**
+    - A backup whose topics were reviewed but that carries no review history (`reviewLogs` missing or empty) is
+      refused before anything is replaced; an unreviewed library without the section still restores
+      (`BackupRoundTripTest`). A missing section used to restore topics that claimed reviews and had none.
+    - The personal fit's "did the history change while it ran?" check is a SHA-256 over every log the fit learned
+      from (id, topic, time, both ratings, type, model, set) plus the active set (`MedReviewRepository.fitIdentity`).
+      The old fingerprint (count and sum of times) missed a changed rating at the same time, a merge re-pointing
+      logs, and a restore of the same times with other ratings, so a fit begun on one history could be adopted
+      after another. A review added after the fit began changes nothing (`AuditFindingsTest`).
+    - A weight set's calibration evidence, and the Progress card, count only reviews made from the moment the set
+      began scheduling (`MedScheduler.ParameterSet.activatedAt`, the `since` of `getRecentRecallLogsOnce`). A
+      correction replays a topic's older rows on the set it is on now and stamps them with it; those predictions
+      were never made at review time, and a fitted set was trained on their outcomes. The stored values stay what
+      replay computes; only their use as evidence changed. `analyze.py` leaves the same rows out, and the export's
+      field guide says so. Keeping the original predictions beside the replayed ones would be a schema change.
+    - A MERGED topic crosses to a new weight set of the same model by carrying its merge-averaged state over
+      (`carriedOver`), not by replaying the combined history, which replaced the average the merge chose (identical
+      weights under a new id moved stability 97.9 -> 127.3). A change of MODEL still replays (an FSRS-5 stability
+      is not in FSRS-6 units), and a real rating correction still replays the combined history (known, above).
+    - Review ahead leaves out topics already reviewed today (`ReviewAhead.isCandidate`).
+    - Research tooling and docs: no equal-time comparison is extrapolated any more (`experiments.py`,
+      `residency.py`; out of range is reported, or that seed left out; one probe had read 101.56% recall);
+      `experiments.py`'s "equal time" is labelled an equal review COUNT; the oracle is a perfect-state comparator
+      under the same rule, not a bound on everything; PILOT.md's week-8 check supports the model, not the twin
+      result, and D5's time split within participants needs a leave-one-participant-out check before any default
+      ships; RESEARCH.md §1 no longer calls delayed judgements "nearly perfect", the spacing shape "nothing to
+      tune", or FSRS-6 the most accurate model (FSRS-7 now predicts better); the stale "unreleased" comment in
+      `Fsrs6.kt`. Found while checking: a review between midnight and 01:00 on a DST fall-back day comes due a day
+      early (the due-date entry above; `DueDateDstTest`).
+  - **Kept, on purpose:** the pin at py-fsrs 6.3.1 (6.3.2's same-day Hard floor is real; adopting it is a new model
+    identity, and the case is nearly unreachable; conformance entry above); the repair-clock backoff that lets
+    Good + Confused reach Strong (YADORA-6; one report proposed freezing such a topic at 21 days, another showing
+    unresolved understanding separately: both are the owner's product call); no rating is blocked or overridden by
+    a question score (D6: suggest, never override); no method multiplier until D7 survives a refit; the 1-day
+    relearn step (one report re-ran it at equal modeled cost: within noise).
+  - **Not true:** "the Yadora twin scores higher with certainty, 100%" and "every minute studied is retained 2x"
+    (a simulation is not proof; the twin loses about 8% of 100-question exams to the disciplined no-app twin by
+    which topics are asked); "the core sits exactly on the Pareto frontier, no inefficient formula exists" (the
+    same week found four real defects); "0.95 costs 2.45x the reviews, 0.97 4.5x" (a fixed-state interval ratio;
+    the simulated yearly cost is 1.7x and 2.4x); the reason given for the 365-day cap, that the real brain outruns
+    FSRS-6's tail after a year (the simulated memory IS FSRS-6; the three caps are within noise and 180 days scored
+    highest); MEMORIZE's optimal review intensity "proportional to recall" (it is proportional to 1 - recall, and
+    stochastic); a scheduler blueprint built on FSRS v4's curve (1 + t/9S)^-1 with 17 weights and a
+    lowest-recall-first queue (1.2-1.6 points worse in four of five simulated backlogs, §2.4).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

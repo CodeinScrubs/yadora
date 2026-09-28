@@ -43,14 +43,15 @@ interface ReviewLogDao {
      * that was scheduled had passed). First-study rows are self-assessments, not recalls;
      * short-interval rows carry the whole-day rounding bias RecallCalibration.MIN_ELAPSED_DAYS
      * explains; early rows are repairs and self-tests, which RecallCalibration.EARLY_REVIEW_FRACTION
-     * explains.
+     * explains. Only rows reviewed from [since] on, when the set began scheduling (MedScheduler.ParameterSet
+     * .activatedAt): an older row stamped with the set was recomputed by a rating correction, not predicted.
      */
     @Query(
         "SELECT * FROM review_logs WHERE logType = 'RECALL' AND schedulerVersion = :model AND parameterSetId = :parameterSetId " +
-            "AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays " +
+            "AND reviewedAt >= :since AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays " +
             "AND elapsedDays >= :earlyFraction * previousIntervalDays ORDER BY reviewedAt DESC, id DESC LIMIT :limit"
     )
-    suspend fun getRecentRecallLogsOnce(model: String, parameterSetId: Long, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
+    suspend fun getRecentRecallLogsOnce(model: String, parameterSetId: Long, since: Long, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
 
     /**
      * Reviews whose time falls between [since] and [until] (one local day), first ratings excluded: what the
@@ -68,14 +69,6 @@ interface ReviewLogDao {
 
     @Query("SELECT COALESCE(MAX(id), 0) FROM review_logs")
     suspend fun maxLogId(): Long
-
-    /**
-     * An identity of the history up to log [maxId]: how many logs and when. A wipe, a restore or an undo changes
-     * it; a new review (a higher id) or a rating correction (same times) does not. The personal-model refit reads
-     * it before fitting and again where it would adopt the result.
-     */
-    @Query("SELECT COUNT(*) || ':' || COALESCE(SUM(reviewedAt), 0) FROM review_logs WHERE id <= :maxId")
-    suspend fun historyFingerprint(maxId: Long): String
 
     /** Purge helper: drop the history of topics being hard-deleted after the 30-day grace. */
     @Query("DELETE FROM review_logs WHERE studyUnitId IN (:unitIds)")

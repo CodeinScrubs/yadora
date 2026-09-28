@@ -327,7 +327,10 @@ class BackupRoundTripTest {
         val db = (context as MedReviewApplication).database
         val now = System.currentTimeMillis()
         val unitId = db.studyUnitDao().insertUnit(
-            StudyUnitEntity(title = "Keep me", studyType = "Topic", studiedAt = now, nextReviewAt = now)
+            StudyUnitEntity(
+                title = "Keep me", studyType = "Topic", studiedAt = now, nextReviewAt = now,
+                reviewCount = 1, lastReviewedAt = now, // as the app leaves a rated topic: its review is counted
+            )
         )
         db.reviewLogDao().insertLog(
             ReviewLogEntity(
@@ -361,6 +364,31 @@ class BackupRoundTripTest {
         val noTopics = org.json.JSONObject(json).apply { remove("studyUnits") }.toString()
         assertTrue("a file without topics is not a backup", runCatching { BackupManager.restoreFromJson(context, noTopics) }.isFailure)
         assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+    }
+
+    /**
+     * Every backup Yadora has written carries its review history. A file whose topics were reviewed but whose
+     * history section is missing, or empty, is damaged: restoring it erased the history while the topics still
+     * claimed their reviews (an outside audit reproduced the missing section, 2026-09-28).
+     */
+    @Test
+    fun `a backup of reviewed topics without their review history is refused, an unreviewed library still restores`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val (unitId, json) = oneTopicLibrary(context)
+        val missing = org.json.JSONObject(json).apply { remove("reviewLogs") }.toString()
+        assertTrue("a missing history must be refused", runCatching { BackupManager.restoreFromJson(context, missing) }.isFailure)
+        val empty = org.json.JSONObject(json).put("reviewLogs", org.json.JSONArray()).toString()
+        assertTrue("an empty history under reviewed topics must be refused", runCatching { BackupManager.restoreFromJson(context, empty) }.isFailure)
+        assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+        assertEquals("the history is untouched", 1, db.reviewLogDao().getLogsForUnitOnce(unitId).size)
+
+        // A library whose topics were never reviewed has no history to lose, with or without the section.
+        val unreviewed = org.json.JSONObject(json).apply {
+            remove("reviewLogs")
+            getJSONArray("studyUnits").getJSONObject(0).put("reviewCount", 0).put("lapseCount", 0).remove("lastReviewedAt")
+        }.toString()
+        assertEquals(1, BackupManager.restoreFromJson(context, unreviewed))
     }
 
     @Test

@@ -181,6 +181,109 @@ class AuditFindingsTest {
         assertEquals(2, db.reviewLogDao().getLogsForUnitOnce(id).size)
     }
 
+    private suspend fun activateSet(weights: DoubleArray, at: Long): Long {
+        db.memoryParameterSetDao().retireActive(at)
+        val id = db.memoryParameterSetDao().insert(
+            MemoryParameterSetEntity(
+                createdAt = at, status = MemoryParameterSetEntity.ACTIVE, weights = Fsrs6Optimizer.encode(weights),
+                comparedWithSetId = 0, availableReviews = 700, trainReviews = 560, testReviews = 140,
+                currentLogLoss = 0.36, candidateLogLoss = 0.33, currentRmseBins = 0.09, candidateRmseBins = 0.05,
+                currentAuc = 0.70, candidateAuc = 0.73, zScore = 6.0, activatedAt = at,
+            )
+        )
+        repo.refreshMemoryModel()
+        return id
+    }
+
+    /**
+     * The fit's identity covers what each review SAID, not only when: a restore or a correction with every time
+     * unchanged used to leave the old fingerprint (count and sum of times) intact, so a fit begun before it was
+     * adopted after it (a second audit, 2026-09-28). A review added after the fit began does not change it.
+     */
+    @Test
+    fun `the fit's identity notices a changed rating, a merge and a new weight set, not a later review`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val a = topic("Hyponatraemia", now - 40 * day)
+        val first = rate(a, now - 40 * day, MemoryRating.Good).logId
+        rate(a, now - 30 * day, MemoryRating.Good)
+        val b = topic("SIADH", now - 35 * day)
+        rate(b, now - 35 * day, MemoryRating.Hard)
+        val maxId = db.reviewLogDao().maxLogId()
+        val identity = repo.fitIdentity(maxId)
+
+        rate(a, now - 2 * day, MemoryRating.Easy)
+        assertEquals("a review added after the fit began changes nothing it learned from", identity, repo.fitIdentity(maxId))
+
+        repo.editReviewRating(a, first, MemoryRating.Hard, UnderstandingRating.Clear)
+        val corrected = repo.fitIdentity(maxId)
+        assertTrue("a changed rating, same times", corrected != identity)
+
+        repo.mergeUnits(a, listOf(b))!!
+        val merged = repo.fitIdentity(maxId)
+        assertTrue("a merge re-points reviews", merged != corrected)
+
+        activateSet(Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf(), now)
+        assertTrue("a different weight set in use", repo.fitIdentity(maxId) != merged)
+    }
+
+    /**
+     * Only reviews made after a weight set began scheduling are evidence about it. A correction replays a topic's
+     * older rows under the set it is on now and stamps them with it (so each row names what computed its numbers),
+     * and those rows then entered that set's calibration: predictions never made at review time, on outcomes a
+     * fitted set was trained on (a second audit, 2026-09-28).
+     */
+    @Test
+    fun `rows a correction recomputes on a new weight set are not evidence about that set`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val id = topic("Heart failure", now - 90 * day)
+        rate(id, now - 90 * day, MemoryRating.Good)
+        rate(id, now - 80 * day, MemoryRating.Good)
+        rate(id, now - 55 * day, MemoryRating.Good)
+        val activated = now - 40 * day
+        val setId = activateSet(Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { for (i in 0..3) it[i] *= 0.5; it[20] = 0.3 }, activated)
+        val latest = rate(id, now - 5 * day, MemoryRating.Good).logId // crosses onto the set, reviewed after it went live
+
+        repo.editReviewRating(id, latest, MemoryRating.Good, UnderstandingRating.Partial) // a real correction: replays all
+        val logs = db.reviewLogDao().getLogsForUnitOnce(id)
+        assertTrue("every row now names the set that computed it", logs.all { it.parameterSetId == setId })
+
+        suspend fun evidence(since: Long) = db.reviewLogDao().getRecentRecallLogsOnce(
+            MedScheduler.CURRENT_MODEL.id, setId, since, com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
+            com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION, com.example.domain.srs.RecallCalibration.WINDOW,
+        )
+        assertTrue("without the rule the recomputed older rows qualified", evidence(0L).any { it.reviewedAt < activated })
+        assertEquals("with it, only the review made on the set", listOf(latest), evidence(MedScheduler.activeParameterSet.activatedAt).map { it.id })
+        assertEquals(activated, MedScheduler.activeParameterSet.activatedAt)
+    }
+
+    /**
+     * A merged topic keeps its merge-averaged state when the weight set changes. Projection used to replay the
+     * combined history, so even a new set id with IDENTICAL weights moved its stability (the audit's case: 97.9 ->
+     * 127.3). An ordinary topic still crosses by replay.
+     */
+    @Test
+    fun `a merged topic keeps its averaged state across a change of weight set`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val a = topic("Tetralogy of Fallot", now - 60 * day)
+        for (d in listOf(60, 57, 47, 17)) rate(a, now - d * day, MemoryRating.Good)
+        val b = topic("تترالوژی فالو", now - 52 * day)
+        for (d in listOf(52, 47, 37)) rate(b, now - d * day, MemoryRating.Good)
+        val plain = topic("Coarctation", now - 50 * day)
+        for (d in listOf(50, 45, 30)) rate(plain, now - d * day, MemoryRating.Good)
+        val merged = repo.mergeUnits(a, listOf(b))!!
+        val plainBefore = repo.getUnitById(plain)!!
+
+        val setId = activateSet(Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf(), now) // same numbers, new identity
+        val projected = repo.projectOntoCurrentModel(repo.getUnitById(a)!!)
+        assertEquals("the merged state is carried, not re-derived", merged.stability, projected.stability, 0.0)
+        assertEquals(merged.difficulty, projected.difficulty, 0.0)
+        assertEquals(setId, projected.parameterSetId)
+
+        val plainProjected = repo.projectOntoCurrentModel(plainBefore)
+        assertEquals("an ordinary topic crosses by replay, and identical weights reproduce it", plainBefore.stability, plainProjected.stability, 1e-9)
+        assertEquals(setId, plainProjected.parameterSetId)
+    }
+
     /** The personal fit leaves merged topics out, as the pilot analysis does. */
     @Test
     fun `merged topics are left out of the personal fit`() = runBlocking {

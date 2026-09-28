@@ -132,8 +132,24 @@ class MedReviewRepository(
      */
     suspend fun projectOntoCurrentModel(unit: StudyUnitEntity): StudyUnitEntity {
         if (isOnCurrentModel(unit)) return unit
+        carriedOver(unit, mergedUnitIds())?.let { return it }
         return projectWithHistory(unit, reviewLogDao.getLogsForUnitOnce(unit.id))
     }
+
+    /**
+     * A MERGED topic already on the live model that only needs a different weight SET keeps its state: it is carried
+     * over, not replayed. That state is the merge's review-count-weighted average (the settled merge rule), which no
+     * replay of the combined history reproduces, and replaying it at every set change quietly turned the rule into a
+     * chronological replay (a second audit, 2026-09-28: stability 97.9 -> 127.3 under a new set id with IDENTICAL
+     * weights). A stability means the same under every FSRS-6 set (the day recall falls to 90%), so this is a defined
+     * conversion; difficulty is carried as it is. A MODEL change (FSRS-5 to FSRS-6) still replays, because that
+     * curve's numbers do not carry, and a real rating correction still replays the combined history, as its dialog
+     * says. Null when the topic is not such a case.
+     */
+    private fun carriedOver(unit: StudyUnitEntity, mergedIds: Set<Long>): StudyUnitEntity? =
+        if (!isOnCurrentModel(unit) && MedScheduler.MemoryModel.of(unit.memoryModel) == MedScheduler.CURRENT_MODEL && unit.id in mergedIds) {
+            unit.copy(parameterSetId = MedScheduler.activeParameterSet.id, updatedAt = System.currentTimeMillis())
+        } else null
 
     /** On the live model AND the active weight set: nothing to project. */
     private fun isOnCurrentModel(unit: StudyUnitEntity): Boolean =
@@ -226,7 +242,7 @@ class MedReviewRepository(
             com.example.domain.srs.Fsrs6Optimizer.decode(row.weights)?.let { known[row.id] = it }
         }
         val active = rows.lastOrNull { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE }
-            ?.let { row -> known[row.id]?.let { MedScheduler.ParameterSet(row.id, it) } }
+            ?.let { row -> known[row.id]?.let { MedScheduler.ParameterSet(row.id, it, row.activatedAt ?: row.createdAt) } }
         MedScheduler.knownParameterSets = known
         MedScheduler.activeParameterSet = active ?: MedScheduler.DEFAULT_PARAMETER_SET
     }
@@ -246,6 +262,26 @@ class MedReviewRepository(
                     .map { com.example.domain.srs.Fsrs6Optimizer.Event(it.reviewedAt, it.memoryRating, it.logType) },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
         }
+    }
+
+    /**
+     * What a personal-model fit learns from and is judged against, as one identity: every review up to [maxLogId]
+     * (which topic, when, both ratings, its type, model and weight set) and the weight set in use. A restore, a
+     * wipe, a merge or a rating correction changes it even when every time stays the same; a review added after
+     * the fit began (a higher id) does not. Read inside a transaction, where the fit captures its inputs and where
+     * it would adopt the result.
+     */
+    internal suspend fun fitIdentity(maxLogId: Long): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        reviewLogDao.getAllLogsOnce().asSequence().filter { it.id <= maxLogId }.sortedBy { it.id }.forEach { l ->
+            digest.update(
+                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}\n"
+                    .toByteArray(Charsets.UTF_8)
+            )
+        }
+        val active = database.memoryParameterSetDao().getActive()
+        digest.update("active|${active?.id ?: 0L}|${active?.weights.orEmpty()}".toByteArray(Charsets.UTF_8))
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /** Every topic a merge touched, survivors and absorbed copies, read from the MERGE events as analyze.py reads them. */
@@ -278,19 +314,28 @@ class MedReviewRepository(
         isEnabled: () -> Boolean,
     ): com.example.domain.srs.Fsrs6Optimizer.FitReport? {
         val dao = database.memoryParameterSetDao()
-        // What the fit is about to learn from, so its result can be checked against the history as it is when
-        // it finishes (a fit takes seconds).
-        val maxLogId = reviewLogDao.maxLogId()
-        val fingerprint = reviewLogDao.historyFingerprint(maxLogId)
-        val histories = trainingHistories()
+        // What the fit learns from and is judged against, read as ONE snapshot (a restore between two separate
+        // reads could pair one history with another's baseline), with its identity, so the result can be checked
+        // against the database as it is when the fit finishes (a fit takes seconds).
+        var maxLogId = 0L
+        var identity = ""
+        var histories: List<com.example.domain.srs.Fsrs6Optimizer.History> = emptyList()
+        var latest: com.example.data.local.entity.MemoryParameterSetEntity? = null
+        var activeRow: com.example.data.local.entity.MemoryParameterSetEntity? = null
+        database.withTransaction {
+            maxLogId = reviewLogDao.maxLogId()
+            identity = fitIdentity(maxLogId)
+            histories = trainingHistories()
+            latest = dao.getLatest()
+            activeRow = dao.getActive()
+        }
         val available = histories.sumOf { h -> (1 until h.size).count { h.inLoss(it) } }
         if (available < com.example.domain.srs.Fsrs6Optimizer.MIN_REVIEWS_FOR_A_FIT) return null
-        val latest = dao.getLatest()
-        if (!force && latest != null && available < latest.availableReviews * REFIT_EVIDENCE_GROWTH &&
-            now - latest.createdAt < REFIT_MAX_AGE_MS
+        val lastAttempt = latest
+        if (!force && lastAttempt != null && available < lastAttempt.availableReviews * REFIT_EVIDENCE_GROWTH &&
+            now - lastAttempt.createdAt < REFIT_MAX_AGE_MS
         ) return null
 
-        val activeRow = dao.getActive()
         val activeWeights = activeRow?.let { com.example.domain.srs.Fsrs6Optimizer.decode(it.weights) }
         val current = activeWeights ?: com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS
         val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(histories, current)
@@ -303,8 +348,10 @@ class MedReviewRepository(
             // Checked where the result is written, not only where the job started: the learner may have switched
             // the personal model off, wiped or restored the data while the fit ran, and a fit that finished after
             // "off" used to be adopted anyway (an outside audit, 2026-09-27). Settings writes the switch before its
-            // own transaction retires the active set, so reading it inside this one leaves no gap.
-            if (!isEnabled() || reviewLogDao.historyFingerprint(maxLogId) != fingerprint) {
+            // own transaction retires the active set, so reading it inside this one leaves no gap. The identity
+            // covers what each review SAID, not only when it happened: a restore with the same times but a changed
+            // rating used to pass (a second audit, 2026-09-28).
+            if (!isEnabled() || fitIdentity(maxLogId) != identity) {
                 database.eventLogDao().insert(
                     com.example.data.local.entity.EventLogEntity(
                         type = "PERSONAL_MODEL_DISCARDED",
@@ -426,8 +473,10 @@ class MedReviewRepository(
             // topic from then on. Projection replays each copy's real history, so nothing is lost.
             val survivorLogs = reviewLogDao.getLogsForUnitOnce(survivorRow.id)
             val absorbedLogs = absorbedRows.map { reviewLogDao.getLogsForUnitOnce(it.id) }
-            val survivor = projectWithHistory(survivorRow, survivorLogs)
-            val absorbed = absorbedRows.mapIndexed { i, row -> projectWithHistory(row, absorbedLogs[i]) }
+            // A copy that is itself the survivor of an earlier merge keeps its averaged state (carriedOver).
+            val mergedBefore = mergedUnitIds()
+            val survivor = carriedOver(survivorRow, mergedBefore) ?: projectWithHistory(survivorRow, survivorLogs)
+            val absorbed = absorbedRows.mapIndexed { i, row -> carriedOver(row, mergedBefore) ?: projectWithHistory(row, absorbedLogs[i]) }
 
             val all = listOf(survivor) + absorbed
             // Weight by evidence: an unrated copy counts once, a well-drilled copy counts per review.
@@ -617,6 +666,7 @@ class MedReviewRepository(
         val logs = reviewLogDao.getRecentRecallLogsOnce(
             MedScheduler.CURRENT_MODEL.id,
             set.id,
+            set.activatedAt,
             com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
             com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION,
             com.example.domain.srs.RecallCalibration.WINDOW,

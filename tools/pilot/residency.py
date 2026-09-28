@@ -121,17 +121,26 @@ def run_plain_fsrs(sc: Scenario, classes, seed: int, retention: float) -> Result
     return finish(sc, mem, topics, know, reviews, cost, max_day)
 
 
-def plain_fsrs_at_equal_time(sc: Scenario, classes, seed: int, budget_cost: float) -> Result:
-    """Plain FSRS-6 interpolated along its own retention sweep to the Yadora twin's total review time."""
-    pts = sorted((r.cost, r) for r in (run_plain_fsrs(sc, classes, seed, x) for x in (0.85, 0.88, 0.90, 0.92, 0.95)))
-    lo, hi = pts[0], pts[1]
+def plain_fsrs_at_equal_time(sc: Scenario, classes, seed: int, budget_cost: float) -> Optional[Result]:
+    """Plain FSRS-6 interpolated along its own retention sweep to the Yadora twin's total review time. The sweep
+    widens once (0.80 or 0.97) when that time falls outside it; a time still outside returns None and the twin is
+    left out for that seed. It used to extrapolate from the two end points, a number no run produced (an outside
+    audit, 2026-09-28)."""
+    runs = {x: run_plain_fsrs(sc, classes, seed, x) for x in (0.85, 0.88, 0.90, 0.92, 0.95)}
+    costs = [r.cost for r in runs.values()]
+    if budget_cost < min(costs):
+        runs[0.80] = run_plain_fsrs(sc, classes, seed, 0.80)
+    elif budget_cost > max(costs):
+        runs[0.97] = run_plain_fsrs(sc, classes, seed, 0.97)
+    pts = sorted(((r.cost, r) for r in runs.values()), key=lambda p: p[0])
     for a, b in zip(pts, pts[1:]):
         if a[0] <= budget_cost <= b[0]:
             lo, hi = a, b
             break
     else:
-        if budget_cost > pts[-1][0]:
-            lo, hi = pts[-2], pts[-1]
+        print(f"(plain FSRS-6, seed {seed}: the Yadora twin's time {budget_cost:.0f} is outside its sweep, "
+              f"{pts[0][0]:.0f}-{pts[-1][0]:.0f}; left out)", file=sys.stderr)
+        return None
     f = (budget_cost - lo[0]) / (hi[0] - lo[0]) if hi[0] != lo[0] else 0.0
 
     def mix(attr):
@@ -196,8 +205,13 @@ def print_world(title: str, base: Scenario, rows, seeds: int):
         print("| twin | exam day: average recall | topics at 90%+ | topics at 80%+ | weakest tenth | "
               "first-year topics | average over the two years | Yadora wins |")
         print("|---|---|---|---|---|---|---|---|")
-        for twin, rs in per_twin.items():
-            wins = "" if twin == "Yadora" else f"{sum(1 for a, b in zip(y, rs) if a.final_quiz > b.final_quiz)}/{len(rs)}"
+        for twin, runs in per_twin.items():
+            pairs = [(a, b) for a, b in zip(y, runs) if b is not None]  # a seed outside plain FSRS's sweep is None
+            rs = [b for _, b in pairs]
+            if not rs:
+                print(f"| {twin} | outside the swept range |  |  |  |  |  |  |")
+                continue
+            wins = "" if twin == "Yadora" else f"{sum(1 for a, b in pairs if a.final_quiz > b.final_quiz)}/{len(pairs)}"
             print(f"| {twin} | {pct([r.final_quiz for r in rs])} | {pct([r.share_at_90 for r in rs])} | "
                   f"{pct([r.share_at_80 for r in rs])} | {pct([r.weakest_tenth for r in rs])} | "
                   f"{pct([r.first_half_quiz for r in rs])} | {pct([r.mean_knowledge for r in rs])} | {wins} |")

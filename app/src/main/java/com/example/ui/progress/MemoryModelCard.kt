@@ -11,7 +11,7 @@ import com.example.domain.srs.MedScheduler
  */
 internal fun activeSetOf(sets: List<MemoryParameterSetEntity>): MedScheduler.ParameterSet =
     sets.lastOrNull { it.status == MemoryParameterSetEntity.ACTIVE }
-        ?.let { row -> Fsrs6Optimizer.decode(row.weights)?.let { MedScheduler.ParameterSet(row.id, it) } }
+        ?.let { row -> Fsrs6Optimizer.decode(row.weights)?.let { MedScheduler.ParameterSet(row.id, it, row.activatedAt ?: row.createdAt) } }
         ?: MedScheduler.DEFAULT_PARAMETER_SET
 
 /** What the Progress screen states about the memory model. */

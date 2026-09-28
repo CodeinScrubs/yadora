@@ -19,15 +19,21 @@ and a Yadora twin whose policy knobs can be changed one at a time:
 
 Choices 2-4 change how many reviews are done, so they are judged at EQUAL TIME: for each policy the
 retention target is swept, and knowledge is read off its knowledge-vs-reviews curve at the review count
-the current policy uses at 0.90. A policy only "wins" if it knows more for the same hours.
+the current policy uses at 0.90. A policy only "wins" if it knows more for the same hours. "Equal time" is
+an equal NUMBER OF REVIEWS: every review costs the same here, while a real review of a forgotten topic takes
+longer than one of a topic still known, so a policy that lapses more is flattered slightly. A count outside
+the swept range is reported as such, never extrapolated.
 
 Added 2026-09-28, to answer "is there anything left to improve in the algorithm?":
 
   6. HEADROOM. Yadora against an ORACLE twin that schedules from the learner's TRUE memory state (the true
-     stability, on the true curve, with the true speed of forgetting) under the same product rules. No memory
-     model can know more than that, so the gap at equal time bounds what any better model could buy: FSRS-7,
-     a personal weight set, anything. Worlds: a learner the defaults describe, one who forgets 2x faster or
-     slower, a first study worth half what the defaults say, a steeper forgetting curve, and inflated ratings.
+     stability, on the true curve, with the true speed of forgetting) under the same product rules AND the same
+     scheduling rule (one fixed target). No memory model can know more than that, so the gap is what a better
+     MODEL (FSRS-7, a personal weight set) could buy under this rule, in these simulated worlds. It is NOT a
+     bound on every improvement: a different scheduling rule can add more (section 8 finds one that does while
+     the daily limit has room), and the worlds' true memory is itself FSRS-6-shaped. Worlds: a learner the
+     defaults describe, one who forgets 2x faster or slower, a first study worth half what the defaults say, a
+     steeper forgetting curve, and inflated ratings.
   7. CALIBRATION when ratings are inflated. Self-ratings that call a lapse "Hard" look exactly like a slow
      forgetter to the calibration, which then lengthens intervals. At the learner's own target, compare the
      current calibration with none, one that never lengthens past x1.25, and one three times slower to
@@ -244,20 +250,31 @@ def mean_run(p: Policy, w: World, seeds: int):
             statistics.fmean(r[2] for r in rs), [r[0] for r in rs])
 
 
+class OutOfRange(Exception):
+    """The budget lies outside the swept range. No number is reported, rather than a line drawn past the data: an
+    outside audit (2026-09-28) showed a straight line continued past the sweep reporting 101.6% recall."""
+
+
+def bracket(pts, budget):
+    """The two swept points around `budget` (points sorted by their first element) and the fraction between them."""
+    if not pts[0][0] <= budget <= pts[-1][0]:
+        raise OutOfRange(f"budget {budget:.0f} is outside the swept range {pts[0][0]:.0f}-{pts[-1][0]:.0f}")
+    lo, hi = next((a, b) for a, b in zip(pts, pts[1:]) if a[0] <= budget <= b[0])
+    return lo, hi, ((budget - lo[0]) / (hi[0] - lo[0]) if hi[0] != lo[0] else 0.0)
+
+
 def at_equal_time(p: Policy, w: World, seeds: int, budget: float, targets=(0.84, 0.87, 0.90, 0.93, 0.95)):
-    """Knowledge (final, mean) of policy p at `budget` reviews, interpolated along its retention sweep."""
+    """Knowledge (final, mean) of policy p at `budget` reviews, interpolated along its retention sweep (NaN when the
+    budget is outside the sweep)."""
     pts = []
     for r in targets:
         f, m, n, _ = mean_run(replace(p, retention=r), w, seeds)
         pts.append((n, f, m))
     pts.sort()
-    if budget <= pts[0][0]:
-        lo, hi = pts[0], pts[1]
-    elif budget >= pts[-1][0]:
-        lo, hi = pts[-2], pts[-1]
-    else:
-        lo, hi = next((a, b) for a, b in zip(pts, pts[1:]) if a[0] <= budget <= b[0])
-    t = (budget - lo[0]) / (hi[0] - lo[0]) if hi[0] != lo[0] else 0.0
+    try:
+        lo, hi, t = bracket(pts, budget)
+    except OutOfRange:
+        return float("nan"), float("nan"), pts
     return lo[1] + t * (hi[1] - lo[1]), lo[2] + t * (hi[2] - lo[2]), pts
 
 
@@ -268,15 +285,13 @@ def mean_full(p: Policy, w: World, seeds: int, base_seed: int = 500):
 
 
 def equal_time_full(p: Policy, w: World, seeds: int, budget: float, targets=(0.84, 0.87, 0.90, 0.93, 0.95)):
-    """(final, mean, tail) of policy p at `budget` reviews, interpolated along its retention sweep."""
+    """(final, mean, tail) of policy p at `budget` reviews, interpolated along its retention sweep (NaN when the
+    budget is outside the sweep)."""
     pts = sorted((m[2], m[0], m[1], m[3]) for m in (mean_full(replace(p, retention=r), w, seeds) for r in targets))
-    if budget <= pts[0][0]:
-        lo, hi = pts[0], pts[1]
-    elif budget >= pts[-1][0]:
-        lo, hi = pts[-2], pts[-1]
-    else:
-        lo, hi = next((a, b) for a, b in zip(pts, pts[1:]) if a[0] <= budget <= b[0])
-    t = (budget - lo[0]) / (hi[0] - lo[0]) if hi[0] != lo[0] else 0.0
+    try:
+        lo, hi, t = bracket(pts, budget)
+    except OutOfRange:
+        return float("nan"), float("nan"), float("nan")
     return tuple(lo[i] + t * (hi[i] - lo[i]) for i in (1, 2, 3))
 
 
@@ -288,20 +303,19 @@ def paired_equal_time(p: Policy, w: World, seeds: int, targets=(0.84, 0.87, 0.90
     for s in range(seeds):
         ref = run(Policy(), w, base_seed + s)
         pts = sorted((r[2], r[0], r[1], r[3]) for r in (run(replace(p, retention=t), w, base_seed + s) for t in targets))
-        budget = ref[2]
-        if budget <= pts[0][0]:
-            lo, hi = pts[0], pts[1]
-        elif budget >= pts[-1][0]:
-            lo, hi = pts[-2], pts[-1]
-        else:
-            lo, hi = next((a, b) for a, b in zip(pts, pts[1:]) if a[0] <= budget <= b[0])
-        t = (budget - lo[0]) / (hi[0] - lo[0]) if hi[0] != lo[0] else 0.0
+        try:
+            lo, hi, t = bracket(pts, ref[2])
+        except OutOfRange as e:
+            print(f"(seed {base_seed + s} left out: {e})", flush=True)
+            continue
         f, m, tl = (lo[i] + t * (hi[i] - lo[i]) for i in (1, 2, 3))
         diffs.append((f - ref[0], m - ref[1], tl - ref[3]))
     return diffs
 
 
 def mean_se(xs):
+    if not xs:
+        return "outside the swept range"
     xs = [100 * x for x in xs]
     se = statistics.stdev(xs) / math.sqrt(len(xs)) if len(xs) > 1 else float("nan")
     return f"{statistics.fmean(xs):+.2f} ± {se:.2f}"
@@ -319,7 +333,7 @@ def shifted(weights, **changes):
 
 
 def pct(x):
-    return f"{100 * x:.2f}%"
+    return "outside the swept range" if x != x else f"{100 * x:.2f}%"
 
 
 def main():
@@ -428,7 +442,8 @@ def main():
 
     if "headroom" in only:
         print("## 6. Headroom: Yadora against an oracle that knows the learner's true memory (at equal time)\n")
-        print("Same product rules for both. The oracle's gap is the most ANY better memory model could buy.\n")
+        print("Same product rules and the same fixed-target rule for both. The gap is what perfect knowledge of the "
+              "memory STATE adds under this rule; a different rule can add more (section 8).\n")
         worlds = [
             ("a learner the defaults describe", base_world),
             ("forgets 2x faster", replace(base_world, k_true=0.5)),
@@ -442,8 +457,9 @@ def main():
         for wname, w in worlds:
             fy, my, ny, ty, _ = mean_full(Policy(), w, seeds)
             fo, mo, to = equal_time_full(Policy(oracle=True), w, seeds, ny)
+            gap = "outside the swept range" if math.isnan(fo) else f"{100 * (fo - fy):+.2f}"
             print(f"| {wname} | {pct(fy)} / {pct(my)} / {pct(ty)} | {pct(fo)} / {pct(mo)} / {pct(to)} | "
-                  f"{100 * (fo - fy):+.2f} | {ny:.0f} |")
+                  f"{gap} | {ny:.0f} |")
         print()
 
     if "calibration" in only:

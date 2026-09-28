@@ -162,9 +162,11 @@ object Fsrs6 {
         // large, so a same-day Good on a mature topic silently SHRANK its stability.
         //
         // Hard is deliberately NOT floored, and that is not an oversight: py-fsrs 6.3.1 -- the pinned
-        // released reference -- lists only (Good, Easy). An unreleased commit on main widens it to
-        // include Hard. Pinning the RELEASE keeps the goldens reproducible; revisit when a version
-        // containing that change actually ships.
+        // released reference -- lists only (Good, Easy). py-fsrs 6.3.2 (released 2026-08-09) widens it
+        // to include Hard, so a same-day Hard on a 100-day topic keeps 100 there and drops to 45 here.
+        // The pin stays: adopting 6.3.2 is a new model identity (old history must keep replaying under
+        // the rules that computed it), and the app almost never reviews a topic twice in one day
+        // (CLAUDE.md, the conformance entry).
         if (grade == Grade.Good || grade == Grade.Easy) increase = increase.coerceAtLeast(1.0)
         return (s * increase).coerceAtLeast(S_MIN)
     }

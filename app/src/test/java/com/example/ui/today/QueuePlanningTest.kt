@@ -212,6 +212,17 @@ class QueuePlanningTest {
         assertTrue(ReviewAhead.isCandidate(other, DayBounds.endOf(now)))
     }
 
+    @Test fun review_ahead_leaves_out_topics_already_reviewed_today() {
+        // With a small library, weakest-first reached a topic reviewed an hour earlier once the rest ran out: a
+        // review at ~100% recall that buys almost nothing, scored on FSRS-6's same-day branch (Hard: 100 d -> 45 d).
+        val today = ahead(1, reviews = 3, dueInDays = 4).copy(lastReviewedAt = DayBounds.startOf(now) + 60_000)
+        val yesterday = ahead(2, reviews = 3, dueInDays = 4).copy(lastReviewedAt = DayBounds.startOf(now) - 60_000)
+        val order = ReviewAhead.order(listOf(today, yesterday), now, recall = { if (it.id == 1L) 0.5 else 0.9 })
+        assertEquals("reviewed today is not reviewed ahead today", listOf(2L), order.map { it.id })
+        assertFalse(ReviewAhead.isCandidate(today, DayBounds.endOf(now)))
+        assertTrue(ReviewAhead.isCandidate(yesterday, DayBounds.endOf(now)))
+    }
+
     @Test fun review_ahead_offers_the_weakest_not_yet_due_topics_first() {
         val recall = mapOf(1L to 0.95, 2L to 0.81, 3L to 0.88, 4L to 0.70, 5L to 0.60, 6L to 0.50, 7L to 0.40)
         val units = listOf(
