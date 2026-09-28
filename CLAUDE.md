@@ -881,8 +881,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
     cost-optimal scheduling) is NOT adopted.** It buys 0.4–0.8 points at the quiz when the daily limit has room
     (measured before the calibration cap), but when the limit binds (a heavy load, the medical student's normal
     case) it costs the weakest tenth 3.7 to 7.6 points (re-measured with the cap, 2026-09-28; 1.6 to 6.2 before
-    it): the extra reviews of mature topics take the slots weak topics need. Like the difficulty-adaptive
-    target, a trade-off, and a load-aware version would be new work.
+    it): the extra reviews of mature topics take the slots weak topics need. With the 2026-09-29 queue order
+    (which gives those slots to the topics a review helps most) the cost falls to 1.5–3.3 and the quiz turns
+    +0.1 to +0.3 (heavy load, 8 paired seeds). Still a trade-off like the difficulty-adaptive target: the
+    owner's call, ideally with pilot data.
   - **No outcome can be guaranteed.** Even an identical twin with identical time loses some exams by the luck of
     which topics are asked (about 8% of 100-question exams against the disciplined no-app twin), and a different
     student can study more, start ahead or review better. Never claim a guaranteed score; MARKETING.md applies.

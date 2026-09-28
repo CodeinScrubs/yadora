@@ -445,12 +445,15 @@ every seed inside its sweep). The change made the heavy-load cost larger (before
 | 30% of lapses rated Hard | +0.02 / +0.03 / +0.05 | +0.26 / +0.53 / +0.60 | −0.07 / +0.05 / +0.05 | +0.56 / +0.84 / +0.02 (±0.3–0.7) |
 | three years | +0.02 / +0.03 / +0.05 | +0.13 / +0.36 / +0.53 | +0.25 / +0.35 / +0.34 | +0.22 / +0.49 / +0.38 |
 | **heavy load: 6 new a day, limit 30** | +0.02 / +0.03 / +0.05 | −0.04 / +0.12 / −0.10 | +0.17 / +0.24 / +0.21 | **−3.88 / −3.66 / −7.56** (±0.7–0.9) |
+| heavy load, with the 2026-09-29 queue order | +0.02 / +0.03 / +0.05 | +0.08 / +0.15 / +0.32 (±0.07–0.08) | +0.09 / +0.18 / +0.26 | **−1.46 / −2.38 / −3.26** (±0.3–0.5) |
 
 When the daily limit has room it is a real gain, 0.4–0.8 points at the quiz without hurting the tail. When the
 limit binds, which is the medical student's normal case, the extra reviews of mature topics take the slots the
-weakest topics need, and the weakest tenth pays 3.7–7.6 points. Like the difficulty target, that is a trade-off
-rather than a free gain, so the target stays flat; a version that knows about the day's load would be new work,
-best designed against pilot data.
+weakest topics need, and the weakest tenth pays 3.7–7.6 points. The 2026-09-29 queue order (§2.4) gives those
+slots back to the topics a review helps most, and re-measured with it on the same seeds the cost falls to 1.5–3.3
+points while the quiz turns slightly positive (+0.1 to +0.3). The other rows were not re-run: their limit has room,
+so the order hardly matters there. Like the difficulty target, it is still a trade-off rather than a free gain, so
+the target stays flat; the owner can weigh it again, ideally with pilot data.
 
 **The guarantee.** No schedule can promise that a student scores higher than others. Others may study more,
 start ahead, or use better review methods, and one exam samples only some topics. Even the ideal case, an
