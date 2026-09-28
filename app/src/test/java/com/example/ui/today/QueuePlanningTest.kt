@@ -61,6 +61,19 @@ class QueuePlanningTest {
         assertFalse("nothing overdue", OverdueRedistributor.offersRecovery(0, 0))
     }
 
+    /**
+     * Spread out moves overdue REVIEWS only. A never-rated topic stays due, where the daily plan offers it first: its
+     * schedule counts from the rating, and deferring it moved that anchor days past the study (seen on the emulator,
+     * 2026-09-29). It does not count toward "reviews waiting" either.
+     */
+    @Test fun spread_out_never_defers_a_first_rating() {
+        val overdue = listOf(topic(1, reviews = 0, dueDaysAgo = 3), topic(2, reviews = 2, dueDaysAgo = 5), topic(3, reviews = 0, dueDaysAgo = 1))
+        assertEquals(listOf(2L), OverdueRedistributor.spreadable(overdue).map { it.id })
+        val onlyFirstRatings = (1L..30L).map { topic(it, reviews = 0, dueDaysAgo = 2) }
+        assertFalse("thirty unrated topics are not a backlog to spread",
+            OverdueRedistributor.offersRecovery(OverdueRedistributor.spreadable(onlyFirstRatings).size, 10))
+    }
+
     @Test fun dayOffset_never_exceeds_the_planned_window() {
         assertEquals(3, OverdueRedistributor.dayOffset(1000, 6, 50))
     }

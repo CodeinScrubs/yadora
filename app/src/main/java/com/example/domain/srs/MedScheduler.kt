@@ -816,19 +816,37 @@ object MedScheduler {
      * recover first. SINGLE source of truth for "which items matter most": the review-session daily cap
      * and the Today redistribution both call this, so their notion of priority can never drift apart.
      *
-     * Two terms: IMPORTANCE first (the learner's own Important flag, worth 20 days of lateness), then
-     * LATENESS on the model's clock, uncapped so nothing can starve. The order only matters when more
-     * is due than the day allows (the daily limit, a backlog, the Spread-out plan); otherwise every due
-     * topic is reviewed today whatever the order.
+     * Three terms (2026-09-29, validated at the owner's request; `tools/pilot/experiments.py`, docs/RESEARCH.md 2.4):
+     * - IMPORTANCE, the learner's own Important flag: [IMPORTANT_PRIORITY], as much as 20 days of lateness;
+     * - LATENESS on the model's and the repair clock: [LATENESS_PER_DAY] a day, uncapped, so nothing can starve;
+     * - the REVIEW VALUE ([reviewValue]), how much a review now would strengthen the topic: [QUEUE_VALUE_WEIGHT]
+     *   times it, capped at [QUEUE_VALUE_CAP], as much as 40 days of lateness.
+     * The order only matters when more is due than the day allows (the daily limit, a backlog, the Spread-out
+     * plan); otherwise every due topic is reviewed today whatever the order.
+     *
+     * Why the value term: under a binding limit, lateness alone gave the day's slots to whatever had waited
+     * longest, mature topics a review barely changes included (FSRS-6's curve is flat at high stability), while
+     * young topics whose next review would multiply their stability slid past due. In simulated backlogs (16
+     * paired seeds each) the value term knew more at the one-year quiz than lateness alone wherever the limit
+     * bound for weeks, and tied after a holiday, where it bound briefly; it lifted the weakest tenth of topics
+     * too. On two years of the real app at a daily limit of 25 (TwoYearSoakTest's learner) exam-day recall rose
+     * from 94.1% to 95.6% and the weakest tenth from 66.6% to 76.4%.
+     *
+     * Why LINEAR lateness and the CAP: the value came from an outside report ("Whittle index plus concave
+     * aging", 2026-09-28) whose ln(1 + days) lateness let topics wait 150 to 290 days past due when the limit
+     * bound for weeks, against 22 to 65 for lateness alone. With linear lateness and the cap the longest wait was
+     * 24 to 84 days, and a topic is never passed over by one more than 40 days less overdue (Important aside). The
+     * cap did not bind at the default load in simulation; it stops an extreme state (a very small stability, a
+     * personal weight set with a steep gain) from jumping the queue. The report's write-off below 10% recall and
+     * its repair bonus were not taken.
      *
      * What is deliberately NOT in it (2026-09-24, `tools/pilot/experiments.py`, docs/RESEARCH.md 2.4):
      * the old bonuses for weak states (NeedsRelearn +80, Learning +40, Building +20) and for past lapses
-     * (+10 each, up to 5). With the limit binding they spent the day's slots on topics a review
-     * strengthens least — low stability, a history of lapses — while stronger topics slid further past
-     * due. In five simulated backlogs (heavy load, over-confident first ratings, a holiday, fast and
-     * slow forgetters; 16 paired seeds each) lateness alone knew more on average through the year in
-     * all five (+0.12 to +0.55 points) and at the one-year quiz in four (+0.12 to +0.32; the fifth equal
-     * within noise), never less. Both bonuses cost; the lapse term more in most worlds. Lateness alone
+     * (+10 each, up to 5). They were set by LABEL, large (+80 is 16 days of lateness) and blind to how far
+     * recall had actually fallen. In five simulated backlogs (heavy load, over-confident first ratings, a
+     * holiday, fast and slow forgetters; 16 paired seeds each) lateness alone knew more on average through the
+     * year in all five (+0.12 to +0.55 points) and at the one-year quiz in four (+0.12 to +0.32; the fifth
+     * equal within noise), never less. Both bonuses cost; the lapse term more in most worlds. Lateness alone
      * also beat lowest-recall-first, highest-recall-first and lateness relative to the interval.
      */
     fun priorityScore(
@@ -856,15 +874,61 @@ object MedScheduler {
          * weeks scored no lateness at all while its memory date was still far away.
          */
         understandingDueAt: Long? = null,
+        /** The topic's memory state, for the review value; null (an unrated topic) scores lateness alone. */
+        memory: QueueMemory? = null,
     ): Double {
         var score = 0.0
-        if (highYield) score += 100.0
+        if (highYield) score += IMPORTANT_PRIORITY
         val modelReference = if (modelDueAt > 0L) modelDueAt else effectiveDueAt
         val dueReference = understandingDueAt?.takeIf { it > 0L }?.let { minOf(modelReference, it) } ?: modelReference
         val overdueDays = (now - dueReference) / 86400000.0
-        if (overdueDays > 0) score += overdueDays * 5.0
+        if (overdueDays > 0) score += overdueDays * LATENESS_PER_DAY
+        if (memory != null) score += minOf(QUEUE_VALUE_WEIGHT * reviewValue(memory, now), QUEUE_VALUE_CAP)
         return score
     }
+
+    /** What the queue reads of a rated topic: its state, when it was last reviewed, and the model and set it is on. */
+    data class QueueMemory(
+        val stability: Double,
+        val difficulty: Double,
+        val lastReviewedAt: Long,
+        val model: MemoryModel,
+        val parameterSetId: Long,
+    )
+
+    /** What each day past due adds to [priorityScore]. */
+    const val LATENESS_PER_DAY = 5.0
+
+    /** What Important adds to [priorityScore]: as much as 20 days of lateness. */
+    const val IMPORTANT_PRIORITY = 100.0
+
+    /** Weight of the review value in [priorityScore]. */
+    const val QUEUE_VALUE_WEIGHT = 80.0
+
+    /** The most the review value can add: as much as 40 days of lateness, so it never passes over a topic longer. */
+    const val QUEUE_VALUE_CAP = 200.0
+
+    /**
+     * What reviewing a topic NOW is worth to memory: (1 − R) · R · the relative stability gain of a Good review,
+     * on the topic's own model and weight set. It is large for a topic whose recall is falling and whose next
+     * successful review would multiply its stability (a young topic), and small for one a review would barely
+     * change (a mature topic, whose flat curve can wait). 0 when it cannot be computed; a queue order must never
+     * fail a screen.
+     */
+    fun reviewValue(memory: QueueMemory, now: Long): Double = runCatching {
+        val s = memory.stability.coerceAtLeast(Fsrs6.S_MIN)
+        val elapsed = modelElapsedDays(memory.lastReviewedAt, now, memory.model)
+        val r = retrievability(elapsed, s, memory.model, memory.parameterSetId)
+        val afterGood = when (memory.model) {
+            MemoryModel.FSRS_5 -> Fsrs.nextState(MemoryState(s, memory.difficulty), elapsed, Grade.Good).stability
+            MemoryModel.FSRS_6 -> Fsrs6.nextState(
+                MemoryState(s, memory.difficulty), completedModelDays(elapsed), Grade.Good,
+                Fsrs6Parameters(weights = weightsOrDefault(memory.parameterSetId)),
+            ).stability
+        }
+        val value = (1.0 - r) * r * ((afterGood - s) / s).coerceAtLeast(0.0)
+        if (value.isFinite() && value >= 0.0) value else 0.0
+    }.getOrDefault(0.0)
 
     /**
      * Derive a mastery state from the memory model (replacing the old review-count thresholds, which

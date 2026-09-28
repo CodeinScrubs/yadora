@@ -233,8 +233,8 @@ genuinely worth considering for v2. Kept here so they aren't lost:
 - ~~**Risk-per-minute queue refinement**: divide `priorityScore` by expected review minutes.~~
   Withdrawn 2026-09-23: a review is done however the learner likes, mostly outside the app, so the
   seconds a topic sits open measure nothing (the same reason Today shows no time estimate). The queue
-  order itself was re-tested by simulation on 2026-09-24 and is now simply Important first, then the
-  most overdue (CLAUDE.md).
+  order itself was re-tested by simulation on 2026-09-24 (Important first, then the most overdue) and
+  again on 2026-09-29, when a capped "review value" term joined lateness (CLAUDE.md).
 - **Validation note**: an external FSRS-6 workload analysis (unverified simulation, but consistent
   with known FSRS workload curves) puts the efficient retention band at ~0.88–0.92, with ~0.92 for
   critical items. Yadora's shipped defaults (0.90 standard / 0.93 important) sit essentially inside

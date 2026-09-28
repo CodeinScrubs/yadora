@@ -144,17 +144,13 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
 
     fun redistributeOverdueUnits(context: android.content.Context) {
         viewModelScope.launch {
-            val overdueList = overdueUnits.value
+            val overdueList = OverdueRedistributor.spreadable(overdueUnits.value)
             if (overdueList.isEmpty()) return@launch
             
             val now = System.currentTimeMillis()
-            // Highest-priority first (same score the review queue uses) so DAY 1 gets the Important topics and
-            // then the longest-overdue ones, instead of a blind round-robin.
-            val prioritized = overdueList.sortedByDescending { u ->
-                com.example.domain.srs.MedScheduler.priorityScore(
-                    u.highYield, u.modelDueAt, now, u.nextReviewAt, u.understandingDueAt,
-                )
-            }
+            // Highest-priority first (same score the review queue uses) so DAY 1 gets the Important topics, the
+            // longest overdue and those a review would strengthen most, instead of a blind round-robin.
+            val prioritized = DailyPlan.byPriority(overdueList, now)
             val total = prioritized.size
             // The plan is built around what the user actually said they can do in a day. A fixed
             // window turned a 100-topic backlog into 34 a day for someone whose limit is 10 -- a
@@ -690,13 +686,15 @@ fun TodayScreen(
                     if (overdue.isNotEmpty()) {
                         // The recovery plan is offered only for a backlog bigger than one day's limit
                         // (OverdueRedistributor.offersRecovery); a smaller one the daily plan clears by itself.
-                        if (OverdueRedistributor.offersRecovery(overdue.size, dailyLimit)) item {
+                        // Reviews only: first ratings are never spread (OverdueRedistributor.spreadable).
+                        val backlog = OverdueRedistributor.spreadable(overdue).size
+                        if (OverdueRedistributor.offersRecovery(backlog, dailyLimit)) item {
                             val isFarsi = strings.languageCode == "fa"
                             val over = com.example.ui.theme.overdueTone()
-                            val nOver = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(overdue.size) else overdue.size.toString()
+                            val nOver = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(backlog) else backlog.toString()
                             // The same plan the button below builds: sized from the daily limit, 3–14 days.
                             // This card used to promise "3 days" whatever the backlog was.
-                            val recoveryDays = OverdueRedistributor.recoveryDays(overdue.size, dailyLimit)
+                            val recoveryDays = OverdueRedistributor.recoveryDays(backlog, dailyLimit)
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -728,10 +726,10 @@ fun TodayScreen(
                                         text = if (isFarsi) {
                                             "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز پخش کنی."
                                         } else if (strings.languageCode == "de") {
-                                            (if (overdue.size == 1) "1 Wiederholung wartet." else "${overdue.size} Wiederholungen warten.") +
+                                            (if (backlog == 1) "1 Wiederholung wartet." else "$backlog Wiederholungen warten.") +
                                                 " Holen wir zuerst die wichtigsten nach — du kannst sie auf $recoveryDays Tage verteilen."
                                         } else {
-                                            (if (overdue.size == 1) "1 review is waiting." else "${overdue.size} reviews are waiting.") +
+                                            (if (backlog == 1) "1 review is waiting." else "$backlog reviews are waiting.") +
                                                 " Let's recover the important ones first — you can spread them over $recoveryDays days."
                                         },
                                         style = MaterialTheme.typography.bodyMedium,
