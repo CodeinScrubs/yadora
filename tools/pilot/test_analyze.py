@@ -15,7 +15,9 @@ Regenerate the fixture after changing the export format:
 import copy
 import csv
 import json
+import math
 import os
+import random
 import sys
 import tempfile
 
@@ -121,6 +123,30 @@ def test_rows_a_correction_recomputed_are_not_calibration_evidence():
     print(f"recall rows that predate their weight set are left out of its calibration ({after} of {len(recalls)} kept)")
 
 
+def test_calibration_slope_and_intercept_recover_a_planted_miscalibration():
+    # Outcomes drawn from logit P(y) = a + b * logit(p): calibrated predictions (a=0, b=1) must read as slope 1 and
+    # intercept 0, over-extreme ones (b=0.5) as slope 0.5, and a systematic shift (a=-0.5) as an intercept below 0.
+    rng = random.Random(7)
+
+    def draw(a, b, n=20000):
+        out = []
+        for _ in range(n):
+            p = rng.uniform(0.55, 0.99)
+            q = 1 / (1 + math.exp(-(a + b * math.log(p / (1 - p)))))
+            out.append((p, rng.random() < q))
+        return out
+
+    good = analyze.logistic_calibration(draw(0.0, 1.0))
+    assert abs(good["slope"] - 1.0) < 0.1 and abs(good["citl"]) < 0.1 and abs(good["oe"] - 1.0) < 0.02, good
+    assert good["slope_ci"][0] < 1.0 < good["slope_ci"][1], good
+    flat = analyze.logistic_calibration(draw(0.0, 0.5))
+    assert abs(flat["slope"] - 0.5) < 0.1, flat
+    shifted = analyze.logistic_calibration(draw(-0.5, 1.0))
+    assert shifted["citl"] < -0.3 and shifted["citl_ci"][1] < 0, shifted
+    assert analyze.logistic_calibration([(0.9, True)] * 10).keys() == {"brier", "oe"}, "too few reviews: no fit"
+    print("calibration slope and intercept recover planted miscalibration (1.0 / 0.5 / shifted)")
+
+
 def test_a_backup_is_refused_with_an_explanation():
     backup = {"backupVersion": 9, "studyUnits": [], "reviewLogs": [], "subjects": []}
     backup.pop("reviewLogs")
@@ -136,5 +162,6 @@ if __name__ == "__main__":
     test_a_tampered_prediction_and_elapsed_are_caught()
     test_several_participants_and_duplicates()
     test_rows_a_correction_recomputed_are_not_calibration_evidence()
+    test_calibration_slope_and_intercept_recover_a_planted_miscalibration()
     test_a_backup_is_refused_with_an_explanation()
     print("all checks passed")

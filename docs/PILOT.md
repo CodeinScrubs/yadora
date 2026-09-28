@@ -88,7 +88,9 @@ python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json   # o
 
 Standard library only. `pilot_report/` gets:
 
-- `report.md`: the findings;
+- `report.md`: the findings, including the standard calibration checks for each weight set: the Brier score,
+  observed over expected, calibration-in-the-large and the calibration slope, with 95% intervals (descriptive;
+  the decision rules below do not read them);
 - `summary.json`: the same numbers, machine-readable;
 - `reviews.csv`, `topics.csv`, `participants.csv`: tidy tables, UTF-8, open in Excel.
 
@@ -130,6 +132,17 @@ Why these thresholds:
   one. A LOOK on D5 is therefore not enough for a default that new users get: first hold out whole
   participants (fit on all but one, score the one left out, for each) and require the gain there too.
 - D6's 0.3 is a modest bar: questions and "how much of the topic" measure overlapping but different things.
+  If D6 leads to a score-based suggestion, two details matter. It stays a suggestion and never overrides the
+  rating (settled). And a multiple-choice score has a chance floor: k right of n on c-option questions reads as
+  recall (k/n − 1/c) / (1 − 1/c), floored at 0. D6's rank correlation hardly moves under that correction
+  (it is monotone; only the floor adds ties). A suggestion rule would change.
+- If D7 shows a difference, the candidate change is a multiplier on the stability GAIN, not on stability:
+  S′ = S · [1 + m · (SInc − 1)], where SInc is FSRS-6's own growth factor. Reading is anchored at m = 1. The
+  multiplier is fitted with the 21 weights frozen, on successful recalls only, so it cannot trade variance
+  with them. D7's comparison is observational: learners choose their method, and harder topics may draw
+  more questions. A fitted m is a candidate to simulate, not a measured effect. (Outside reviews, 2026-09-28:
+  one plan multiplied stability itself, up to ×1.25; a follow-up answer used this gain form with m up to 2.2.
+  Neither range has a source.)
 
 ## Optional: a direct retention check at week 8
 

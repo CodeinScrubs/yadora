@@ -164,6 +164,26 @@ but under a backlog it waits its turn behind older debt instead of jumping ahead
 day whose reviews all fit, which is most days at the default limit of 50. "Highest recall first", which
 some apps use for backlogs, is clearly the worst.
 
+**Backlog-triage proposals (2026-09-28).** Two outside reports called ranking by lateness a "FIFO trap" and
+proposed two alternatives. One ranks by the recall deficit times a recoverability factor, (R* − R)+ × (1 − e^(−S/τ)).
+The other ranks by the recall that three more days of waiting would cost (`experiments.py`, `YADORA_EXTRA_ORDERS`).
+Their premise does not hold on FSRS-6: a topic 30 days overdue still sits at 59–88% predicted recall, not near 5%,
+and the one-day drop in recall is largest right after a review, not near R 0.75–0.85. The table uses the same five
+backlogs and 16 paired seeds, with the current calibration. It gives the points against Yadora's order at the
+quiz, with the year average in brackets:
+
+| order | heavy load | holiday, then limit 20 | forgets 2× faster | forgets 2× slower | heavy, over-confident first ratings |
+|---|---|---|---|---|---|
+| deficit × recoverability, τ = 10 d | −1.20 (−0.71) | −0.05 (+0.01) | −0.38 (−0.12) | −1.14 (−0.44) | −0.81 (−0.46) |
+| τ = 30 d | −1.90 (−0.91) | −0.08 (+0.01) | −0.86 (−0.35) | −1.68 (−0.55) | −1.36 (−0.65) |
+| τ = 100 d | −2.03 (−0.99) | −0.07 (−0.01) | −1.21 (−0.54) | −1.93 (−0.62) | −1.66 (−0.78) |
+| largest 3-day recall loss first | −7.42 (−4.69) | −0.60 (−0.13) | −7.50 (−4.97) | −6.42 (−2.91) | −8.01 (−5.15) |
+| lowest recall first (re-run) | −1.22 (−0.84) | −0.07 (0.00) | −1.44 (−0.75) | −1.28 (−0.67) | −1.52 (−0.94) |
+
+Standard errors are 0.02–0.20. Neither proposal beats the current order anywhere. The recoverability index ties it
+only after the holiday, where the limit binds briefly. The 3-day-loss order is the worst: it favours topics that
+have only just come due, whose recall is falling fastest, and lets the oldest debt grow.
+
 **The other knobs, at equal time** (re-run with the new queue order; the earlier run agreed within
 0.2 points, except the over-confident row, which sat up to 0.5 points lower then; see the caution below):
 
@@ -177,6 +197,17 @@ some apps use for backlogs, is clearly the worst.
 A caution for reading these: one seed's review count can differ from another's by ±8%, because the
 per-user calibration amplifies early luck. That is why every workload-changing knob is compared at equal
 time along its own retention sweep, and why differences under ~0.2 points are called noise.
+
+**Re-run on 2026-09-28**, with the calibration that never lengthens intervals (§2.7) and the out-of-range
+guard (every review budget fell inside its policy's sweep, so nothing above was extrapolated). Relearn:
+1 d 95.2% (95.5) · 2 d 95.3% (95.5) · FSRS's interval 95.3% (95.5). First-study cap, honest: 5 d 95.2% (95.5)
+· 3 d 95.1% (95.4) · 7 d 95.2% (95.4) · none 95.4% (95.4); over-confident: 5 d 95.2% (95.4) · 3 d 95.1% (95.3) ·
+7 d 95.3% (95.3) · none 95.3% (95.3). Maximum interval over three years: 365 d 95.8% (95.5) · 180 d 96.4% (95.5)
+· none 95.3% (95.4). Difficulty target ±0.03 (4 seeds): lower for harder topics +0.2 to +0.4 at the quiz and
++0.3 to +0.5 over the year, higher for harder topics −0.9 to −1.1. The same conclusions. One pattern worth a
+proper test: the 180-day ceiling has come out ahead at the three-year quiz in both runs (+0.6, +0.7), with the
+same average. Both runs used the same three seeds, so that is one observation, not two; more paired seeds
+would settle whether it is real.
 
 **Difficulty-adaptive retention (evaluated, not adopted).** FSRS's equations make a review of a hard topic
 buy less stability, so optimal-control work on spaced repetition (SSP-MMC) targets lower retention for
@@ -420,8 +451,16 @@ records the method (D7) so Yadora's own data can confirm it.
 - **Expanding vs uniform spacing, and within-day interleaving**: the evidence says schedule shape matters
   little, and interleaving helps with discriminating similar categories, not with ordering whole-topic
   reviews. (Which due topics come first under a backlog is a different question; §2.4 tested it and
-  changed it.)
-- **Using the question score in scheduling**: not until the pilot shows how it relates to self-ratings (D6).
+  changed it.) A 2026-09-28 proposal to rotate the day's topics by subject (cardiology, nephrology,
+  pharmacology, ...) would mix the least similar topics, where the interleaving meta-analysis finds the benefit
+  smallest or reversed (Brunmair & Richter 2019). A second assistant proposed the opposite, grouping confusable
+  topics. Neither fits whole topics reviewed by any method, mostly outside the app.
+- **Using the question score or the review method in scheduling**: not until the pilot shows how the score
+  relates to self-ratings (D6) and whether the method matters (D7). PILOT.md now records the form either change
+  should take if the data calls for one: a suggestion, never an override, after a multiple-choice chance
+  correction; a multiplier on the stability gain, fitted with the weights frozen.
+- **Reminder times by chronotype, or hard topics just before sleep**: the evidence is modest and partly
+  conflicting, and the learner already chooses both reminder times.
 - **Exam-date interval compression**: a settled decision. Review ahead gives the learner the same power
   without the exam date touching the schedule.
 - **A randomised in-app control arm** (withholding reviews from some topics to measure the effect): it

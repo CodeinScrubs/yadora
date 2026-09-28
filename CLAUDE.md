@@ -622,7 +622,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   that just lapsed is not jumped ahead of older debt: its relearn step is a due DATE, and under a backlog
   it waits its turn like every other due topic. `MAX_SCORED_LAPSES` now caps only the Library's "weakest first" sort. The order
   matters only when more is due than the day allows; it is not replayed, so no POLICY bump. Do not add
-  weakness or lapse bonuses back without a simulation that beats this.
+  weakness or lapse bonuses back without a simulation that beats this. Two outside reports (2026-09-28)
+  called uncapped lateness a "FIFO trap" and proposed two replacements:
+  - ranking by recall deficit × recoverability, (R* − R)+ · (1 − e^(−S/τ)), τ = 10–100 d;
+  - ranking by the largest 3-day recall loss.
+
+  On the same five backlogs both lost. The recoverability index lost 0.4–2.0 points at the quiz in four worlds
+  and tied only after the holiday. The 3-day-loss order lost 0.6–8.0 points in all five
+  (`YADORA_EXTRA_ORDERS=roi10,roi30,roi100,dr3`, RESEARCH §2.4). The premise was wrong for FSRS-6: a topic 30 days
+  overdue still sits at 59–88% predicted recall, not ~5%, and the daily drop in recall is largest right after a
+  review. The reports also described the pre-2026-09-24 score, bonuses included.
 - **Retention is clamped on read** (`MedScheduler.safeRetention`), not just on write.
   Prefs store a `Float` and FSRS consumes a `Double`, so even a value clamped to
   exactly `0.99` reads back fractionally outside the band `FsrsParameters` accepts —
@@ -682,6 +691,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   they are honest. A DIFFICULTY-ADAPTIVE target (lower for harder topics) buys ~0.2–0.4 points at equal
   time but costs the hardest quarter of topics 0.5–0.7 points. It is NOT adopted: that is the owner's trade-off to make, ideally with pilot data. Do not
   ship it silently, and do not re-run these experiments as if they were open questions.
+  Re-run on 2026-09-28, with the calibration cap and the out-of-range guard: every budget fell inside its sweep
+  (nothing published was extrapolated), with the same conclusions. The one open pattern: the 180-day ceiling
+  led at the three-year quiz in both runs (+0.6 and +0.7 points, the same average). Both runs used the same three
+  seeds, so it is one observation. A larger paired run would settle it before anyone argues for a change.
 - **Backup, restore and the research export STREAM** (`data/JsonStreams`, 2026-09-24). They used to build
   one org.json tree and one String. Measured on a multi-year history (3,300 topics, ~20,000 reviews): a
   backup cost ~141 MB of live heap, and a restore held the file text, its parsed tree AND a full safety
@@ -898,6 +911,39 @@ These were decided deliberately. Re-suggesting them wastes a session:
     highest); MEMORIZE's optimal review intensity "proportional to recall" (it is proportional to 1 - recall, and
     stochastic); a scheduler blueprint built on FSRS v4's curve (1 + t/9S)^-1 with 17 weights and a
     lowest-recall-first queue (1.2-1.6 points worse in four of five simulated backlogs, §2.4).
+- **More outside reports, 2026-09-28: a literature review, a five-phase "enhancement plan", and answers to five
+  follow-up questions.** Each was checked against the code, and the queue claim in the simulator.
+  - **Refuted by simulation:** the queue "FIFO trap" (queue-order entry above).
+  - **False about this code:**
+    - `domain/srs/Topic.kt` and `domain/srs/DailyPlan.kt` do not exist (`DailyPlan` is in `ui/today/QueuePlanning.kt`).
+    - The review log stores no stability.
+    - New calibration estimates stop at 1.0, not 2.0.
+    - Review methods came with DB v10, not v9.
+    - `analyze.py` computed no Brier score or calibration slope (it does now, below).
+  - **False about the simulations:**
+    - 0.85 does not "cut reviews 12% and raise exam error 18%". In the one-year sweep it does 24% fewer reviews
+      and has 53% more forgetting.
+    - 0.90 is not an "exact Pareto knee": 0.85 and 0.90 tie for the equal-time advantage.
+  - **Other overclaims:** several references are real papers on unrelated subjects, and a "core guarantee" of
+    superior retention is ruled out by MARKETING.md.
+  - **Done:**
+    - `analyze.py` reports the Brier score, O/E, calibration-in-the-large and the calibration slope, with 95%
+      intervals, per weight set. They are descriptive; no decision rule reads them.
+    - `test_analyze.py` recovers a planted miscalibration with them.
+    - On the soak's export the slope reads 0.96 (0.85–1.07).
+  - **Recorded for the pilot, not built** (PILOT.md, "Why these thresholds"):
+    - If D7 fires, a method effect multiplies the stability GAIN, S′ = S·[1 + m·(SInc − 1)], with Reading anchored
+      at 1 and the weights frozen. The plan multiplied stability itself (up to ×1.25), and a follow-up answer used
+      this gain form (m up to 2.2); neither range has a source.
+    - D7 is observational, so a fitted m is a candidate to simulate, not an effect.
+    - If D6 leads to a score-based suggestion, correct multiple-choice scores for chance first. A score never
+      overrides a rating.
+  - **Not adopted:**
+    - Round-robin "interleaving" by subject. It mixes the least similar topics, where interleaving helps least,
+      and the second assistant proposed the opposite (group confusable topics).
+    - Chronotype-timed reminders. The learner already sets both times.
+    - Flashcard machinery: atomic cards, learning steps, leeches, and load balancing (which would make an interval
+      depend on other topics).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
