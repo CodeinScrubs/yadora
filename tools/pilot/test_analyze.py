@@ -147,6 +147,24 @@ def test_calibration_slope_and_intercept_recover_a_planted_miscalibration():
     print("calibration slope and intercept recover planted miscalibration (1.0 / 0.5 / shifted)")
 
 
+def test_method_comparison_is_made_within_each_learner():
+    # A generous rater who mostly does questions and a strict one who mostly reads: pooled, questions look 20 points
+    # better; within each learner the methods are identical. D7 must read the within-learner number.
+    lo = analyze.WITHIN_MIN
+    people = {
+        "A": {"Questions only": [0.10] * 40, "Reading only": [0.10] * lo},
+        "B": {"Questions only": [-0.10] * lo, "Reading only": [-0.10] * 40},
+    }
+    pooled_q = [x for p in people.values() for x in p["Questions only"]]
+    pooled_r = [x for p in people.values() for x in p["Reading only"]]
+    assert sum(pooled_q) / len(pooled_q) - sum(pooled_r) / len(pooled_r) > 0.1, "the confounded pooled gap"
+    wp = analyze.within_participant_difference(people)
+    assert wp["participants"] == 2 and abs(wp["diff"]) < 1e-12, wp
+    specialists = {"A": {"Questions only": [0.1] * 50}, "B": {"Reading only": [-0.1] * 50}}
+    assert analyze.within_participant_difference(specialists) is None, "no learner used both: nothing to compare"
+    print("the method comparison is made within each learner (a between-person gap is not read as a method effect)")
+
+
 def test_a_backup_is_refused_with_an_explanation():
     backup = {"backupVersion": 9, "studyUnits": [], "reviewLogs": [], "subjects": []}
     backup.pop("reviewLogs")
@@ -163,5 +181,6 @@ if __name__ == "__main__":
     test_several_participants_and_duplicates()
     test_rows_a_correction_recomputed_are_not_calibration_evidence()
     test_calibration_slope_and_intercept_recover_a_planted_miscalibration()
+    test_method_comparison_is_made_within_each_learner()
     test_a_backup_is_refused_with_an_explanation()
     print("all checks passed")

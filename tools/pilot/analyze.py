@@ -533,6 +533,32 @@ def logistic_calibration(pairs: Sequence[Tuple[float, bool]]) -> dict:
     return out
 
 
+WITHIN_MIN = 10  # next reviews after each method, per learner, before that learner's difference counts
+
+
+def within_participant_difference(by_person: Dict[str, Dict[str, List[float]]]) -> Optional[dict]:
+    """D7's comparison with each learner as their own control: the mean residual after "Questions only" minus after
+    "Reading only", computed inside each learner who has at least WITHIN_MIN of each, then averaged with weights
+    nq*nr/(nq+nr). Pooling everyone instead compares people as much as methods: if one learner mostly does
+    questions and rates generously while another mostly reads, the pooled gap is theirs, not the methods'. Topics
+    are still chosen by the learner, so the result stays observational. Added 2026-09-28."""
+    num = den = 0.0
+    people, nq_total, nr_total = 0, 0, 0
+    for groups in by_person.values():
+        q, r = groups.get("Questions only", []), groups.get("Reading only", [])
+        if len(q) < WITHIN_MIN or len(r) < WITHIN_MIN:
+            continue
+        w = len(q) * len(r) / (len(q) + len(r))
+        num += w * (statistics.fmean(q) - statistics.fmean(r))
+        den += w
+        people += 1
+        nq_total += len(q)
+        nr_total += len(r)
+    if not people:
+        return None
+    return dict(diff=num / den, participants=people, n_questions=nq_total, n_reading=nr_total)
+
+
 def calib_block(rows: List[Row], pred_attr="predicted") -> dict:
     pairs = [(getattr(r, pred_attr), r.success) for r in rows if getattr(r, pred_attr) is not None]
     n = len(pairs)
@@ -1033,11 +1059,14 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         if r.log_type in ("RECALL", "FIRST_STUDY") and r.scheduler_version == "FSRS-6":
             by_topic[(r.participant, r.unit_id)].append(r)
     resid = defaultdict(list)
+    resid_by_person: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
     for rs in by_topic.values():
         rs.sort(key=lambda r: (r.at, r.log_id))
         for a, b in zip(rs, rs[1:]):
             if a.is_recall and b.is_recall and b.predicted is not None:
-                resid[method_group(a.methods)].append((1.0 if b.success else 0.0) - b.predicted)
+                value = (1.0 if b.success else 0.0) - b.predicted
+                resid[method_group(a.methods)].append(value)
+                resid_by_person[a.participant][method_group(a.methods)].append(value)
     rows_m = []
     for gname in ("Questions only", "Reading only", "Lecture only", "Questions + other", "other mix", "not said"):
         v = resid.get(gname)
@@ -1046,10 +1075,17 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             se = statistics.stdev(v) / math.sqrt(len(v)) if len(v) > 1 else float("nan")
             rows_m.append([gname, len(v), f"{mu:+.3f}", f"{mu - 1.96 * se:+.3f} to {mu + 1.96 * se:+.3f}" if len(v) > 1 else "–"])
     summary["method_residuals"] = {k: dict(n=len(v), mean=statistics.fmean(v)) for k, v in resid.items() if v}
+    summary["method_within_participant"] = within_participant_difference(resid_by_person)
     rep.p("For each review, how the NEXT review of the same topic turned out against its prediction (reported − predicted; "
           "positive = the topic held better than the model expected after that kind of review). Differences between "
           "rows, not the rows themselves, are what matter; they are observational (learners chose their method):")
     rep.table(["how the previous review was done", "next reviews", "mean residual", "95% CI"], rows_m)
+    wp = summary["method_within_participant"]
+    rep.p("The same comparison inside each learner (Questions only minus Reading only, among learners with at least "
+          f"{WITHIN_MIN} next reviews after each), so that differences between people cannot pose as a difference "
+          "between methods: " + (f"**{wp['diff']:+.3f}** from {wp['participants']} learner(s), "
+                                 f"{wp['n_questions']}/{wp['n_reading']} reviews. D7 reads this number."
+                                 if wp else "no learner used both methods often enough yet. D7 waits for it."))
     own = defaultdict(list)
     for r in recalls_pred:
         own[method_group(r.methods)].append(r)
@@ -1170,10 +1206,16 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
 
     mr = summary.get("method_residuals") or {}
     q, rd = mr.get("Questions only"), mr.get("Reading only")
-    if q and rd and q["n"] >= 100 and rd["n"] >= 100:
-        diff = q["mean"] - rd["mean"]
+    wp = summary.get("method_within_participant")
+    if q and rd and q["n"] >= 100 and rd["n"] >= 100 and wp:
+        # Judged within each learner (2026-09-28, before any pilot data): the pooled gap is shown for comparison only.
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
-            f"{diff:+.3f} (n={q['n']}/{rd['n']})", "LOOK" if abs(diff) >= 0.05 else "OK")
+            f"{wp['diff']:+.3f} within learners ({wp['participants']}); pooled {q['mean'] - rd['mean']:+.3f} "
+            f"(n={q['n']}/{rd['n']})", "LOOK" if abs(wp["diff"]) >= 0.05 else "OK")
+    elif q and rd and q["n"] >= 100 and rd["n"] >= 100:
+        add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
+            f"no learner used both methods {WITHIN_MIN}+ times; pooled {q['mean'] - rd['mean']:+.3f} compares people, "
+            "not methods", "WAIT")
     else:
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
             f"{q['n'] if q else 0}/{rd['n'] if rd else 0} reviews (needs 100 each)", "WAIT")
