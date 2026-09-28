@@ -205,6 +205,7 @@ object BackupManager {
         val validUnderstanding = setOf("Confused", "Partial", "Clear", "NotAsked") // NotAsked = skipped question (Forgot fast-commit)
 
         var sawUnits = false
+        var sawLogs = false
         var fileVersion = 1
         val subjects = ArrayList<SubjectEntity>()
         val systems = ArrayList<SystemEntity>()
@@ -296,7 +297,7 @@ object BackupManager {
                         activatedAt = o.longOrNull("activatedAt"), retiredAt = o.longOrNull("retiredAt"),
                     )
                 }
-                "reviewLogs" -> reader.also { requireList(it, "reviewLogs") }.forEachRecord { i, o ->
+                "reviewLogs" -> reader.also { requireList(it, "reviewLogs"); sawLogs = true }.forEachRecord { i, o ->
                     val memory = o.optString("memoryRating", "")
                     val understanding = o.optString("understandingRating", "")
                     val unitRef = o.optLong("studyUnitId", -1L)
@@ -368,6 +369,12 @@ object BackupManager {
         }
         reader.endObject()
         require(sawUnits) { "This file is not a Yadora backup." }
+        // Every backup Yadora has written, from v1 on, carries its review history. Topics that were rated in a
+        // file whose history is missing or empty mean a damaged file, and restoring it would erase the learner's
+        // history while the topics still claimed their reviews (an outside audit reproduced it, 2026-09-28).
+        if (units.any { it.reviewCount > 0 }) {
+            require(sawLogs && logs.isNotEmpty()) { "Damaged backup: its topics were reviewed, but the file has no review history" }
+        }
         val knownModels = com.example.domain.srs.MedScheduler.MemoryModel.entries.mapTo(HashSet()) { it.id }
         units.forEachIndexed { i, u ->
             require(u.memoryModel in knownModels) {

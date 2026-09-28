@@ -103,6 +103,24 @@ def test_several_participants_and_duplicates():
     print("two participants pooled; an older duplicate export is set aside with a warning")
 
 
+def test_rows_a_correction_recomputed_are_not_calibration_evidence():
+    # As the app since 2026-09-28: a rating correction replays a topic onto the weight set it is on now and stamps
+    # every row with it; the rows reviewed before that set began scheduling were recomputed, not predicted.
+    d = fixture()
+    recalls = sorted((l for l in d["reviewLogs"] if l["logType"] == "RECALL"), key=lambda l: (l["reviewedAt"], l["id"]))
+    activated = recalls[len(recalls) // 2]["reviewedAt"]
+    d["memoryParameterSets"] = [{"id": 7, "createdAt": activated, "status": "ACTIVE", "weights": list(analyze.ym.DEFAULT_WEIGHTS),
+                                 "activatedAt": activated, "retiredAt": None}]
+    for log in d["reviewLogs"]:
+        log["parameterSetId"] = 7  # the same numbers as the defaults, so every row still replays exactly
+    summary, _, files = run([d])
+    assert summary["integrity"]["mismatched"] == 0, summary["integrity"]
+    after = sum(1 for l in recalls if l["reviewedAt"] >= activated and 0 <= l["retrievabilityAtReview"] <= 1)
+    assert summary["calibration"]["FSRS-6/7"]["raw"]["n"] == after, (summary["calibration"]["FSRS-6/7"]["raw"]["n"], after)
+    assert "left out" in files["report.md"]
+    print(f"recall rows that predate their weight set are left out of its calibration ({after} of {len(recalls)} kept)")
+
+
 def test_a_backup_is_refused_with_an_explanation():
     backup = {"backupVersion": 9, "studyUnits": [], "reviewLogs": [], "subjects": []}
     backup.pop("reviewLogs")
@@ -117,5 +135,6 @@ if __name__ == "__main__":
     test_a_tampered_interval_is_caught()
     test_a_tampered_prediction_and_elapsed_are_caught()
     test_several_participants_and_duplicates()
+    test_rows_a_correction_recomputed_are_not_calibration_evidence()
     test_a_backup_is_refused_with_an_explanation()
     print("all checks passed")

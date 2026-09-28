@@ -9,8 +9,9 @@ import com.example.domain.srs.RecallCalibration
  * The Progress screen's calibration card, from the review logs (ascending, as `getLogsSince` returns them).
  *
  * Every number comes from the SAME rows the scheduler's correction is fitted on — real recall reviews
- * on the live model and weight set that pass [RecallCalibration.isEvidence], newest
- * [RecallCalibration.WINDOW] — so the count, the two recall rates and the factor describe one sample. It
+ * on the live model and weight set, made since that set began scheduling, that pass
+ * [RecallCalibration.isEvidence], newest [RecallCalibration.WINDOW] — so the count, the two recall rates
+ * and the factor describe one sample. It
  * used to count every recall row while the factor came from a subset, and to label the lot "based on N
  * reviews".
  *
@@ -33,6 +34,7 @@ internal fun calibrationStatsOf(
             it.logType == "RECALL" &&
                 it.schedulerVersion == MedScheduler.CURRENT_MODEL.id &&
                 it.parameterSetId == set.id &&
+                it.reviewedAt >= set.activatedAt &&
                 it.retrievabilityAtReview in 0.0..1.0 &&
                 RecallCalibration.isEvidence(it.elapsedDays, it.previousIntervalDays)
         }

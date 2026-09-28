@@ -91,7 +91,17 @@ object MedScheduler {
      * stability is only meaningful together with the weights that produced it, exactly as it is only
      * meaningful with the model.
      */
-    class ParameterSet(val id: Long, val weights: DoubleArray) {
+    class ParameterSet(
+        val id: Long,
+        val weights: DoubleArray,
+        /**
+         * When this set began scheduling (0 for the published defaults). Only reviews after it are prospective
+         * evidence about the set: a rating correction replays older rows under the set a topic is on now and
+         * stamps them with it, and those recomputed predictions were never made at review time (a fitted set
+         * was even trained on their outcomes). The calibration and its Progress card read evidence from here on.
+         */
+        val activatedAt: Long = 0L,
+    ) {
         init {
             require(Fsrs6Optimizer.withinBounds(weights)) { "FSRS-6 parameter set $id is outside the reference bounds" }
         }

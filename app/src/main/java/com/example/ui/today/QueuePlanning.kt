@@ -41,11 +41,15 @@ object ReviewAhead {
      * Can [unit] be reviewed ahead? Rated, active, not due today (today's plan owns those), and not deferred
      * by the learner: "Not today" and "Spread out" are the learner's own choice, and offering that topic
      * again the same evening (first, even: a deferred topic is overdue on the model's clock) contradicted it.
+     * Nor a topic already reviewed (or first rated) today: its recall is near 100%, so reviewing it again buys
+     * almost nothing, and FSRS-6 scores a same-day review on its short-term branch, where "Hard" cuts stability
+     * by more than half (100 days to 45; py-fsrs 6.3.2 floors that, the pinned 6.3.1 does not). With a small
+     * library, weakest-first still reached those topics once the rest ran out.
      * Today shows the button only when some topic passes, so the session is never empty.
      */
     fun isCandidate(unit: StudyUnitEntity, endOfToday: Long): Boolean =
         unit.reviewCount > 0 && unit.deletedAt == null && !unit.archived && unit.deferredUntil == null &&
-            unit.nextReviewAt > endOfToday
+            unit.nextReviewAt > endOfToday && (unit.lastReviewedAt ?: 0L) < DayBounds.startOf(endOfToday)
 
     /**
      * @param active non-archived, non-deleted topics.

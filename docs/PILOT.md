@@ -124,7 +124,11 @@ Why these thresholds:
 - D2 and D3 allow ~5–7 points, because two months of self-reported recall on whole topics cannot resolve
   finer than that.
 - D5 uses exactly the gate the app applies to the personal model, so the pilot cannot adopt weights the app
-  itself would reject.
+  itself would reject. Two limits, stated before the data exists (2026-09-28): the split is in TIME within the
+  same participants, so a pass shows the refit predicts these learners' later reviews, not a new student's;
+  and reviews of one topic or one person are not independent, so z ≥ 2.33 is a nominal 1% bar, not a real
+  one. A LOOK on D5 is therefore not enough for a default that new users get: first hold out whole
+  participants (fit on all but one, score the one left out, for each) and require the gain there too.
 - D6's 0.3 is a modest bar: questions and "how much of the topic" measure overlapping but different things.
 
 ## Optional: a direct retention check at week 8
@@ -135,11 +139,16 @@ This is the closest the pilot can come to the twin quiz without a control group.
    (look the titles up on their phone).
 2. For each topic, the participant writes how much they remember **now** (0–100%) and answers 5 questions
    from a question bank on it, without reviewing first.
-3. Compare three things: the model's predicted recall today (`stability_after` of the topic's last review,
-   on the FSRS-6 curve), their estimate, and the question score.
+3. Compare three things: the model's predicted recall today, their estimate, and the question score. The
+   prediction is `stability_after` of the topic's last review, read on the curve of the model and weight set
+   that scheduled it (the `scheduler` and `weight_set` columns; a personal set has its own curve), with the
+   time since that review counted in whole local calendar days as the app counts it. Report it both raw and
+   with the review's `calibration_scale` applied to the stability.
 
-If predicted and measured recall agree, the simulated twin result stands on real data. Record the results
-next to the exports; the toolkit does not need them.
+If predicted and measured recall agree, the memory model the twin simulation runs on is supported for these
+learners. That is all it shows: the twin comparison itself stays a simulation, because the pilot has no
+control group, and 20 topics with 5 questions each measure one person's recall only roughly. Record the
+results next to the exports; the toolkit does not need them.
 
 ## Handing the data to an AI
 

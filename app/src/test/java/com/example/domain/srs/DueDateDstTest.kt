@@ -55,8 +55,9 @@ class DueDateDstTest {
     }
 
     /**
-     * The one real edge: a review in the last hour before midnight, on the night the clock skips
-     * forward. 24 elapsed hours then crosses TWO midnights, so a "tomorrow" becomes the day after.
+     * One real edge (the autumn has its mirror image, below): a review in the last hour before midnight,
+     * on the night the clock skips forward. 24 elapsed hours then crosses TWO midnights, so a "tomorrow"
+     * becomes the day after.
      *
      * Accepted, not fixed. It needs a review between 23:00 and midnight on one specific night a year
      * in a DST-observing zone, and it costs the user one day on one topic. The alternative — deriving
@@ -78,7 +79,7 @@ class DueDateDstTest {
         assertTrue("never more than a day of slip", dueAt - reviewedAt <= 2 * 86400000L)
     }
 
-    /** The autumn fall-back lengthens the day; a due date must never arrive EARLY because of it. */
+    /** The autumn fall-back lengthens the day; a review on the day before it is never due early. */
     @Test
     fun `the autumn fall back never pulls a due date into the previous day`() {
         val berlin = TimeZone.getTimeZone("Europe/Berlin")
@@ -91,6 +92,26 @@ class DueDateDstTest {
             val day = dayOfMonth(berlin, dueAt)
             assertTrue("reviewing at ${hour}:30 is never due before the next day, got day $day", day >= 25)
         }
+    }
+
+    /**
+     * The mirror image of the spring slip, and the one case where a date arrives EARLY: a review in the first
+     * hour of the fall-back day itself. That day has 25 hours, so 24 elapsed hours end at 23:xx the SAME day: a
+     * one-day interval comes due that evening, and every longer one a calendar day early. Accepted for the same
+     * reason as the slip (bounded to one day, one hour a year, only where clocks change; Iran has none), and the
+     * memory model is still fed the true elapsed time. The earlier test reviewed only on the day before, and its
+     * comment said a date never arrives early (found checking an outside audit, 2026-09-28).
+     */
+    @Test
+    fun `a review in the first hour of the fall back day comes due one calendar day early`() {
+        val berlin = TimeZone.getTimeZone("Europe/Berlin")
+        TimeZone.setDefault(berlin)
+
+        val reviewedAt = at(berlin, 2026, 10, 25, 0, 30)
+        assertEquals("a one-day interval comes due the same evening", 25, dayOfMonth(berlin, reviewedAt + 86400000L))
+        assertEquals("a two-day interval one day early", 26, dayOfMonth(berlin, reviewedAt + 2 * 86400000L))
+        val anHourLater = at(berlin, 2026, 10, 25, 1, 30)
+        assertEquals("from 01:00 on, the next calendar day as usual", 26, dayOfMonth(berlin, anHourLater + 86400000L))
     }
 
     /**

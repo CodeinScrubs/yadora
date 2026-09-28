@@ -180,6 +180,7 @@ class Row:
     stability_before: Optional[float] = None
     difficulty_before: Optional[float] = None
     stability_after: Optional[float] = None
+    recomputed: bool = False   # reviewed before its weight set began scheduling: a correction recomputed it
     mismatch: List[str] = field(default_factory=list)
 
     @property
@@ -219,6 +220,16 @@ def weight_sets(d: dict) -> Dict[int, Tuple[float, ...]]:
         if len(w) == 21:
             sets[int(s["id"])] = tuple(float(x) for x in w)
     return sets
+
+
+def set_activations(d: dict) -> Dict[int, int]:
+    """When each weight set began scheduling (the app's MedScheduler.ParameterSet.activatedAt; 0 = the defaults).
+    A log stamped with a set but reviewed before this was recomputed by a rating correction, not predicted."""
+    out = {0: 0}
+    for s in d.get("memoryParameterSets") or []:
+        at = s.get("activatedAt") if s.get("activatedAt") is not None else s.get("createdAt")
+        out[int(s["id"])] = int(at or 0)
+    return out
 
 
 def merged_units(d: dict) -> set:
@@ -310,6 +321,7 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
     subjects = {str(k): v for k, v in (d.get("subjects") or {}).items()}
     units = {int(u["id"]): u for u in d["studyUnits"]}
     sets = weight_sets(d)
+    activated = set_activations(d)
     merged = merged_units(d)
     by_unit: Dict[int, List[dict]] = defaultdict(list)
     for log in d["reviewLogs"]:
@@ -370,6 +382,7 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
                 lapses_before=lapses,
                 merged=uid in merged,
                 decay=-(sets.get(sid) or ym.DEFAULT_WEIGHTS)[20],
+                recomputed=int(log["reviewedAt"]) < activated.get(sid, 0),
             )
             if rp:
                 row.stability_before = rp["before"].stability if rp["before"] else None
@@ -762,7 +775,10 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     )
 
     recalls = [r for r in all_rows if r.is_recall and r.scheduler_version == "FSRS-6"]
-    recalls_pred = [r for r in recalls if r.predicted is not None]
+    # As the app's calibration: a prediction counts only if it was made when the review happened. A rating
+    # correction replays a topic's earlier rows on the weight set it is on now; those rows are left out here.
+    recalls_pred = [r for r in recalls if r.predicted is not None and not r.recomputed]
+    recomputed_left_out = sum(1 for r in recalls if r.predicted is not None and r.recomputed)
 
     # ---- integrity -------------------------------------------------------------------------------------
     rep.h("2. Integrity: did every phone schedule exactly what the rules say?")
@@ -820,6 +836,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
 
     # ---- calibration -----------------------------------------------------------------------------------
     rep.h("4. Calibration: does predicted recall match reported recall?")
+    if recomputed_left_out:
+        rep.p(f"{recomputed_left_out} recall reviews are left out: they happened before the weight set they are stamped "
+              "with began scheduling, so their prediction was recomputed by a rating correction, not made at the review.")
     groups = defaultdict(list)
     for r in recalls_pred:
         groups[(r.scheduler_version, r.parameter_set)].append(r)
