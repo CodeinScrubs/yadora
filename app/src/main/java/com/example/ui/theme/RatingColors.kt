@@ -1,6 +1,5 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import com.example.domain.model.MemoryRating
@@ -28,12 +27,12 @@ data class StatusTone(val main: Color, val container: Color, val onSolid: Color)
 
 @Composable
 fun overdueTone(): StatusTone =
-    if (isSystemInDarkTheme()) StatusTone(OverdueDark, OverdueContainerDark, PaperSurfaceDark)
+    if (isAppInDarkTheme()) StatusTone(OverdueDark, OverdueContainerDark, PaperSurfaceDark)
     else StatusTone(Overdue, OverdueContainer, Color.White)
 
 @Composable
 fun ratingTone(rating: MemoryRating): RatingTone {
-    val dark = isSystemInDarkTheme()
+    val dark = isAppInDarkTheme()
     return when (rating) {
         MemoryRating.Forgot ->
             if (dark) RatingTone(ForgotContainerDark, ForgotDark, ForgotDark, PaperSurfaceDark)
