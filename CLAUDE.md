@@ -84,6 +84,18 @@ FSRS-5 topic shown in a session was not written. That pass found the Undo defect
 then replayed through `analyze.py`: 140 logs, 0 mismatches, 0 self-check issues; `smoke.sh` and `test_reminder.sh`
 clean.
 
+Verified 2026-10-02 on an emulator (Android 16, a temporary AVD; the Samsung was not connected). With alarm mode on and
+full-screen access granted, the screen locked and the device forced into deep Doze (`dumpsys battery unplug`,
+`dumpsys deviceidle force-idle`, clock set to 19:58:30), the 20:00 reminder fired on time: `AlarmRingActivity` opened over
+the lock screen and woke the display, the notification posted on the alarm channel (category alarm, private on the lock
+screen, three actions, "14 topics to review · 4 important", the same plan Today showed), Dismiss closed the ringer and
+cleared the notification, and both next slots were re-armed. With full-screen access denied (`appops set com.yadora.app
+USE_FULL_SCREEN_INTENT deny`, what Play does to apps that are not alarm or calling apps) the same reminder arrived as an
+ordinary notification on the reminder channel, and Reminder Health showed "Full-screen alarm — Enable". With the phone
+unlocked and in use, Android shows the alarm as a heads-up instead of the ringer, by design. Gotcha: `am force-stop`
+cancels an app's alarms, so relaunch the app before a timed alarm test. The same pass found the theme defect in the
+"Colours follow the APP's theme" entry below.
+
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
 nothing. After a reboot wait up to two minutes past `sys.boot_completed` before judging whether reminders
@@ -185,6 +197,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   learner swiped the chart. Scrolling and zoom are off, x is labelled by day of month (the learner's calendar and
   digits, every other day), retention is a straight line on a fixed 0–100% axis, review counts are bars on a whole-number
   step. After any Vico or Compose change, look at both charts on a phone.
+- **Colours follow the APP's theme, not the phone's** (`isAppInDarkTheme`, 2026-10-02). Settings → Theme & colors can
+  choose Light or Dark against the phone's own mode. The rating, overdue and strength-bar palettes asked
+  `isSystemInDarkTheme()`, so Light chosen on a phone in dark mode drew dark-palette buttons, a pale "OVERDUE" label and
+  dark strength bars on a light page; and nothing set the bar icons, so the status bar's clock and battery were white on
+  paper there, and on the full-screen alarm (its own activity) every time. `MyApplicationTheme` now publishes its
+  `darkTheme` (read it with `isAppInDarkTheme()`) and sets the status- and navigation-bar icons to match. Any colour
+  chosen outside the colour scheme must ask `isAppInDarkTheme()`; `AppThemeTest` pins both mismatched cases (it fails
+  on the old code).
 - **Digits follow the interface language, dates the calendar setting** (2026-09-27). `AppDate.date/dateTime/weekdayDate`
   take a REQUIRED `persianDigits` (the Persian interface): Jalali dates used to print Latin digits beside Persian ones.
   An English interface on the Jalali calendar keeps Latin digits. `PersianDate.faDigits` also turns a decimal point

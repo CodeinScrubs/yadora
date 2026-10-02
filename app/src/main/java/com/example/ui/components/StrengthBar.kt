@@ -3,7 +3,6 @@ package com.example.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,7 +32,7 @@ fun StrengthBar(
     modifier: Modifier = Modifier,
     height: Dp = 6.dp,
 ) {
-    val stops = if (isSystemInDarkTheme()) StrengthGradientDark else StrengthGradient
+    val stops = if (com.example.ui.theme.isAppInDarkTheme()) StrengthGradientDark else StrengthGradient
     // Fill eases up to its target so a card's memory strength "grows" into place on appear/change.
     val p by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),

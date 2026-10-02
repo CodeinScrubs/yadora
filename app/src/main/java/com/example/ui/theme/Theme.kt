@@ -5,7 +5,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
 // "Quiet Momentum": warm paper surfaces + sage brand. tertiary = high-yield amber; error is reserved
 // for destructive actions only (rating colors live in Color.kt and are applied per-component, not here).
@@ -82,5 +87,38 @@ fun MyApplicationTheme(
             onPrimaryContainer = effective,
         )
     } else base
-    MaterialTheme(colorScheme = colorScheme, typography = appTypography(languageCode), content = content)
+    // The bar icons follow the app's theme, not the phone's: the activity is edge-to-edge, so the status bar
+    // sits on the app's own background, and enableEdgeToEdge picks icon colours from the PHONE's dark mode.
+    // With Light chosen in Theme & colors on a phone in dark mode, the clock and battery were white on paper
+    // (seen on the emulator, 2026-10-02); the full-screen alarm, a separate activity, showed it every time.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        val window = view.context.findActivity()?.window
+        if (window != null) SideEffect {
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !darkTheme
+                isAppearanceLightNavigationBars = !darkTheme
+            }
+        }
+    }
+    CompositionLocalProvider(LocalAppDarkTheme provides darkTheme) {
+        MaterialTheme(colorScheme = colorScheme, typography = appTypography(languageCode), content = content)
+    }
+}
+
+/** The light/dark choice [MyApplicationTheme] was given: Settings → Theme & colors, which may differ from the phone's. */
+private val LocalAppDarkTheme = staticCompositionLocalOf<Boolean?> { null }
+
+/**
+ * Whether the APP is dark. Colours chosen outside the colour scheme (the rating, overdue and strength palettes)
+ * must ask this, not [isSystemInDarkTheme]: with Light chosen in the app on a phone in dark mode, they used to
+ * take their dark variants on a light page. Outside [MyApplicationTheme] it falls back to the phone's setting.
+ */
+@Composable
+fun isAppInDarkTheme(): Boolean = LocalAppDarkTheme.current ?: isSystemInDarkTheme()
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
