@@ -109,7 +109,7 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                         }
                         NotificationManagerCompat.from(appContext).cancel(NotificationScheduler.NOTIFICATION_ID)
                         NotificationScheduler.scheduleNextDayReminder(appContext)
-                        com.example.widget.DueWidgetProvider.updateAll(appContext) // count just went to 0
+                        com.example.widget.DueWidgetProvider.updateAll(appContext) // only first ratings are left today
                     } catch (t: Throwable) {
                         // Best-effort background work: an exception here would reach the thread's uncaught
                         // handler, which chains to the app's global handler and takes the whole app down —

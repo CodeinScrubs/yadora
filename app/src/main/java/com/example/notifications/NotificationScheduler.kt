@@ -304,6 +304,16 @@ object NotificationScheduler {
         armAlarm(context, System.currentTimeMillis() + delayMillis, REQ_TEST, ACTION_TEST)
     }
 
+    /**
+     * Everything this app has armed, the pending TEST reminder included: for "Delete all data". Turning reminders off
+     * uses [cancelReminder], which leaves a test the learner just asked for; a wipe used to leave it too, and a minute
+     * later "Test reminder — it works" arrived after "all data deleted" (an outside emulator audit, 2026-09-30).
+     */
+    fun cancelAll(context: Context) {
+        cancelReminder(context)
+        (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(firePendingIntent(context, REQ_TEST, ACTION_TEST))
+    }
+
     fun cancelReminder(context: Context) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         am.cancel(firePendingIntent(context, REQ_DAILY, ACTION_FIRE))

@@ -32,8 +32,9 @@ import kotlin.math.sqrt
  * learner's LATER reviews better than the weights already in use: the history is cut in time into five
  * chunks, each of the last four is predicted by a model fitted only on the reviews before it ([FOLDS]),
  * and per-review log loss is compared pairwise over all four. It must be better with a one-sided z of at
- * least [ACCEPT_Z]. Only then is the model refitted on everything and returned. Better-on-average-by-
- * chance is not good enough to move every future interval.
+ * least [ACCEPT_Z]. Only then is the model refitted on everything, and it is returned only if it also keeps the
+ * first rating's grades in order ([keepsGradeOrder]) and does not lengthen this learner's intervals ([lengthening]).
+ * Better-on-average-by-chance is not good enough to move every future interval.
  *
  * MEASURED, not assumed (`Fsrs6OptimizerGateTest`, simulated learners reviewed on the default schedule):
  * a learner the defaults already describe was adopted 0 times in 40 refits, and refitting monthly makes
@@ -72,6 +73,38 @@ object Fsrs6Optimizer {
     /** Whether every weight is finite and inside the reference bounds. */
     fun withinBounds(w: DoubleArray): Boolean =
         w.size == N && w.indices.all { w[it].isFinite() && w[it] >= LOWER[it] && w[it] <= UPPER[it] }
+
+    /**
+     * Whether the first rating's grades keep their order: Again <= Hard <= Good <= Easy initial stability, so a harder
+     * first answer never brings a topic back later. [train] keeps it after every step; before that, Adam moved each
+     * weight on its own within its bounds (as py-fsrs 6.3.1 does), and an outside audit (2026-09-30) built histories in
+     * which topics first rated Hard were remembered better later: the fit was adopted with S0(Hard) 3.53 d over
+     * S0(Good) 2.51 d, so "Hard" previewed a later first review than "Medium". The gate checks it again before adopting.
+     */
+    fun keepsGradeOrder(w: DoubleArray): Boolean = w.size == N && w[0] <= w[1] && w[1] <= w[2] && w[2] <= w[3]
+
+    /**
+     * NEVER LENGTHEN, the calibration's rule (`RecallCalibration.MAX_ESTIMATE`) applied to the personal set too (the
+     * owner's decision, 2026-10-02): how much longer [w] would schedule this learner's topics than the published
+     * defaults. Each set replays every history to its own final state and gives the next interval at [retention], inside
+     * the scheduler's bounds; the result is the geometric mean of the ratios, and above 1 the set lengthens.
+     *
+     * Self-ratings cannot tell a slow forgetter from a generous rater, and the fit learns from the same ratings the
+     * calibration distrusts. An outside audit (2026-09-30) showed it: with 60% of forgotten topics rated Hard, a set was
+     * adopted at z = 2.66 that predicted the RATINGS better and the true recall worse, and it lengthened intervals by
+     * about a fifth on average. `Fsrs6OptimizerTest` keeps that case.
+     */
+    fun lengthening(histories: List<History>, w: DoubleArray, retention: Double): Double {
+        if (histories.isEmpty()) return 1.0
+        val fitted = Fsrs6Parameters(weights = w)
+        val defaults = Fsrs6Parameters(weights = Fsrs6Parameters.DEFAULT_WEIGHTS)
+        fun nextInterval(h: History, p: Fsrs6Parameters): Double {
+            var state = Fsrs6.initialState(Grade.entries.first { it.value == h.grades[0] }, p)
+            for (i in 1 until h.size) state = Fsrs6.nextState(state, h.elapsedDays[i], Grade.entries.first { it.value == h.grades[i] }, p)
+            return Fsrs6.intervalDays(state.stability, retention, p).coerceIn(MedScheduler.MIN_INTERVAL_DAYS, MedScheduler.MAX_INTERVAL_DAYS)
+        }
+        return exp(histories.sumOf { ln(nextInterval(it, fitted) / nextInterval(it, defaults)) } / histories.size)
+    }
 
     /** Stored form of a weight vector: Kotlin's locale-independent, round-tripping Double text. */
     fun encode(w: DoubleArray): String = w.joinToString(",")
@@ -342,7 +375,22 @@ object Fsrs6Optimizer {
             logS[g - 1] = (n * (lo + hi) / 2.0 + PRETRAIN_PRIOR * prior) / (n + PRETRAIN_PRIOR)
             weight[g - 1] = n + PRETRAIN_PRIOR
         }
-        // Pool adjacent violators, weighted by evidence: S0(Again) <= S0(Hard) <= S0(Good) <= S0(Easy).
+        val w = start.copyOf()
+        poolInOrder(logS, weight, w)
+        return w
+    }
+
+    /** Evidence behind each first grade's initial stability: the second reviews the pretrain fits it on, plus the prior. */
+    internal fun initialStabilityEvidence(histories: List<History>): DoubleArray = DoubleArray(4) { i ->
+        histories.count { h -> h.size >= 2 && h.grades[0] == i + 1 && h.inLoss(1) } + PRETRAIN_PRIOR
+    }
+
+    /**
+     * Pool adjacent violators on ln S0, weighted by [weight], into [w]'s first four weights:
+     * S0(Again) <= S0(Hard) <= S0(Good) <= S0(Easy). Where two grades disagree, the one with less evidence moves most, so
+     * a first grade the learner never uses follows the ones they do.
+     */
+    private fun poolInOrder(logS: DoubleArray, weight: DoubleArray, w: DoubleArray) {
         val blocks = ArrayList<DoubleArray>() // [mean ln S, weight, grades pooled]
         for (i in 0 until 4) {
             blocks.add(doubleArrayOf(logS[i], weight[i], 1.0))
@@ -353,24 +401,27 @@ object Fsrs6Optimizer {
                 blocks.add(doubleArrayOf((a[0] * a[1] + b[0] * b[1]) / total, total, a[2] + b[2]))
             }
         }
-        val w = start.copyOf()
         var i = 0
         for (block in blocks) repeat(block[2].toInt()) {
             w[i] = exp(block[0]).coerceIn(LOWER[i], UPPER[i])
             i++
         }
-        return w
     }
 
     /**
      * py-fsrs 6.3.1's procedure from the default weights, after [pretrainInitialStability], or null below
-     * [Config.minTrainReviews].
+     * [Config.minTrainReviews]. One addition: after every step the initial stabilities are put back in grade order
+     * ([poolInOrder]), the constraint the pretrain already applies. py-fsrs clamps each weight on its own, and here
+     * that let S0(Good) fall below an S0(Hard) no review moved (a learner who never rates a first study Hard), or let
+     * the data lift Hard above Good (an outside audit, 2026-09-30): either way "Hard" would bring a new topic back later
+     * than "Medium".
      */
     fun train(histories: List<History>, cfg: Config = Config()): DoubleArray? {
         val items = histories.map { it.capped(cfg.maxStepsPerHistory) }
         val reviews = items.sumOf { h -> (1 until h.size).count { h.inLoss(it) } }
         if (reviews < cfg.minTrainReviews) return null
         val w = pretrainInitialStability(items, Fsrs6Parameters.DEFAULT_WEIGHTS)
+        val evidence = initialStabilityEvidence(items)
         val m = DoubleArray(N)
         val v = DoubleArray(N)
         val totalSteps = ceil(reviews / cfg.batchSize.toDouble()).toInt() * cfg.epochs
@@ -393,6 +444,7 @@ object Fsrs6Optimizer {
                         val vHat = v[k] / (1.0 - 0.999.pow(t))
                         w[k] = (w[k] - lr * mHat / (sqrt(vHat) + 1e-8)).coerceIn(LOWER[k], UPPER[k])
                     }
+                    if (!keepsGradeOrder(w)) poolInOrder(DoubleArray(4) { ln(w[it]) }, evidence, w)
                 }
                 step++
                 batch.clear()
@@ -501,6 +553,8 @@ object Fsrs6Optimizer {
         val zScore: Double,
         /** How many time-series folds had enough earlier reviews to train on. */
         val folds: Int = 0,
+        /** [lengthening] of the refit on everything, when the held-out comparison passed; NaN when it was not reached. */
+        val lengthening: Double = Double.NaN,
     )
 
     /**
@@ -513,7 +567,13 @@ object Fsrs6Optimizer {
     const val MIN_TEST_REVIEWS = 100
     const val ACCEPT_Z = 2.33
 
-    fun fitAndValidate(histories: List<History>, current: DoubleArray, cfg: Config = Config()): FitReport {
+    fun fitAndValidate(
+        histories: List<History>,
+        current: DoubleArray,
+        cfg: Config = Config(),
+        /** The learner's retention target, at which [lengthening] compares the intervals. */
+        retention: Double = 0.9,
+    ): FitReport {
         val times = histories.flatMap { h -> (1 until h.size).filter { h.inLoss(it) }.map { h.reviewedAt[it] } }.sorted()
         val allTrain = histories.sumOf { h -> (1 until minOf(h.size, cfg.maxStepsPerHistory)).count { h.inLoss(it) } }
         fun notEnough(test: Int, folds: Int) = FitReport(Verdict.NOT_ENOUGH_DATA, null, allTrain, test, null, null, 0.0, folds)
@@ -544,21 +604,26 @@ object Fsrs6Optimizer {
             mean > 0.0 -> Double.POSITIVE_INFINITY
             else -> 0.0
         }
-        val accepted = mean > 0.0 && z >= ACCEPT_Z
+        // Better held-out predictions are necessary, not sufficient: the set must also keep the grades in order and
+        // must not lengthen this learner's intervals.
+        val refit = if (mean > 0.0 && z >= ACCEPT_Z) train(histories, cfg) else null
+        val longer = refit?.let { lengthening(histories, it, retention) } ?: Double.NaN
+        val adopted = refit?.takeIf { withinBounds(it) && keepsGradeOrder(it) && longer <= 1.0 }
         fun pooled(e: List<Evaluation>) = score(
             e.flatMap { it.predicted.asList() }.toDoubleArray(),
             e.flatMap { it.recalled.asList() }.toBooleanArray(),
             e.flatMap { it.bins.asList() }.toLongArray(),
         )
         return FitReport(
-            verdict = if (accepted) Verdict.ACCEPTED else Verdict.REJECTED,
-            weights = if (accepted) train(histories, cfg)?.takeIf { withinBounds(it) } else null,
+            verdict = if (adopted != null) Verdict.ACCEPTED else Verdict.REJECTED,
+            weights = adopted,
             trainReviews = allTrain,
             testReviews = diffs.size,
             current = pooled(before),
             candidate = pooled(after),
             zScore = z,
             folds = before.size,
+            lengthening = longer,
         )
     }
 }

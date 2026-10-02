@@ -107,7 +107,8 @@ def load_exports(paths: Sequence[str], warn) -> List[Export]:
     newest: Dict[str, Export] = {}
     for path in expand(paths):
         try:
-            with open(path, encoding="utf-8") as f:
+            # utf-8-sig: a file opened and saved in Windows Notepad gains a byte-order mark, which json.load refuses.
+            with open(path, encoding="utf-8-sig") as f:
                 d = json.load(f)
         except Exception as e:
             warn(f"{path}: not readable JSON ({e}); skipped")
@@ -1116,7 +1117,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         rep.p(f"Held-out log loss: default {fmt(pf['test_log_loss_default'], 4)}, fitted {fmt(pf['test_log_loss_fitted'], 4)}; "
               f"AUC {fmt(pf['test_auc_default'], 3)} → {fmt(pf['test_auc_fitted'], 3)}; paired z = {fmt(pf['z'], 2)} "
               f"({'beats the defaults at the app’s own 1% bar' if pf['better'] else 'not better than the defaults at the app’s 1% bar'}).")
-        with open(os.path.join(out_dir, "fitted_weights.json"), "w") as f:
+        with open(os.path.join(out_dir, "fitted_weights.json"), "w", encoding="utf-8") as f:
             json.dump(dict(weights=pf["weights"], note="Pooled pilot refit of w1,w2,w3,w8,w20; the rest are the FSRS-6 defaults.",
                            held_out_z=pf["z"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"]), f, indent=2)
     else:
@@ -1281,6 +1282,11 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
 
 
 def main(argv=None):
+    # The summary prints "≥", "−" and "ρ". A Windows console that is redirected or piped encodes stdout as cp1252,
+    # which has none of them, and the run died at the end with UnicodeEncodeError (an outside audit, 2026-09-30).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", help="export files and/or folders holding them")
     ap.add_argument("--out", default="pilot_report", help="output folder (default: pilot_report)")

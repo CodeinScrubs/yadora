@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 
 @Suppress("UNCHECKED_CAST")
@@ -93,16 +94,14 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         combine(filter, sortBy) { f, s -> f to s }
     ) { units, query, subjectList, systemList, (activeFilter, sort) ->
         var result = units
-        if (query.isNotBlank()) {
+        val key = com.example.data.text.TopicTitle.searchKey(query)
+        if (key.isNotEmpty()) {
+            fun has(text: String?) = text != null && com.example.data.text.TopicTitle.searchKey(text).contains(key)
+            val subjectHits = subjectList.filter { has(it.name) }.mapTo(HashSet()) { it.id }
+            val systemHits = systemList.filter { has(it.name) }.mapTo(HashSet()) { it.id }
             result = result.filter { u ->
-                u.title.contains(query, ignoreCase = true) ||
-                    u.studyType.contains(query, ignoreCase = true) ||
-                    (u.recallPrompt?.contains(query, ignoreCase = true) == true) ||
-                    (u.keyPoints?.contains(query, ignoreCase = true) == true) ||
-                    (u.notes?.contains(query, ignoreCase = true) == true) ||
-                    (u.source?.contains(query, ignoreCase = true) == true) ||
-                    (subjectList.find { it.id == u.subjectId }?.name?.contains(query, ignoreCase = true) == true) ||
-                    (systemList.find { it.id == u.systemId }?.name?.contains(query, ignoreCase = true) == true)
+                has(u.title) || has(u.studyType) || has(u.recallPrompt) || has(u.keyPoints) || has(u.notes) || has(u.source) ||
+                    u.subjectId in subjectHits || u.systemId in systemHits
             }
         }
         val endOfToday = java.util.Calendar.getInstance().apply {
@@ -135,7 +134,10 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
             }
         }
         result
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+        // Folding every topic's text for each keystroke is real work on a big library: keep it off the main thread.
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun archiveUnit(unitId: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
@@ -582,6 +584,9 @@ fun LibraryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                // Edge-to-edge: the list ends above the keyboard while searching (see AddUnitScreen).
+                .consumeWindowInsets(padding)
+                .imePadding()
         ) {
             // Exam countdown, consistent with Today/Progress (exam day not counted).
             val examText = com.example.ui.i18n.ExamCountdown.text(
@@ -598,49 +603,35 @@ fun LibraryScreen(
                     modifier = Modifier.padding(start = 16.dp, top = 4.dp)
                 )
             }
-            Row(
+            // The search gets the whole width. It used to share its row with "Archived" and "Sort", which squeezed it
+            // to a sliver in German at 360 dp, and in every language at 320 dp: the placeholder wrapped a few letters
+            // per line (an outside emulator audit, 2026-09-30). Those two now end the chip row, which scrolls.
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { viewModel.searchQuery.value = it },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { viewModel.searchQuery.value = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text(strings.searchUnits) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = when (strings.languageCode) { "fa" -> "جستجو"; "de" -> "Suchen"; else -> "Search" }) },
-                    shape = RoundedCornerShape(12.dp),
-                    singleLine = true
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                FilterChip(
-                    selected = showArchived,
-                    onClick = { viewModel.showArchived.value = !showArchived },
-                    label = { Text(when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archiviert"; else -> "Archived" }) }
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                var sortExpanded by remember { mutableStateOf(false) }
-                Box {
-                    TextButton(onClick = { sortExpanded = true }) { Text(when (strings.languageCode) { "fa" -> "مرتب‌سازی"; "de" -> "Sortieren"; else -> "Sort" }) }
-                    DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
-                        listOf(
-                            LibrarySort.DUE to (when (strings.languageCode) { "fa" -> "موعد"; "de" -> "Fälligkeit"; else -> "Due date" }),
-                            LibrarySort.TITLE to (when (strings.languageCode) { "fa" -> "عنوان"; "de" -> "Titel"; else -> "Title" }),
-                            LibrarySort.WEAKNESS to (when (strings.languageCode) { "fa" -> "ضعف"; "de" -> "Schwäche"; else -> "Weakness" })
-                        ).forEach { (s, label) ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = { viewModel.setSort(s); sortExpanded = false })
+                placeholder = { Text(strings.searchUnits, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = if (searchQuery.isEmpty()) null else {
+                    {
+                        IconButton(onClick = { viewModel.searchQuery.value = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = when (strings.languageCode) { "fa" -> "پاک کردن جستجو"; "de" -> "Suche löschen"; else -> "Clear search" })
                         }
                     }
-                }
-            }
+                },
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true
+            )
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
                 listOf(
                     LibraryFilter.ALL to (when (strings.languageCode) { "fa" -> "همه"; "de" -> "Alle"; else -> "All" }),
@@ -654,6 +645,24 @@ fun LibraryScreen(
                         onClick = { viewModel.setFilter(f) },
                         label = { Text(label) }
                     )
+                }
+                FilterChip(
+                    selected = showArchived,
+                    onClick = { viewModel.showArchived.value = !showArchived },
+                    label = { Text(when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archiviert"; else -> "Archived" }) }
+                )
+                var sortExpanded by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { sortExpanded = true }) { Text(when (strings.languageCode) { "fa" -> "مرتب‌سازی"; "de" -> "Sortieren"; else -> "Sort" }) }
+                    DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
+                        listOf(
+                            LibrarySort.DUE to (when (strings.languageCode) { "fa" -> "موعد"; "de" -> "Fälligkeit"; else -> "Due date" }),
+                            LibrarySort.TITLE to (when (strings.languageCode) { "fa" -> "عنوان"; "de" -> "Titel"; else -> "Title" }),
+                            LibrarySort.WEAKNESS to (when (strings.languageCode) { "fa" -> "ضعف"; "de" -> "Schwäche"; else -> "Weakness" })
+                        ).forEach { (s, label) ->
+                            DropdownMenuItem(text = { Text(label) }, onClick = { viewModel.setSort(s); sortExpanded = false })
+                        }
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))

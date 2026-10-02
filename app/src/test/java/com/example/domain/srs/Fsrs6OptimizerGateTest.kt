@@ -62,6 +62,7 @@ class Fsrs6OptimizerGateTest {
     fun `a learner the defaults already describe is almost never given a personal model`() {
         val (small, smallZ) = adoptions(Fsrs6Parameters.DEFAULT_WEIGHTS, 150, 1..20)
         val (large, largeZ) = adoptions(Fsrs6Parameters.DEFAULT_WEIGHTS, 700, 1..20)
+        println("GATE: a learner the defaults describe adopted ${small + large} of 40")
         assertTrue("adopted ${small + large} of 40 (z at 150 topics $smallZ, at 700 $largeZ)", small + large <= 1)
     }
 
@@ -73,6 +74,7 @@ class Fsrs6OptimizerGateTest {
             it[20] = 0.35
         }
         val (adopted, zs) = adoptions(strong, 700, 1..10)
+        println("GATE: strong departure adopted $adopted of 10 (z $zs)")
         assertTrue("adopted $adopted of 10 (z $zs)", adopted >= 8)
     }
 }

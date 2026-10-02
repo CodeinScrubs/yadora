@@ -148,8 +148,8 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
             if (overdueList.isEmpty()) return@launch
             
             val now = System.currentTimeMillis()
-            // Highest-priority first (same score the review queue uses) so DAY 1 gets the Important topics, the
-            // longest overdue and those a review would strengthen most, instead of a blind round-robin.
+            // Highest-priority first (same score the review queue uses) so TODAY, then day 1, get the Important topics,
+            // the longest overdue and those a review would strengthen most, instead of a blind round-robin.
             val prioritized = DailyPlan.byPriority(overdueList, now)
             val total = prioritized.size
             // The plan is built around what the user actually said they can do in a day. A fixed
@@ -159,16 +159,21 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
                 context.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
                     .getFloat("daily_review_limit", 50f)
             )
-            val updated = prioritized.mapIndexed { index, unit ->
-                val target = OverdueRedistributor.targetMillis(
-                    now, OverdueRedistributor.dayOffset(index, total, capacity),
-                )
+            // What is left of today's limit keeps the most urgent of them due today; the rest start tomorrow.
+            val kept = OverdueRedistributor.keptToday(
+                total, capacity, reviewsDoneToday.value, dueTodayUnits.value.count { !DailyPlan.isFirstRating(it) },
+            )
+            val offsets = OverdueRedistributor.dayOffsets(total, capacity, kept)
+            val updated = prioritized.mapIndexedNotNull { index, unit ->
+                if (offsets[index] == 0) return@mapIndexedNotNull null // stays due today, untouched
+                val target = OverdueRedistributor.targetMillis(now, offsets[index])
                 // Recorded as a DEFERRAL (v5): the model's own due date stays in modelDueAt untouched.
                 unit.copy(nextReviewAt = target, deferredUntil = target, updatedAt = now)
             }
+            if (updated.isEmpty()) return@launch
             // One transaction: a crash mid-redistribution must not leave a half-applied plan.
             repository.updateUnitsAtomic(updated)
-            repository.logEvent("REDISTRIBUTE", detail = prioritized.size.toString())
+            repository.logEvent("REDISTRIBUTE", detail = updated.size.toString())
             // The schedule just changed: re-arm the reminder and refresh the home-screen widget so
             // neither keeps acting on the pre-redistribution due list.
             runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
@@ -692,9 +697,14 @@ fun TodayScreen(
                             val isFarsi = strings.languageCode == "fa"
                             val over = com.example.ui.theme.overdueTone()
                             val nOver = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(backlog) else backlog.toString()
-                            // The same plan the button below builds: sized from the daily limit, 3–14 days.
-                            // This card used to promise "3 days" whatever the backlog was.
-                            val recoveryDays = OverdueRedistributor.recoveryDays(backlog, dailyLimit)
+                            // The same plan the button below builds: what is left of today's limit keeps the most urgent,
+                            // and the rest are spread from tomorrow over 3–14 days sized from the limit. This card used to
+                            // promise "3 days" whatever the backlog was.
+                            val kept = OverdueRedistributor.keptToday(
+                                backlog, dailyLimit, doneToday, dueToday.count { !DailyPlan.isFirstRating(it) },
+                            )
+                            val recoveryDays = OverdueRedistributor.daysUsed(backlog, dailyLimit, kept)
+                            val nKept = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(kept) else kept.toString()
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -724,13 +734,16 @@ fun TodayScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = if (isFarsi) {
-                                            "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز پخش کنی."
+                                            if (kept > 0) "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم: $nKept تا امروز، و بقیه را می‌توانی روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز بعد پخش کنی."
+                                            else "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز پخش کنی."
                                         } else if (strings.languageCode == "de") {
                                             (if (backlog == 1) "1 Wiederholung wartet." else "$backlog Wiederholungen warten.") +
-                                                " Holen wir zuerst die wichtigsten nach — du kannst sie auf $recoveryDays Tage verteilen."
+                                                (if (kept > 0) " Holen wir zuerst die wichtigsten nach: $kept heute, den Rest kannst du auf die nächsten $recoveryDays Tage verteilen."
+                                                else " Holen wir zuerst die wichtigsten nach — du kannst sie auf $recoveryDays Tage verteilen.")
                                         } else {
                                             (if (backlog == 1) "1 review is waiting." else "$backlog reviews are waiting.") +
-                                                " Let's recover the important ones first — you can spread them over $recoveryDays days."
+                                                (if (kept > 0) " Let's recover the important ones first: $kept today, and the rest can be spread over the next ${if (recoveryDays == 1) "day" else "$recoveryDays days"}."
+                                                else " Let's recover the important ones first — you can spread them over ${if (recoveryDays == 1) "1 day" else "$recoveryDays days"}.")
                                         },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1002,7 +1015,9 @@ fun StudyUnitCard(
             ) {
                 val formattedState = strings.stateLabel(unit.state)
                 val subject = subjects.find { it.id == unit.subjectId }
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                // The subject and state give way to the date, never the reverse: unweighted, a long subject (or German
+                // at a large font) ran into the date with no gap ("GefestigtNächste"; an outside audit, 2026-09-30).
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
                     if (subject?.colorHex != null) {
                         Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { Color(subject.colorHex.toColorInt()) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
                         Spacer(modifier = Modifier.width(6.dp))
@@ -1012,9 +1027,12 @@ fun StudyUnitCard(
                         // topic added since it was retired) and printed English into every language.
                         text = listOfNotNull(subject?.name, formattedState).joinToString(" • "),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     )
                 }
+                Spacer(modifier = Modifier.width(12.dp))
                 
                 // Date only — the schedule is day-granularity, so a clock time would claim a precision
                 // the scheduler doesn't have. Calendar (Jalali/Gregorian) follows the user preference.

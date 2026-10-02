@@ -22,7 +22,7 @@ currently JDK 25. Android Studio updates itself, the Gradle wrapper and AGP on i
 committing them. `:app:assembleRelease` builds an R8-minified release, unsigned unless the keystore
 environment variables are set.
 
-**CI:** private repo `github.com/CodeinScrubs/yadora`. `.github/workflows/android-ci.yml` runs unit
+**CI:** `github.com/CodeinScrubs/yadora`, a PUBLIC repository (public since it was created on 2026-09-13; this file called it private until 2026-10-02, and making it private is the owner's call). `.github/workflows/android-ci.yml` runs unit
 tests, lint and debug + R8 release builds on every push and PR to `main` (Temurin 21; markdown-only
 changes skipped). A red CI run is a blocker exactly like a local failure. Inspect with `gh run list` /
 `gh run watch`.
@@ -58,7 +58,8 @@ because Android 14+ denies `SCHEDULE_EXACT_ALARM` to new installs by default. Th
 step exists for exactly that: granting there re-armed both as exact (`window=0`,
 `exactAllowReason=permission`), and the step itself was checked in English and Persian, light and dark.
 `BootReceiver` re-arms both after a reboot; `connectedDebugAndroidTest` runs. Still unverified: Doze
-delivery over real time, Samsung battery management over days, the full-screen alarm.
+delivery over real days and Samsung battery management over days (the full-screen alarm was checked on the
+Samsung on 2026-10-02, below).
 
 Verified 2026-09-27 (build 1.1 / 4). On the Samsung: with the day's limit done and one review held back, the
 20:00 alarm fired, posted nothing, logged no NOTIF_SHOWN and re-armed only tomorrow's two slots. On the emulator
@@ -95,6 +96,20 @@ ordinary notification on the reminder channel, and Reminder Health showed "Full-
 unlocked and in use, Android shows the alarm as a heads-up instead of the ringer, by design. Gotcha: `am force-stop`
 cancels an app's alarms, so relaunch the app before a timed alarm test. The same pass found the theme defect in the
 "Colours follow the APP's theme" entry below.
+
+Verified 2026-10-02 on the Samsung (main at 5101886, installed over 1.1 / 4): no crash, both reminders exact. With alarm
+mode on, a test reminder sent with the screen off, and then the REAL 20:00 slot after the phone had sat idle with its
+screen off for an hour, each woke the display with the full-screen ringer over the lock screen; the tone played on the
+alarm stream although the phone was on silent, the owner confirmed it rang and vibrated, Dismiss closed it, and the next
+slot (10:00) was re-armed exact. Gotcha: on Android 14 `dumpsys vibrator_manager` prints "scale: 0.00" for a vibration
+that is NOT scaled, not for a muted one; this pass misread it as a silent alarm. The ringer now asks for an ALARM
+vibration (`VibrationAttributes.USAGE_ALARM`, `AudioAttributes.USAGE_ALARM` before API 33) so the phone's alarm-vibration
+setting and Do Not Disturb treat it as an alarm. On Android 8.0 (a temporary emulator) the ringer closed itself 0.4 s
+after it opened whenever the screen was off: Android stops an activity started while the device sleeps before the
+display wakes, and `onStop` took that for the learner leaving. It now finishes on a stop only once it has had window
+focus (`AlarmRingActivity.seen`); with the old build the screen never woke, with the new one it woke and the ringer
+stayed, and Dismiss and Home still closed it. A new AVD wants a 6 GB data partition and C: had 6.6 GB free, so that
+emulator lived on F: (`avdmanager create avd -p F:\...`).
 
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
@@ -466,7 +481,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   real reviews correct the state, the defaults' predictions differ too little); a strong departure 9 in
   10 at ~9,000 reviews and not yet at ~4,000. Only then
   is it refitted on everything and stored ACTIVE (the previous set RETIRED); otherwise the attempt is
-  stored REJECTED with its scores. Model identity is now (model, weight set):
+  stored REJECTED with its scores. Two more conditions since 2026-10-02. The initial stabilities stay in grade
+  order through training (`poolInOrder` after every step, weighted by each first grade's evidence, so a grade the
+  learner never uses follows the ones they do): Adam moved each weight on its own, and S0(Good) could fall below an
+  S0(Hard) no review touched, or the data could lift Hard above Good (an outside audit adopted S0(Hard) 3.53 d over
+  S0(Good) 2.51 d), so "Hard" brought a new topic back later than "Medium". And the refit must NOT LENGTHEN this
+  learner's intervals against the published defaults (`Fsrs6Optimizer.lengthening`: each set replays every topic to
+  its own state, and the geometric mean of the next intervals' ratios at the learner's target must be at most 1; the
+  owner's never-lengthen rule, see the calibration entry). Measured with both: the defaults' learner 0 of 40, the
+  strong departure 9 of 10, a faster forgetter's set accepted (it shortens to 0.70), and the generous rater an outside
+  audit built (true memory the defaults', 60% of lapses called Hard) refused although it predicted the RATINGS better
+  (z = 2.66): it would have lengthened intervals by 14% while predicting true recall worse. Progress says when a set
+  that predicted better was refused, and the event log records `lengthening=`. Model identity is now (model, weight set):
   `study_units.parameterSetId` and `review_logs.parameterSetId`, 0 = the published defaults. Every
   FSRS-5→6 rule applies to sets: adoption writes no topic; a topic crosses by `projectOntoCurrentModel`
   (replay onto the active set) at its next display or commit; `editReviewRating` replays a topic on the
@@ -594,7 +620,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   months out. Keep the Settings copy honest about it. It spreads overdue REVIEWS only
   (`OverdueRedistributor.spreadable`, 2026-09-29): a never-rated topic stays due, where the daily plan offers it
   first, because its schedule counts from the rating. Spreading it moved that anchor days past the study (seen on
-  the emulator), and the card counted it among "reviews waiting".
+  the emulator), and the card counted it among "reviews waiting". The notification's "Not today" leaves first ratings
+  due for the same reason (`procrastinateAllDue`, 2026-10-02; the review screen never offered it for them). Since
+  2026-10-02 the plan first KEEPS what is left of today's limit, after the reviews already done and today's own
+  reviews, for the most urgent of the backlog, and spreads the rest from tomorrow (`keptToday`, `dayOffsets`). It
+  started tomorrow whatever the hour, so pressed before studying it left the day's capacity unused while the card
+  promised "let's recover the important ones first" (two outside audits, 2026-09-30); pressed after the day's limit it
+  keeps none, as before. The card says how many stay today and over how many days the rest go, and Settings no
+  longer promises "never more than you can do": a backlog over two weeks of the limit puts more on each of those days.
 - **Duplicate detection normalizes Persian/Arabic** (`TopicTitle`). SQL `lower(trim(title))` is byte
   equality with an ASCII-only lowercase, so Farsi yeh vs Arabic yeh and keheh vs Arabic kaf —
   chosen by the keyboard, not the writer, and visually identical — produced two topics with no
@@ -880,8 +913,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   about 16% more reviews than strictly needed, for 1.1 points more knowledge. The raw estimate
   (`momentScale`) stays unclamped, and `analyze.py` reports it, so the pilot still sees slow forgetters. Do
   not lift the cap without an objective signal that separates slow forgetting from generous rating (the
-  question score, once the pilot shows what it means). The personal weight set learns from the same ratings
-  and can still lengthen intervals after its gate; that risk is known and not yet addressed.
+  question score, once the pilot shows what it means). The personal weight set learns from the same ratings, so
+  since 2026-10-02 it follows the same rule (the owner's decision): a set that would lengthen this learner's intervals
+  is not adopted (`Fsrs6Optimizer.lengthening`, the personal-set entry above).
 - **What is left to improve in the algorithm, checked 2026-09-28** (`experiments.py` sections 6 and 8,
   `docs/RESEARCH.md` §2.7). Do not re-run these as open questions.
   - **The memory model is at its ceiling in simulation.** An ORACLE twin that schedules from the learner's true
@@ -906,8 +940,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
     +0.1 to +0.3 (heavy load, 8 paired seeds). Still a trade-off like the difficulty-adaptive target: the
     owner's call, ideally with pilot data.
   - **No outcome can be guaranteed.** Even an identical twin with identical time loses some exams by the luck of
-    which topics are asked (about 8% of 100-question exams against the disciplined no-app twin), and a different
-    student can study more, start ahead or review better. Never claim a guaranteed score; MARKETING.md applies.
+    which topics are asked (it scores lower than the disciplined no-app twin on about 6% of 100-question exams and
+    ties on 4%), and a different student can study more, start ahead or review better. Never claim a guaranteed
+    score; MARKETING.md applies.
 - **Five more outside reports, 2026-09-28: what was real, what changed, what did not** (each item checked against
   the code; every fix has a test that fails without it).
   - **Fixed:**
@@ -946,8 +981,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     a question score (D6: suggest, never override); no method multiplier until D7 survives a refit; the 1-day
     relearn step (one report re-ran it at equal modeled cost: within noise).
   - **Not true:** "the Yadora twin scores higher with certainty, 100%" and "every minute studied is retained 2x"
-    (a simulation is not proof; the twin loses about 8% of 100-question exams to the disciplined no-app twin by
-    which topics are asked); "the core sits exactly on the Pareto frontier, no inefficient formula exists" (the
+    (a simulation is not proof; by which topics are asked, the twin scores lower than the disciplined no-app twin on
+    about 6% of 100-question exams and ties on 4%); "the core sits exactly on the Pareto frontier, no inefficient formula exists" (the
     same week found four real defects); "0.95 costs 2.45x the reviews, 0.97 4.5x" (a fixed-state interval ratio;
     the simulated yearly cost is 1.7x and 2.4x); the reason given for the 365-day cap, that the real brain outruns
     FSRS-6's tail after a year (the simulated memory IS FSRS-6; the three caps are within noise and 180 days scored
@@ -1041,6 +1076,64 @@ These were decided deliberately. Re-suggesting them wastes a session:
       comparison stands; a randomised method suggestion stays the owner's call.
     - The interval-sensitivity gate would lift the calibration cap on self-ratings alone, with the same
       Hard-as-failure error. The cap stays until an objective signal exists (the calibration entry above).
+- **Seven more outside reports, 2026-09-30 to 10-02: two emulator QA passes (a release build on Android 16 and 8.0),
+  a UI and edge-case pass, a math audit, an algorithm audit, an evidence re-check and a "path to 90" plan.** Every item
+  was checked against the code, the reproducible ones on a device or an emulator; each fix has a test that fails without
+  it, or was checked on a device where only a device can show it (the alarm, the layouts).
+  - **Fixed:** the Android 8 ringer that closed itself (entry above); the notification's "Not today" deferring first
+    ratings and Spread out leaving today's capacity unused (the backlog entry); a restore accepting a file with one
+    reviewed topic's history cut out (now refused; topics in the trash are exempt, since copies a merge absorbed before
+    2026-08-06 kept their counts); the restore picker greying out a valid backup that Android 8 labels
+    application/octet-stream (now JSON, octet-stream and text); a restore or "Delete all data" leaving the old language,
+    theme and settings on screen until a restart (the activity is rebuilt); a restore failing with "invalid backup"
+    when the file could not even be read (two messages now, and the cause is logged); "Delete all data" leaving a
+    pending test reminder armed (`NotificationScheduler.cancelAll`); Calendar Plan listing a topic due at exactly 00:00
+    tomorrow under Today (`TodayBuckets.isInForecastDay`, half-open days); no Undo for a session's last rating (the
+    summary offers it); a question score that will not be kept vanishing without a word (`QuestionScore.problem`, shown
+    under the fields; the rating still goes ahead); Library search comparing raw text, so Arabic ي/ك or a half-space
+    found nothing (`TopicTitle.searchKey`, off the main thread); the search field squeezed to a sliver beside "Archived"
+    and "Sort" in German at 360 dp and everywhere at 320 dp (own row, a clear button, the list above the keyboard); a
+    card's subject and state running into its date; the review header pushing the pencil off at a large font; the
+    reminder row's switch past the edge at 320 dp; the Jalali picker cut after its first row in landscape, resetting
+    on rotation, and printing Persian digits and weekday letters on an English screen (digits and letters now follow
+    the interface language, the title included); dialogs and the new-subject draft lost on rotation; Add enabled on an
+    empty subject name; the settings switches and colour swatches nameless to a screen reader (`SwitchRow`); "Back"
+    read in English in every language; the widget's label clipped at its default size; a one-day retention chart that
+    drew nothing (a dot per day); `analyze.py` dying with UnicodeEncodeError on a redirected Windows console and
+    refusing a Notepad-saved export (byte-order mark); `test_reminder.sh` not finding the Persian button; the
+    personal set's grade order and never-lengthen (the personal-set entry); RESEARCH.md counting a tie as half a win
+    (strictly higher: 79%, 90% and 97% of 50-, 100- and 200-question exams; ties 10%, 4%, 1%), and its claim that
+    correlated answers make the order more certain (it depends on how they correlate); this file calling the
+    repository private.
+  - **Kept, on purpose:** the same-day Hard collapse (the 6.3.1 pin); difficulty's linear damping that makes D = 10
+    sticky (canonical FSRS-6; changing it breaks conformance); no sub-day relearning step (the app counts whole days;
+    after four or five lapses in a row the model does predict only 59–63% a day later, and the topic simply returns
+    daily until it is remembered); the exam date feeding nothing (the cram loss is known and Review ahead answers it);
+    Review ahead only once the day is done, weakest first today; the calibration cap and its 3-day evidence rule;
+    the gate's 2.33 and its 640-review floor (measured: it finds a strong departure at about 9,000 reviews); local
+    calendar days at midnight; the repair clock's backoff (YADORA-6); fractional lateness in the queue score; Undo
+    after a "Not today" undoing the last RATING, which is what it says.
+  - **Real, recorded, not fixed:** a device clock set BACK between two reviews of a topic makes the replay order its
+    logs differently from what happened (the live path clamps the gap to 0; replay sorts by time), so a later
+    correction or a new weight set rebuilds a different state. Rare (a manual clock change, or a phone that boots with
+    the wrong date); the complete fix is the per-log day or sequence record already noted above (a schema change).
+    The repair deadline is dropped when it does not beat the memory interval BEFORE fuzz, so in a 5% band a topic can
+    come back up to 5% later than its repair date would have; changing it is a replayed rule, for the next POLICY
+    bump. Within one weight set a correction's replayed predictions still count as calibration evidence (known,
+    schema change). `experiments.py`'s equal review count is not equal time (labelled since 2026-09-28; about 0.7% in
+    the audit's case). In `simulate.py` the other twin cannot spend time it has no topic for (each topic once a
+    day), so in a small library it can end with less time (1.6% in the audit's 30-day case); in the published worlds
+    that can only happen in the first days, while the library is a handful of topics.
+  - **Not true:** a Persian-digit score being dropped (`toIntOrNull` reads any Unicode digit; pinned); German "OK"
+    being untranslated; "dead code" (smart-cast null checks the compiler needs); the colours ignoring the app's theme
+    (fixed in PR #14, after the commit the reports tested); a widget or reminder tap losing the Add form (the review
+    opens on top and Back returns to the intact draft, as the second QA pass itself found); "the personal optimizer
+    can never activate" (it does at about 9,000 reviews for a strong departure); a 4 AM day rollover or an exam
+    horizon being a fix (both are settled decisions above).
+  - **Not built, the owner's call or the pilot's:** a minutes-per-review chip, research dither of intervals, a
+    randomised score nudge, a "still shaky" chip, renaming the retention slider, D2b (item-level shortfall) and the
+    other parts of the "path to 90" plan, whose numbers came from its author's own simulated world; subject rename and
+    delete; a hint that long-press opens review-now.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

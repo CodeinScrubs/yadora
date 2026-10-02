@@ -338,7 +338,9 @@ class MedReviewRepository(
 
         val activeWeights = activeRow?.let { com.example.domain.srs.Fsrs6Optimizer.decode(it.weights) }
         val current = activeWeights ?: com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS
-        val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(histories, current)
+        val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(
+            histories, current, retention = com.example.domain.srs.MedScheduler.effectiveRetention(highYield = false),
+        )
         if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return report
 
         val weights = report.weights
@@ -385,7 +387,9 @@ class MedReviewRepository(
                 com.example.data.local.entity.EventLogEntity(
                     type = "PERSONAL_MODEL",
                     detail = "${report.verdict} train=${report.trainReviews} test=${report.testReviews} " +
-                        "z=${"%.2f".format(java.util.Locale.ROOT, report.zScore)}",
+                        "z=${"%.2f".format(java.util.Locale.ROOT, report.zScore)}" +
+                        // Why a set that predicted better was still refused: it would lengthen, or reorder the grades.
+                        (if (report.lengthening.isNaN()) "" else " lengthening=${"%.3f".format(java.util.Locale.ROOT, report.lengthening)}"),
                 )
             )
         }

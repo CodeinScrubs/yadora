@@ -459,9 +459,12 @@ the target stays flat; the owner can weigh it again, ideally with pilot data.
 start ahead, or use better review methods, and one exam samples only some topics. Even the ideal case, an
 identical twin with identical study time, is not certain: with the one-year results (Yadora 95.3% against
 88.4% for random review and 90.1% for the disciplined oldest-first student), and exam questions drawn from the
-studied topics, the Yadora twin outscores the disciplined twin on about 84% of 50-question exams, 92% of
-100-question exams and 98% of 200-question exams (independent answers assumed; correlated answers make it
-somewhat more certain). What can be said honestly is the twin result itself, stated as a simulation, until the
+studied topics, the Yadora twin scores strictly higher than the disciplined twin on about 79% of 50-question exams,
+90% of 100-question exams and 97% of 200-question exams, ties on 10%, 4% and 1%, and scores lower on the rest
+(every answer assumed independent). These figures used to count a tie as half a win (84%, 92%, 98%; an outside
+audit, 2026-09-30). How answers move together changes them in both directions: the two students facing the same
+questions narrows the gap's spread and makes the order more certain, while questions clustered on a few topics, which
+a student knows or does not as a block, widen it and make it less certain. What can be said honestly is the twin result itself, stated as a simulation, until the
 pilot measures real learners.
 
 **What moves real outcomes more than any parameter left.** Honest "Forgot" ratings (above). Doing the reviews

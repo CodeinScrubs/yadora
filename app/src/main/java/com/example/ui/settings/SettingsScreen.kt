@@ -2,6 +2,7 @@ package com.example.ui.settings
 
 import android.content.Context
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -164,6 +167,25 @@ private fun AutoBackupCard(language: String, useJalali: Boolean, refresh: Int) {
     }
 }
 
+/**
+ * A settings row that toggles as a whole: the label and the switch are one control, so TalkBack reads the label with
+ * the state and the whole row is the touch target. The switches used to be bare, unlabelled nodes ("NAF" on the
+ * owner's Samsung, 2026-10-02): a screen reader announced "switch, on" with no name (an outside audit, 2026-09-30).
+ */
+@Composable
+private fun SwitchRow(checked: Boolean, onCheckedChange: (Boolean) -> Unit, content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onCheckedChange),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        content()
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
 /** One requirement row: green check when satisfied, red cross + a fix button when not. */
 @Composable
 private fun PermissionStatusRow(label: String, granted: Boolean, actionLabel: String, onAction: () -> Unit) {
@@ -185,6 +207,13 @@ private fun PermissionStatusRow(label: String, granted: Boolean, actionLabel: St
     }
 }
 
+/**
+ * What the restore picker offers. The content decides whether a file is a backup (restore validates all of it), so the
+ * label a file provider happens to give it must not: on Android 8 a backup copied from a computer came up as
+ * application/octet-stream and could not be selected at all (an outside emulator audit, 2026-09-30).
+ */
+internal val BACKUP_PICKER_TYPES = arrayOf("application/json", "application/octet-stream", "text/*")
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, onOpenThemeSettings: () -> Unit = {}) {
@@ -204,7 +233,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     var reminderMinute by remember { mutableStateOf(sharedPrefs.getInt("reminder_minute", 0)) }
     var examName by remember { mutableStateOf(sharedPrefs.getString("exam_name", "") ?: "") }
     var examDate by remember { mutableStateOf(sharedPrefs.getLong("exam_date", 0L)) }
-    var showExamDatePicker by remember { mutableStateOf(false) }
+    var showExamDatePicker by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var retention by remember { mutableStateOf(sharedPrefs.getFloat("desired_retention", 0.90f)) }
 
     val exportScope = rememberCoroutineScope()
@@ -237,8 +266,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     // --- Full backup / restore: a complete JSON snapshot the user can save to a folder and re-import ---
     // The picked file, restored only after the user confirms. Read by streaming at that point: holding a
     // multi-year backup as one String here (and again while parsing it) is what ran restores out of memory.
-    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    var showDeleteAll by remember { mutableStateOf(false) }
+    // Saveable: turning the phone used to drop the chosen file and close "Delete all data?" (2026-09-30 audit).
+    var pendingImportUri by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    var showDeleteAll by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val backupExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -274,22 +304,38 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         // same block: leaving Settings mid-restore cancels this scope, and a cancelled
                         // withContext throws on return, which used to skip them and leave the reminders armed
                         // for the old data and the widget showing it.
-                        val count = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                             val restored = runCatching {
                                 (context.contentResolver.openInputStream(uri)
                                     ?: throw java.io.IOException("Could not open the chosen file"))
                                     .use { com.example.data.BackupManager.restoreFromStream(context, it) }
-                            }.getOrNull()
-                            if (restored != null) {
+                            }
+                            if (restored.isSuccess) {
                                 runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
                                 runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
                             }
                             restored
                         }
+                        val count = result.getOrNull()
                         if (count != null) {
                             android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: ${com.example.ui.i18n.PersianDate.faDigits(count)} مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
+                            // The file can carry another language, theme and settings. They are in the preferences now, but
+                            // the screens read them when they open, so the app kept its old look until it was restarted
+                            // (an outside emulator audit, 2026-09-30). Rebuilding the activity applies them at once.
+                            context.findActivity()?.recreate()
                         } else {
-                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup", android.widget.Toast.LENGTH_LONG).show()
+                            // Unreadable (permission, I/O) is not the same failure as a file that is not a valid backup.
+                            val unreadable = result.exceptionOrNull().let { it is java.io.IOException || it is SecurityException }
+                            android.util.Log.w("Yadora", "restore failed", result.exceptionOrNull())
+                            android.widget.Toast.makeText(
+                                context,
+                                if (unreadable) when (language) {
+                                    "fa" -> "فایل باز نشد — دوباره انتخابش کن یا اول آن را در حافظهٔ گوشی ذخیره کن."
+                                    "de" -> "Die Datei ließ sich nicht öffnen — wähle sie erneut oder speichere sie zuerst auf dem Telefon."
+                                    else -> "Couldn't open that file — pick it again, or save it to the phone first."
+                                } else if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup",
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
                         }
                     }
                 }) { Text(if (language == "fa") "بازیابی" else if (language == "de") "Wiederherstellen" else "Restore") }
@@ -330,7 +376,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     when (language) { "fa" -> "حذف کامل نشد — داده‌ها هنوز روی دستگاه هستند. دوباره تلاش کن."; "de" -> "Löschen fehlgeschlagen — die Daten sind noch auf dem Gerät. Bitte erneut versuchen."; else -> "Delete failed — your data is still on this device. Please try again." },
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
-                            if (wiped.isSuccess) onBack()
+                            if (wiped.isSuccess) {
+                                onBack()
+                                // The settings were reset with the data; rebuild so the look follows at once, not after a restart.
+                                context.findActivity()?.recreate()
+                            }
                         }
                     }
                 ) { Text(when (language) { "fa" -> "حذف همه"; "de" -> "Alles löschen"; else -> "Delete everything" }, color = MaterialTheme.colorScheme.error) }
@@ -345,7 +395,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 title = { Text(strings.settings, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = when (language) { "fa" -> "بازگشت"; "de" -> "Zurück"; else -> "Back" })
                     }
                 }
             )
@@ -369,7 +419,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    // Weighted: at 320 dp the unweighted title pushed the switch past the edge and the minute button
+                    // under its neighbour (an outside emulator audit, 2026-09-30).
+                    Column(modifier = Modifier.weight(1f)) {
                         fun formatTime(hour: Int, minute: Int): String {
                             val m = minute.toString().padStart(2, '0')
                             // Persian convention: 24-hour clock with Persian digits (no AM/PM).
@@ -425,6 +477,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             }
                         }
                         Switch(
+                            modifier = Modifier.semantics { contentDescription = strings.dailyReviewReminder },
                             checked = dailyReminder,
                             onCheckedChange = { isChecked ->
                                 dailyReminder = isChecked
@@ -753,48 +806,32 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 var soundEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("sound_enabled", true)) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                SwitchRow(checked = soundEnabled, onCheckedChange = {
+                    soundEnabled = it
+                    sharedPrefs.edit { putBoolean("sound_enabled", it) }
+                    // Re-create notification channel if needed
+                    NotificationScheduler.createNotificationChannel(context)
+                }) {
                     Text(strings.reminderSound, style = MaterialTheme.typography.bodyLarge)
-                    Switch(
-                        checked = soundEnabled,
-                        onCheckedChange = { 
-                            soundEnabled = it
-                            sharedPrefs.edit { putBoolean("sound_enabled", it) }
-                            // Re-create notification channel if needed
-                            NotificationScheduler.createNotificationChannel(context)
-                        }
-                    )
                 }
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 var vibrationEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("vibration_enabled", true)) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                SwitchRow(checked = vibrationEnabled, onCheckedChange = {
+                    vibrationEnabled = it
+                    sharedPrefs.edit { putBoolean("vibration_enabled", it) }
+                    NotificationScheduler.createNotificationChannel(context)
+                }) {
                     Text(strings.vibration, style = MaterialTheme.typography.bodyLarge)
-                    Switch(
-                        checked = vibrationEnabled,
-                        onCheckedChange = {
-                            vibrationEnabled = it
-                            sharedPrefs.edit { putBoolean("vibration_enabled", it) }
-                            NotificationScheduler.createNotificationChannel(context)
-                        }
-                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 var alarmEnabled by remember { mutableStateOf(sharedPrefs.getBoolean("alarm_enabled", false)) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                SwitchRow(checked = alarmEnabled, onCheckedChange = {
+                    alarmEnabled = it
+                    sharedPrefs.edit { putBoolean("alarm_enabled", it) }
+                    if (it) NotificationScheduler.createAlarmChannel(context)
+                }) {
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                         Text(if (language == "fa") "زنگ مثل ساعت زنگ‌دار" else if (language == "de") "Wie ein Wecker klingeln" else "Ring like an alarm clock", style = MaterialTheme.typography.bodyLarge)
                         Text(
@@ -803,14 +840,6 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
-                        checked = alarmEnabled,
-                        onCheckedChange = {
-                            alarmEnabled = it
-                            sharedPrefs.edit { putBoolean("alarm_enabled", it) }
-                            if (it) NotificationScheduler.createAlarmChannel(context)
-                        }
-                    )
                 }
 
                 // Kill switch for the ringing itself. Deliberately separate from the toggle above so
@@ -820,11 +849,12 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 if (alarmEnabled) {
                     Spacer(modifier = Modifier.height(8.dp))
                     var alarmSilenced by remember { mutableStateOf(sharedPrefs.getBoolean("alarm_silenced", false)) }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    SwitchRow(checked = alarmSilenced, onCheckedChange = {
+                        alarmSilenced = it
+                        sharedPrefs.edit { putBoolean("alarm_silenced", it) }
+                        // Stop anything ringing right now, so the switch takes effect instantly.
+                        if (it) runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
+                    }) {
                         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
                                 when (language) {
@@ -844,15 +874,6 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Switch(
-                            checked = alarmSilenced,
-                            onCheckedChange = {
-                                alarmSilenced = it
-                                sharedPrefs.edit { putBoolean("alarm_silenced", it) }
-                                // Stop anything ringing right now, so the switch takes effect instantly.
-                                if (it) runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
-                            }
-                        )
                     }
                 }
             }
@@ -893,11 +914,18 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 var personalModel by remember {
                     mutableStateOf(sharedPrefs.getBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, true))
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                SwitchRow(checked = personalModel, onCheckedChange = { on ->
+                    personalModel = on
+                    sharedPrefs.edit { putBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, on) }
+                    if (!on) exportScope.launch {
+                        runCatching { (context.applicationContext as com.example.MedReviewApplication).repository.useDefaultMemoryModel() }
+                    } else {
+                        // Back on: try a fit now. The daily refit waits for 20% more evidence or 30
+                        // days after the last attempt — which was the set just retired — so without
+                        // this a learner who toggled it off and on waited up to a month for nothing.
+                        com.example.data.PersonalModelWorker.refitNow(context)
+                    }
+                }) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(
                             when (language) { "fa" -> "تطبیق مدل با مرورهای من"; "de" -> "Modell an meine Wiederholungen anpassen"; else -> "Fit the model to my reviews" },
@@ -905,29 +933,14 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         )
                         Text(
                             when (language) {
-                                "fa" -> "وقتی مرورهای کافی جمع شود، FSRS-6 بر مرورهای خودت برازش می‌شود و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند به کار می‌رود."
-                                "de" -> "Sobald genug Wiederholungen vorliegen, wird FSRS-6 an deine eigenen angepasst und nur verwendet, wenn es deine späteren Wiederholungen besser vorhersagt."
-                                else -> "Once enough reviews exist, FSRS-6 is fitted to your own and used only if it predicts your later reviews better."
+                                "fa" -> "وقتی مرورهای کافی جمع شود، FSRS-6 بر مرورهای خودت برازش می‌شود و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند و فاصله‌هایت را طولانی‌تر نکند به کار می‌رود."
+                                "de" -> "Sobald genug Wiederholungen vorliegen, wird FSRS-6 an deine eigenen angepasst und nur verwendet, wenn es deine späteren Wiederholungen besser vorhersagt und deine Abstände nicht verlängert."
+                                else -> "Once enough reviews exist, FSRS-6 is fitted to your own and used only if it predicts your later reviews better and does not lengthen your intervals."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
-                        checked = personalModel,
-                        onCheckedChange = { on ->
-                            personalModel = on
-                            sharedPrefs.edit { putBoolean(com.example.data.PersonalModelWorker.PREF_ENABLED, on) }
-                            if (!on) exportScope.launch {
-                                runCatching { (context.applicationContext as com.example.MedReviewApplication).repository.useDefaultMemoryModel() }
-                            } else {
-                                // Back on: try a fit now. The daily refit waits for 20% more evidence or 30
-                                // days after the last attempt — which was the set just retired — so without
-                                // this a learner who toggled it off and on waited up to a month for nothing.
-                                com.example.data.PersonalModelWorker.refitNow(context)
-                            }
-                        }
-                    )
                 }
             }
             
@@ -1081,9 +1094,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = when (language) {
-                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر عقب‌افتاده‌ها از سقف روزانه‌ات بیشتر شوند، صفحهٔ امروز دکمهٔ «توزیع مجدد و پخش مباحث عقب‌افتاده» را نشان می‌دهد؛ آن‌ها را بر اساس سقف روزانه‌ات پخش می‌کند، نه بیشتر از توانت."
-                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Ist mehr überfällig als dein Tageslimit, bietet die Heute-Seite „Überfällige Themen verteilen“ an — verteilt nach deinem Tageslimit, nicht mehr, als du schaffst."
-                                            else -> "Serious learning is a marathon, not a sprint. When more is overdue than your daily limit, Today offers 'Spread Out Overdue Topics': it spreads the backlog across as many days as your daily limit needs, never more than you can do."
+                                            "fa" -> "یادگیری جدی یک ماراتن است، نه دو سرعت. اگر عقب‌افتاده‌ها از سقف روزانه‌ات بیشتر شوند، صفحهٔ امروز دکمهٔ «توزیع مجدد و پخش مباحث عقب‌افتاده» را نشان می‌دهد: مهم‌ترین‌ها در جای خالی امروز می‌مانند و بقیه بر اساس سقف روزانه‌ات در روزهای بعد پخش می‌شوند، حداکثر تا دو هفته. اگر عقب‌افتادگی از دو هفته بیشتر باشد، هر روز بیش از سقفت می‌شود؛ آن‌وقت سقف را بالاتر ببر یا کمتر مبحث تازه اضافه کن."
+                                            "de" -> "Ernsthaftes Lernen ist ein Marathon, kein Sprint. Ist mehr überfällig als dein Tageslimit, bietet die Heute-Seite „Überfällige Themen verteilen“ an: Die wichtigsten bleiben im heute noch freien Platz, der Rest wird nach deinem Tageslimit auf die folgenden Tage verteilt, höchstens auf zwei Wochen. Ist der Rückstand größer, liegt jeder dieser Tage über deinem Limit; dann hilft ein höheres Limit oder weniger neue Themen."
+                                            else -> "Serious learning is a marathon, not a sprint. When more is overdue than your daily limit, Today offers 'Spread Out Overdue Topics': the most important stay in what is left of today, and the rest are spread over the following days at your daily limit, for at most two weeks. A backlog bigger than that puts more than your limit on each of those days; then raise the limit or add fewer new topics for a while."
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1186,7 +1199,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     Text(if (language == "fa") "ساخت فایل پشتیبان" else if (language == "de") "Vollständige Sicherung exportieren" else "Export full backup")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(onClick = { backupImportLauncher.launch(arrayOf("application/json")) }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { backupImportLauncher.launch(BACKUP_PICKER_TYPES) }, modifier = Modifier.fillMaxWidth()) {
                     Text(if (language == "fa") "بازیابی از فایل پشتیبان" else if (language == "de") "Sicherung importieren" else "Import backup")
                 }
                 Spacer(modifier = Modifier.height(20.dp))
@@ -1400,4 +1413,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
             ) { DatePicker(state = examPickerState) }
         }
     }
+}
+
+private tailrec fun Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

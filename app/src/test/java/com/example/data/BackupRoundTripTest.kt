@@ -391,6 +391,33 @@ class BackupRoundTripTest {
         assertEquals(1, BackupManager.restoreFromJson(context, unreviewed))
     }
 
+    /**
+     * The whole-file check above let a file with ONE topic's history cut out through: an outside emulator audit
+     * (2026-09-30) restored a topic claiming four reviews with none in the file. Every reviewed topic needs its own.
+     */
+    @Test
+    fun `a backup missing one reviewed topic's history is refused, a trashed copy without one still restores`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val (keptId, json) = oneTopicLibrary(context)
+        val now = System.currentTimeMillis()
+        val file = org.json.JSONObject(json)
+        val other = org.json.JSONObject(file.getJSONArray("studyUnits").getJSONObject(0).toString())
+            .put("id", keptId + 1).put("title", "Macrolides").put("reviewCount", 4)
+        file.getJSONArray("studyUnits").put(other)
+        assertTrue(
+            "a reviewed topic with no history of its own must be refused",
+            runCatching { BackupManager.restoreFromJson(context, file.toString()) }.isFailure,
+        )
+        assertEquals("the library is untouched", listOf("Keep me"), db.studyUnitDao().getAllActiveOnce().map { it.title })
+        assertEquals(1, db.studyUnitDao().countAllOnce())
+        assertEquals(1, db.reviewLogDao().getLogsForUnitOnce(keptId).size)
+
+        // A copy a merge absorbed before 2026-08-06 sits in the trash with its counts and no reviews: still restores.
+        other.put("deletedAt", now).put("archived", true)
+        assertEquals(2, BackupManager.restoreFromJson(context, file.toString()))
+    }
+
     @Test
     fun `a backup naming a memory model this build does not know is refused`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()

@@ -21,11 +21,16 @@ interface StudyUnitDao {
     suspend fun getDueUnitsList(cutoffTime: Long): List<StudyUnitEntity>
 
     /**
-     * Push every currently-due unit to [tomorrow] ("Not today" / procrastinate all). Records it as a
+     * Push every currently-due REVIEW to [tomorrow] ("Not today" / procrastinate all). Records it as a
      * DEFERRAL: the model's opinion (modelDueAt) is untouched, so the data stays honest about what
      * was science and what was the user's choice.
+     *
+     * A topic never rated (`reviewCount = 0`, `DailyPlan.isFirstRating`) stays due: its first rating logs a
+     * study that already happened and the schedule counts from the rating, so the plan never holds one back, the
+     * review screen offers no "Not today" for it and Spread out leaves it (`OverdueRedistributor.spreadable`).
+     * The notification's "Not today" used to move it to tomorrow anyway (an outside audit, 2026-09-30).
      */
-    @Query("UPDATE study_units SET nextReviewAt = :tomorrow, deferredUntil = :tomorrow, updatedAt = :stamp WHERE archived = 0 AND nextReviewAt <= :now")
+    @Query("UPDATE study_units SET nextReviewAt = :tomorrow, deferredUntil = :tomorrow, updatedAt = :stamp WHERE archived = 0 AND reviewCount > 0 AND nextReviewAt <= :now")
     suspend fun procrastinateAllDue(now: Long, tomorrow: Long, stamp: Long)
 
     @Query("SELECT * FROM study_units WHERE id = :id")

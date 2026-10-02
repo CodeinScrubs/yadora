@@ -820,6 +820,16 @@ fun ReviewSessionScreen(
                 ) {
                     Text(strings.done, style = MaterialTheme.typography.titleMedium)
                 }
+                // The last rating of a session can be a slip too. Undo lived only in the card's header, which this
+                // summary replaces, so a wrong tap on the last topic could only be fixed from the Edit screen.
+                if (viewModel.canUndo) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(enabled = !viewModel.isProcessing, onClick = { viewModel.undoLastRating() }) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(when (strings.languageCode) { "fa" -> "واگرد آخرین ارزیابی"; "de" -> "Letzte Bewertung zurücknehmen"; else -> "Undo last rating" })
+                    }
+                }
                 Spacer(modifier = Modifier.weight(1f))
             } else {
                 val formattedState = strings.stateLabel(currentUnit.state)
@@ -841,7 +851,13 @@ fun ReviewSessionScreen(
                         Text(strings.done)
                     }
                     
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Takes only what Done, Undo and Edit leave: a long subject at a large font size pushed the
+                    // pencil off the screen (an outside emulator audit, German at 200%, 2026-09-30).
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                    ) {
                         if (subject?.colorHex != null) {
                             Box(modifier = Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(runCatching { androidx.compose.ui.graphics.Color(subject.colorHex.toColorInt()) }.getOrNull() ?: MaterialTheme.colorScheme.primary))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -854,7 +870,9 @@ fun ReviewSessionScreen(
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             // Tracking helps ALL-CAPS Latin labels but breaks Arabic-script letter joining.
-                            letterSpacing = if (strings.languageCode == "fa") 0.sp else 1.sp
+                            letterSpacing = if (strings.languageCode == "fa") 0.sp else 1.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         )
                     }
                     
@@ -1427,6 +1445,35 @@ private fun ReviewMethodPicker(
                         onDone = { focusManager.clearFocus() },
                     ),
                     modifier = Modifier.width(96.dp),
+                )
+            }
+            // A score that is not a real count is not stored, and the rating still goes ahead. Say so here: it used to
+            // vanish without a word ("9 out of 5" logged nothing; an outside emulator audit, 2026-09-30). Persian digits
+            // are fine — toIntOrNull reads any Unicode decimal digit.
+            val problem = com.example.domain.model.QuestionScore.problem(right.trim().toIntOrNull(), total.trim().toIntOrNull())
+            if (problem != null) {
+                Text(
+                    text = when (problem) {
+                        com.example.domain.model.QuestionScore.Problem.INCOMPLETE -> when (languageCode) {
+                            "fa" -> "برای ثبت نمره، هر دو عدد را بنویس."
+                            "de" -> "Gib beide Zahlen ein, damit die Punktzahl gespeichert wird."
+                            else -> "Enter both numbers to keep this score."
+                        }
+                        com.example.domain.model.QuestionScore.Problem.BAD_TOTAL -> when (languageCode) {
+                            "fa" -> "کل سؤال‌ها باید بین ۱ و ۹۹۹ باشد؛ این نمره ثبت نمی‌شود."
+                            "de" -> "Die Gesamtzahl muss zwischen 1 und 999 liegen – diese Punktzahl wird nicht gespeichert."
+                            else -> "The total must be between 1 and 999, so this score won't be kept."
+                        }
+                        com.example.domain.model.QuestionScore.Problem.MORE_RIGHT_THAN_ASKED -> when (languageCode) {
+                            "fa" -> "تعداد درست‌ها از کل بیشتر است؛ این نمره ثبت نمی‌شود."
+                            "de" -> "Mehr richtig als gesamt – diese Punktzahl wird nicht gespeichert."
+                            else -> "More right than the total, so this score won't be kept."
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = com.example.ui.theme.overdueTone().main, // a calm caution: red is for destructive actions
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
             }
         }

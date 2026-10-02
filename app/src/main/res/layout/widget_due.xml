@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Home-screen widget: due-review count + one-tap open. RemoteViews-compatible views only. -->
+<!-- Home-screen widget: due-review count + one-tap open. RemoteViews-compatible views only.
+     Sized for its default 2x1 cell (about 60 dp tall): with 12 dp padding and 28 sp the label was clipped to a few
+     pixels, so the widget showed a bare number (an outside emulator audit, 2026-09-30). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
@@ -7,15 +9,17 @@
     android:background="@drawable/widget_bg"
     android:gravity="center"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="4dp">
 
     <TextView
         android:id="@+id/widget_count"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textColor="#FBF9F4"
-        android:textSize="28sp"
+        android:textSize="24sp"
         android:textStyle="bold"
+        android:includeFontPadding="false"
         android:text="@string/widget_count_placeholder" />
 
     <TextView
@@ -24,6 +28,8 @@
         android:layout_height="wrap_content"
         android:textColor="#DCEEDD"
         android:textSize="12sp"
+        android:includeFontPadding="false"
+        android:ellipsize="end"
         android:maxLines="1"
         android:text="" />
 </LinearLayout>
