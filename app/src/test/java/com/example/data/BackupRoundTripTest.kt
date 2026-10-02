@@ -418,6 +418,25 @@ class BackupRoundTripTest {
         assertEquals(2, BackupManager.restoreFromJson(context, file.toString()))
     }
 
+    /**
+     * Settings says "couldn't open that file" only when the file could not be OPENED. A corrupt or cut-off file fails
+     * inside the JSON reader with an IOException too, and that one is an invalid backup (2026-10-02).
+     */
+    @Test
+    fun `a file that cannot be opened is told apart from a corrupt backup`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val missing = android.net.Uri.fromFile(java.io.File(context.cacheDir, "no-such-backup.json"))
+        assertTrue(runCatching { BackupManager.openPicked(context, missing) }.exceptionOrNull() is BackupManager.UnreadableFile)
+
+        val (_, json) = oneTopicLibrary(context)
+        val cut = java.io.File(context.cacheDir, "cut-off-backup.json").apply { writeText(json.substring(0, json.length / 2)) }
+        val failure = runCatching {
+            BackupManager.openPicked(context, android.net.Uri.fromFile(cut)).use { BackupManager.restoreFromStream(context, it) }
+        }.exceptionOrNull()
+        assertTrue("a cut-off file fails", failure != null)
+        assertTrue("but as an invalid backup, not an unreadable file: $failure", failure !is BackupManager.UnreadableFile)
+    }
+
     @Test
     fun `a backup naming a memory model this build does not know is refused`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()

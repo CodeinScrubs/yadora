@@ -306,8 +306,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         // for the old data and the widget showing it.
                         val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                             val restored = runCatching {
-                                (context.contentResolver.openInputStream(uri)
-                                    ?: throw java.io.IOException("Could not open the chosen file"))
+                                com.example.data.BackupManager.openPicked(context, uri)
                                     .use { com.example.data.BackupManager.restoreFromStream(context, it) }
                             }
                             if (restored.isSuccess) {
@@ -324,8 +323,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             // (an outside emulator audit, 2026-09-30). Rebuilding the activity applies them at once.
                             context.findActivity()?.recreate()
                         } else {
-                            // Unreadable (permission, I/O) is not the same failure as a file that is not a valid backup.
-                            val unreadable = result.exceptionOrNull().let { it is java.io.IOException || it is SecurityException }
+                            // A file that could not be OPENED (a revoked permission, a provider that is gone) is not the same
+                            // failure as a file that is not a valid backup. Only the open is classed as unreadable: the reader
+                            // reports a corrupt or truncated file as an IOException too, and that one is "invalid backup".
+                            val unreadable = result.exceptionOrNull() is com.example.data.BackupManager.UnreadableFile
                             android.util.Log.w("Yadora", "restore failed", result.exceptionOrNull())
                             android.widget.Toast.makeText(
                                 context,

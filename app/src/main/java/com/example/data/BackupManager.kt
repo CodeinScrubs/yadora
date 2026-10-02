@@ -195,6 +195,17 @@ object BackupManager {
      * anything current is touched. Only then is a safety copy of the current data written, and the
      * database replaced in one transaction. The caller owns and closes [input].
      */
+    /** The picked file could not be opened at all: a revoked permission or a provider that is gone, not a bad backup. */
+    class UnreadableFile(cause: Throwable?) : java.io.IOException("Could not open the chosen file", cause)
+
+    /** Opens a file the learner picked for a restore, so that a failure to OPEN it is told apart from a bad backup. */
+    fun openPicked(context: Context, uri: android.net.Uri): java.io.InputStream =
+        try {
+            context.contentResolver.openInputStream(uri)
+        } catch (e: Exception) {
+            throw UnreadableFile(e)
+        } ?: throw UnreadableFile(null)
+
     suspend fun restoreFromStream(context: Context, input: java.io.InputStream): Int {
         val db = (context.applicationContext as MedReviewApplication).database
 
