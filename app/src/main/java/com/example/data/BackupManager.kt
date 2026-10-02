@@ -195,6 +195,17 @@ object BackupManager {
      * anything current is touched. Only then is a safety copy of the current data written, and the
      * database replaced in one transaction. The caller owns and closes [input].
      */
+    /** The picked file could not be opened at all: a revoked permission or a provider that is gone, not a bad backup. */
+    class UnreadableFile(cause: Throwable?) : java.io.IOException("Could not open the chosen file", cause)
+
+    /** Opens a file the learner picked for a restore, so that a failure to OPEN it is told apart from a bad backup. */
+    fun openPicked(context: Context, uri: android.net.Uri): java.io.InputStream =
+        try {
+            context.contentResolver.openInputStream(uri)
+        } catch (e: Exception) {
+            throw UnreadableFile(e)
+        } ?: throw UnreadableFile(null)
+
     suspend fun restoreFromStream(context: Context, input: java.io.InputStream): Int {
         val db = (context.applicationContext as MedReviewApplication).database
 
@@ -441,6 +452,16 @@ object BackupManager {
             require(l.studyUnitId in unitIds) { "Damaged backup: review log ${i + 1} references missing topic ${l.studyUnitId}" }
             require(l.parameterSetId in usableSetIds) { "Damaged backup: review log ${i + 1} references a missing memory model" }
         }
+        // ...and every reviewed topic must have its OWN history in the file. Checking only that some history exists
+        // let a file with one topic's reviews cut out restore that topic claiming four reviews and holding none
+        // (an outside emulator audit, 2026-09-30). Topics in the trash are left out: copies a merge absorbed before
+        // 2026-08-06 kept their counts while their reviews moved to the survivor.
+        val withHistory = logs.mapTo(HashSet()) { it.studyUnitId }
+        units.forEachIndexed { i, u ->
+            require(u.reviewCount == 0 || u.deletedAt != null || u.id in withHistory) {
+                "Damaged backup: topic ${i + 1} was reviewed, but the file has no review history for it"
+            }
+        }
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.
         require(logs.map { it.id }.toSet().size == logs.size) { "Damaged backup: duplicate review-log ids" }
         require(logs.all { it.id > 0 }) { "Damaged backup: review log with invalid id" }
@@ -550,8 +571,8 @@ object BackupManager {
         }
         com.example.domain.srs.MedScheduler.knownParameterSets = emptyMap()
         com.example.domain.srs.MedScheduler.activeParameterSet = com.example.domain.srs.MedScheduler.DEFAULT_PARAMETER_SET
-        // Stop every scheduled reminder/alarm — there is nothing left to review.
-        runCatching { com.example.notifications.NotificationScheduler.cancelReminder(context) }
+        // Stop every scheduled reminder/alarm, a pending test reminder included — there is nothing left to review.
+        runCatching { com.example.notifications.NotificationScheduler.cancelAll(context) }
         // Also take down any reminder ALREADY in the shade: its body lists real topic titles, so
         // leaving it there after "all data deleted" both contradicts the message and keeps the very
         // content the user just erased visible on their lock screen.

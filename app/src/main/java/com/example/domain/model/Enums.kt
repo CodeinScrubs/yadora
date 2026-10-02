@@ -73,4 +73,16 @@ object QuestionScore {
     /** (correct, total) to store: the pair itself when valid, otherwise (-1, -1) = not recorded. */
     fun normalized(correct: Int?, total: Int?): Pair<Int, Int> =
         if (correct != null && total != null && isValid(correct, total)) correct to total else -1 to -1
+
+    /** Why a score as typed will not be kept: the review screen says so under the fields instead of dropping it silently. */
+    enum class Problem { INCOMPLETE, BAD_TOTAL, MORE_RIGHT_THAN_ASKED }
+
+    /** The reason [normalized] would drop (correct, total), or null when it is kept or nothing was typed. */
+    fun problem(correct: Int?, total: Int?): Problem? = when {
+        correct == null && total == null -> null
+        correct == null || total == null -> Problem.INCOMPLETE
+        isValid(correct, total) -> null
+        total in 1..MAX_TOTAL && correct > total -> Problem.MORE_RIGHT_THAN_ASKED
+        else -> Problem.BAD_TOTAL
+    }
 }

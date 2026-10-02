@@ -174,6 +174,28 @@ def test_a_backup_is_refused_with_an_explanation():
     print("a full backup (with titles and notes) is refused, and the warning says what to send instead")
 
 
+def test_a_file_saved_with_a_byte_order_mark_still_loads():
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "export.json")
+        with open(p, "w", encoding="utf-8-sig") as f:  # what Windows Notepad writes
+            json.dump(fixture(), f)
+        warnings = []
+        exports = analyze.load_exports([p], warnings.append)
+        assert len(exports) == 1 and not warnings, warnings
+    print("an export re-saved with a byte-order mark still loads")
+
+
+def test_the_summary_prints_on_a_console_that_cannot_encode_it():
+    import subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+        env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+        r = subprocess.run([sys.executable, os.path.join(HERE, "analyze.py"), FIXTURE, "--out", os.path.join(tmp, "out"), "--no-fit"],
+                           capture_output=True, env=env)
+        assert r.returncode == 0, r.stderr.decode("utf-8", "replace")[-600:]
+        assert b"Report:" in r.stdout
+    print("the summary prints even where stdout is cp1252 (a redirected Windows console)")
+
+
 if __name__ == "__main__":
     test_real_export_replays_exactly()
     test_a_tampered_interval_is_caught()
@@ -183,4 +205,6 @@ if __name__ == "__main__":
     test_calibration_slope_and_intercept_recover_a_planted_miscalibration()
     test_method_comparison_is_made_within_each_learner()
     test_a_backup_is_refused_with_an_explanation()
+    test_a_file_saved_with_a_byte_order_mark_still_loads()
+    test_the_summary_prints_on_a_console_that_cannot_encode_it()
     print("all checks passed")

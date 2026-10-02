@@ -64,4 +64,19 @@ class TopicTitleTest {
         assertEquals("acute appendicitis", TopicTitle.normalize(typed))
         assertTrue("and the original is untouched", typed.contains("   "))
     }
+
+    /**
+     * Library search folds what the keyboard chose, not the writer: Arabic yeh and kaf for Persian ones, and a Persian
+     * compound joined with a space, a half-space or nothing. Raw text comparison missed all of them (2026-09-30).
+     */
+    @Test
+    fun `search finds a topic however its Persian was typed`() {
+        fun found(query: String, title: String) = TopicTitle.searchKey(title).contains(TopicTitle.searchKey(query))
+        assertTrue("Arabic yeh in the query", found("آنمي", "آنمی فقر آهن"))
+        assertTrue("Arabic kaf in the query", found("كبد", "بیماری‌های کبد"))
+        assertTrue("half-space in the title, space in the query", found("میکروب شناسی", "میکروب‌شناسی بالینی"))
+        assertTrue("joined in the query", found("میکروبشناسی", "میکروب‌شناسی بالینی"))
+        assertTrue("Latin case", found("heart FAILURE", "Acute Heart Failure"))
+        assertFalse("a different word is still not found", found("قلب", "آنمی فقر آهن"))
+    }
 }

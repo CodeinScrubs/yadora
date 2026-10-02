@@ -51,7 +51,7 @@ sleep 2
 BUTTON=""
 for _ in $(seq 1 14); do
   dump
-  BUTTON=$(find_node "test reminder|test-erinnerung|یادآور آزمایشی")
+  BUTTON=$(find_node "test reminder|test-erinnerung|یادآوری آزمایشی")
   [ -n "$BUTTON" ] && break
   a shell input swipe 540 1700 540 900 300
   sleep 1

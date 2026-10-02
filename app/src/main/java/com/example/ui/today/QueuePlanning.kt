@@ -171,6 +171,15 @@ object TodayBuckets {
 
     /** Not yet due today = upcoming. */
     fun isUpcoming(nextReviewAt: Long, endOfToday: Long): Boolean = nextReviewAt > endOfToday
+
+    /**
+     * Progress → Calendar Plan: whether a topic belongs to forecast day [dayIndex] (0 = today, which also holds every
+     * overdue topic), given that day's first millisecond and the next day's. Half-open, like [isDueToday]: midnight
+     * starts the NEXT day. The forecast tested `<= nextDayStart`, so a topic due at exactly 00:00 tomorrow was listed
+     * under Today and missing from Tomorrow while Today itself said nothing was left (an outside audit, 2026-09-30).
+     */
+    fun isInForecastDay(nextReviewAt: Long, dayIndex: Int, dayStart: Long, nextDayStart: Long): Boolean =
+        if (dayIndex == 0) nextReviewAt < nextDayStart else nextReviewAt >= dayStart && nextReviewAt < nextDayStart
 }
 
 /**
@@ -225,6 +234,30 @@ object OverdueRedistributor {
     /** Recovery day (1..recoveryDays) for the item at [index] in a priority-ordered list of [total]. */
     fun dayOffset(index: Int, total: Int, dailyCapacity: Int): Int =
         (index / perDay(total, dailyCapacity)).coerceAtMost(recoveryDays(total, dailyCapacity) - 1) + 1
+
+    /**
+     * How many of a priority-ordered backlog of [total] stay due TODAY: what is left of today's limit after the reviews
+     * already done and the reviews due today anyway. The plan used to start tomorrow whatever the hour, so a learner who
+     * pressed it before studying got nothing from the backlog today, a day of capacity lost, while the card said "let's
+     * recover the important ones first" (two outside audits, 2026-09-30). Pressed after the day's limit is used up, it
+     * keeps none and starts tomorrow, as before.
+     */
+    fun keptToday(total: Int, dailyCapacity: Int, doneToday: Int, dueTodayReviews: Int): Int =
+        (dailyCapacity.coerceAtLeast(1) - doneToday.coerceAtLeast(0) - dueTodayReviews.coerceAtLeast(0))
+            .coerceIn(0, total.coerceAtLeast(0))
+
+    /**
+     * Each backlog item's day, in priority order: 0 = the first [kept] stay due today and are not deferred at all; the
+     * rest are spread from tomorrow exactly as [dayOffset] spreads a backlog of their size.
+     */
+    fun dayOffsets(total: Int, dailyCapacity: Int, kept: Int): List<Int> {
+        val keep = kept.coerceIn(0, total.coerceAtLeast(0))
+        val rest = total - keep
+        return List(total.coerceAtLeast(0)) { i -> if (i < keep) 0 else dayOffset(i - keep, rest, dailyCapacity) }
+    }
+
+    /** The days the spread part of the plan actually uses (0 when nothing is spread): what the card announces. */
+    fun daysUsed(total: Int, dailyCapacity: Int, kept: Int): Int = dayOffsets(total, dailyCapacity, kept).maxOrNull() ?: 0
 
     /** Absolute due time: [dayOffset] days after [now], pinned to 08:00 local. */
     fun targetMillis(now: Long, dayOffset: Int): Long = Calendar.getInstance().apply {

@@ -99,12 +99,33 @@ fun MyApplicationTheme(
                 isAppearanceLightStatusBars = !darkTheme
                 isAppearanceLightNavigationBars = !darkTheme
             }
+            navigationBarScrimBeforeQ(darkTheme)?.let {
+                @Suppress("DEPRECATION")
+                window.navigationBarColor = it
+            }
         }
     }
     CompositionLocalProvider(LocalAppDarkTheme provides darkTheme) {
         MaterialTheme(colorScheme = colorScheme, typography = appTypography(languageCode), content = content)
     }
 }
+
+/**
+ * The navigation bar's colour before Android 10, matching the app's theme: [darkTheme] from Settings → Theme & colors.
+ * From Android 10 the system draws its own contrast scrim behind the icons, so this is null there. Before it, the bar
+ * keeps the colour edge-to-edge chose from the PHONE's mode, so with the app on the other theme the icons set above sat
+ * on a bar of their own colour: white on a light bar for a dark app on Android 8 (seen on an emulator, 2026-10-02).
+ * The two scrims are the ones edge-to-edge itself uses.
+ */
+internal fun navigationBarScrimBeforeQ(darkTheme: Boolean, sdk: Int = android.os.Build.VERSION.SDK_INT): Int? = when {
+    sdk >= android.os.Build.VERSION_CODES.Q -> null
+    darkTheme -> DARK_NAVIGATION_SCRIM
+    else -> LIGHT_NAVIGATION_SCRIM
+}
+
+/** androidx.activity's `DefaultLightScrim` and `DefaultDarkScrim`. */
+internal const val LIGHT_NAVIGATION_SCRIM = 0xE6FFFFFF.toInt()
+internal const val DARK_NAVIGATION_SCRIM = 0x801B1B1B.toInt()
 
 /** The light/dark choice [MyApplicationTheme] was given: Settings → Theme & colors, which may differ from the phone's. */
 private val LocalAppDarkTheme = staticCompositionLocalOf<Boolean?> { null }

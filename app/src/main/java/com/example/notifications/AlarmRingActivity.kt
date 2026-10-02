@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,9 @@ class AlarmRingActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
+
+    /** The ringer has had window focus at least once: the learner has seen it, so a stop now means they left. */
+    private var seen = false
     private val autoStopHandler by lazy { android.os.Handler(mainLooper) }
     private val autoStopRunnable = Runnable {
         if (!isFinishing) {
@@ -61,6 +65,9 @@ class AlarmRingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Edge-to-edge, like MainActivity: the bars sit on the ringer's own background, so the icon colours the theme
+        // sets can be read. Without it Android 8 drew a black status bar, and a light theme's dark icons vanished in it.
+        enableEdgeToEdge()
         active = this
 
         // Show over the lock screen and wake the display, like a real alarm clock.
@@ -160,8 +167,22 @@ class AlarmRingActivity : ComponentActivity() {
             } else {
                 @Suppress("DEPRECATION") getSystemService(VIBRATOR_SERVICE) as Vibrator
             }
-            val pattern = longArrayOf(0, 600, 800)
-            vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0)) // minSdk 26: always available
+            val effect = VibrationEffect.createWaveform(longArrayOf(0, 600, 800), 0) // minSdk 26: always available
+            // An ALARM vibration, like the tone: without a usage Android files it under media, so the phone's alarm-
+            // vibration setting and Do Not Disturb's alarm exception did not apply to it. (It did vibrate on the owner's
+            // Samsung on silent, 2026-10-02; "scale: 0.00" in dumpsys there means unscaled, not muted.)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                vibrator?.vibrate(effect, android.os.VibrationAttributes.createForUsage(android.os.VibrationAttributes.USAGE_ALARM))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(
+                    effect,
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+            }
         }
     }
 
@@ -197,10 +218,20 @@ class AlarmRingActivity : ComponentActivity() {
         finish()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) seen = true
+    }
+
     override fun onStop() {
         // The user left (Home button, another app): a ringing alarm with no visible Dismiss button is
         // a trap — stop the noise and close. (Skip during rotation, which also passes through onStop.)
-        if (!isChangingConfigurations && !isFinishing) {
+        // Only once the ringer has been SEEN: an activity started while the device sleeps is stopped by the system
+        // before the display wakes. On Android 8.0 that closed the ringer about 0.4 s after it opened whenever the
+        // screen was off, and the screen never woke (an outside emulator audit, 2026-09-30; reproduced on an
+        // emulator, 2026-10-02). Until it has been seen, the notification's Dismiss, opening the app and the
+        // five-minute auto-stop still end it.
+        if (seen && !isChangingConfigurations && !isFinishing) {
             stopRinging()
             finish()
         }

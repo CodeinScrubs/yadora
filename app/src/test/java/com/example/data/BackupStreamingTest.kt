@@ -162,6 +162,21 @@ class BackupStreamingTest {
         assertEquals(0, json.getJSONObject("consistency").getInt("issueCount"))
     }
 
+    /** A test reminder armed just before a wipe used to arrive a minute after "all data deleted" (2026-09-30 audit). */
+    @Test
+    fun `delete all data also cancels a pending test reminder`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        com.example.notifications.NotificationScheduler.scheduleTest(app)
+        val alarms = org.robolectric.Shadows.shadowOf(app.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager)
+        @Suppress("DEPRECATION") // Robolectric 4.17 deprecates the field and offers no getter for the intent
+        fun testArmed() = alarms.scheduledAlarms.any {
+            org.robolectric.Shadows.shadowOf(it.operation).savedIntent.action == com.example.notifications.NotificationScheduler.ACTION_TEST
+        }
+        assertTrue("the test reminder is armed", testArmed())
+        BackupManager.deleteAllData(app)
+        assertTrue("nothing is left to fire after the wipe", !testArmed())
+    }
+
     @Test
     fun `delete all data also removes the last research export`() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<Context>()

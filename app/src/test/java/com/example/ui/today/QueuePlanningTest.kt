@@ -74,6 +74,49 @@ class QueuePlanningTest {
             OverdueRedistributor.offersRecovery(OverdueRedistributor.spreadable(onlyFirstRatings).size, 10))
     }
 
+    /**
+     * Spread out keeps what is left of TODAY's limit for the most urgent of the backlog. It used to start tomorrow
+     * whatever the hour, so pressed before studying it left the day's capacity unused while the card promised to
+     * "recover the important ones first" (two outside audits, 2026-09-30).
+     */
+    @Test fun spread_out_fills_what_is_left_of_today_before_tomorrow() {
+        // Limit 10, nothing done yet, 2 reviews due today anyway: 8 of a 30-topic backlog stay today.
+        val kept = OverdueRedistributor.keptToday(total = 30, dailyCapacity = 10, doneToday = 0, dueTodayReviews = 2)
+        assertEquals(8, kept)
+        val offsets = OverdueRedistributor.dayOffsets(30, 10, kept)
+        assertEquals("the most urgent eight stay today", List(8) { 0 }, offsets.take(8))
+        assertEquals("the other 22 start tomorrow, at most the limit a day", listOf(8, 8, 6), offsets.drop(8).groupingBy { it }.eachCount().values.toList())
+        assertEquals(3, OverdueRedistributor.daysUsed(30, 10, kept))
+        assertEquals("today's share plus today's own reviews fill the limit exactly", 10, kept + 2)
+
+        // Pressed after the day's limit is used up: nothing is kept and the plan is the old one, from tomorrow.
+        assertEquals(0, OverdueRedistributor.keptToday(30, 10, doneToday = 10, dueTodayReviews = 0))
+        assertEquals(0, OverdueRedistributor.keptToday(30, 10, doneToday = 3, dueTodayReviews = 9))
+        assertEquals((0 until 30).map { OverdueRedistributor.dayOffset(it, 30, 10) }, OverdueRedistributor.dayOffsets(30, 10, 0))
+
+        // A backlog just over the limit: ten today, the two left over need two days, which is what the card says.
+        assertEquals(listOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2), OverdueRedistributor.dayOffsets(12, 10, 10))
+        assertEquals(2, OverdueRedistributor.daysUsed(12, 10, 10))
+        // Never more kept than there is, and a broken limit setting still keeps nothing negative.
+        assertEquals(5, OverdueRedistributor.keptToday(5, 10, 0, 0))
+        assertEquals(1, OverdueRedistributor.keptToday(5, 0, 0, 0))
+    }
+
+    /** Calendar Plan days are half-open: a topic due at exactly midnight belongs to the day that midnight starts. */
+    @Test fun the_forecast_puts_midnight_on_the_day_it_starts() {
+        val day = 86_400_000L
+        val todayStart = 1_790_000_000_000L
+        val tomorrowStart = todayStart + day
+        fun dayOf(t: Long) = (0 until 3).filter { i ->
+            TodayBuckets.isInForecastDay(t, i, todayStart + i * day, todayStart + (i + 1) * day)
+        }
+        assertEquals("due at exactly 00:00 tomorrow: tomorrow only", listOf(1), dayOf(tomorrowStart))
+        assertEquals("one millisecond earlier: today", listOf(0), dayOf(tomorrowStart - 1))
+        assertEquals("overdue: today", listOf(0), dayOf(todayStart - 5 * day))
+        assertEquals("09:00 the day after tomorrow", listOf(2), dayOf(tomorrowStart + day + 9 * 3_600_000L))
+        assertTrue("and Today's own bucket agrees", TodayBuckets.isUpcoming(tomorrowStart, tomorrowStart - 1))
+    }
+
     @Test fun dayOffset_never_exceeds_the_planned_window() {
         assertEquals(3, OverdueRedistributor.dayOffset(1000, 6, 50))
     }

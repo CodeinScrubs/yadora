@@ -2,6 +2,8 @@ package com.example.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,9 +58,15 @@ fun JalaliDatePickerDialog(
         val c = Calendar.getInstance().apply { timeInMillis = initialMillis }
         PersianDate.gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH))
     }
-    var year by remember { mutableIntStateOf(init.first) }
-    var month by remember { mutableIntStateOf(init.second) }
-    var day by remember { mutableIntStateOf(init.third) }
+    // Saveable: turning the phone (or a font-size change) used to reset a half-chosen date to the day it opened on.
+    var year by rememberSaveable(initialMillis) { mutableIntStateOf(init.first) }
+    var month by rememberSaveable(initialMillis) { mutableIntStateOf(init.second) }
+    var day by rememberSaveable(initialMillis) { mutableIntStateOf(init.third) }
+    // Digits follow the interface language, as everywhere else (AppDate): an English or German screen on the Jalali
+    // calendar keeps Latin digits, a Persian one shows Persian digits, the title included (it printed "8 مهر 1405").
+    val languageCode = com.example.ui.i18n.LocalStrings.current.languageCode
+    val persianDigits = languageCode == "fa"
+    fun digits(n: Int): String = if (persianDigits) PersianDate.faDigits(n) else n.toString()
 
     // Keep the selected day valid when navigating into a shorter month (e.g. 31 فروردین → اسفند).
     fun clampDay() { day = day.coerceAtMost(PersianDate.jalaliMonthLength(year, month)) }
@@ -69,13 +78,15 @@ fun JalaliDatePickerDialog(
                 // Calendar format is user-selectable INDEPENDENTLY of UI language, so this dialog can
                 // appear on an English or German screen. rtlIsolate keeps the date reading
                 // day → month → year there too, exactly like every other Jalali date in the app.
-                PersianDate.rtlIsolate("$day ${PersianDate.monthName(month)} $year"),
+                PersianDate.rtlIsolate("${digits(day)} ${PersianDate.monthName(month)} ${digits(year)}"),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
         },
         text = {
-            Column {
+            // Scrolls when the dialog is short: in landscape (360 dp tall) the grid was cut after the first row, so most
+            // days could not be picked (an outside emulator audit, 2026-09-30).
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 // Year stepper.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -86,8 +97,7 @@ fun JalaliDatePickerDialog(
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "سال قبل"; "de" -> "Vorheriges Jahr"; else -> "Previous year" })
                     }
                     Text(
-                        if (com.example.ui.i18n.LocalStrings.current.languageCode == "fa")
-                            PersianDate.faDigits(year) else year.toString(),
+                        digits(year),
                         style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                     )
                     IconButton(onClick = { year++; clampDay() }) {
@@ -108,9 +118,13 @@ fun JalaliDatePickerDialog(
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) { "fa" -> "ماه بعد"; "de" -> "Nächster Monat"; else -> "Next month" })
                     }
                 }
-                // Weekday header, Saturday-first.
+                // Weekday header, Saturday-first, in the interface language.
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    listOf("ش", "ی", "د", "س", "چ", "پ", "ج").forEach { d ->
+                    when (languageCode) {
+                        "fa" -> listOf("ش", "ی", "د", "س", "چ", "پ", "ج")
+                        "de" -> listOf("Sa", "So", "Mo", "Di", "Mi", "Do", "Fr")
+                        else -> listOf("Sa", "Su", "Mo", "Tu", "We", "Th", "Fr")
+                    }.forEach { d ->
                         Text(
                             d,
                             modifier = Modifier.weight(1f),
@@ -147,7 +161,7 @@ fun JalaliDatePickerDialog(
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Text(
-                                            PersianDate.faDigits(d),
+                                            digits(d),
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                             color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,

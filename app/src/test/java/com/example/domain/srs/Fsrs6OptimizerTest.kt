@@ -146,6 +146,8 @@ class Fsrs6OptimizerTest {
         assertTrue("inside the reference bounds", Fsrs6Optimizer.withinBounds(w))
         assertTrue("found the steeper curve: w20 = ${w[20]}", w[20] > Fsrs6Parameters.DEFAULT_WEIGHTS[20])
         assertTrue("found that reviews buy less: w8 = ${w[8]}", w[8] < Fsrs6Parameters.DEFAULT_WEIGHTS[8])
+        println("GATE: faster forgetter z = ${report.zScore}, lengthening = ${report.lengthening}, ${report.verdict}")
+        assertTrue("a faster forgetter's set shortens, so never-lengthen lets it through (${report.lengthening})", report.lengthening < 1.0)
     }
 
     @Test
@@ -164,5 +166,83 @@ class Fsrs6OptimizerTest {
         assertEquals("a bin whose mean prediction equals its recall rate has no error", 0.0, s.rmseBins, 1e-12)
         assertEquals(-(3 * ln(0.75) + ln(0.25)) / 4, s.logLoss, 1e-12)
         assertEquals(4, s.reviews)
+    }
+
+    /**
+     * The first rating's grades stay in order whatever the data says. The case is an outside audit's (2026-09-30):
+     * topics first rated Hard are remembered 95% of the time a week later, topics first rated Good only 65%. Trained
+     * without the constraint the fit put S0(Hard) at 3.53 days over S0(Good) at 2.51, and it was adopted, so "Hard"
+     * brought a new topic back LATER than "Medium". Now training pools the two, and whatever is adopted keeps the order.
+     */
+    @Test
+    fun a_fit_never_puts_hard_above_good() {
+        val rng = java.util.Random(7331)
+        val histories = (0 until 600).map { item ->
+            val first = if (item < 300) 2 else 3
+            val recall = if (first == 2) 0.95 else 0.65
+            val grades = IntArray(5) { if (it == 0) first else if (rng.nextDouble() < recall) 3 else 1 }
+            Fsrs6Optimizer.History(grades, DoubleArray(5) { if (it == 0) 0.0 else 7.0 }, LongArray(5) { it * 7 * 86_400_000L + item })
+        }
+        val fit = Fsrs6Optimizer.train(histories)!!
+        assertTrue("trained, Hard ${fit[1]} stays at or below Good ${fit[2]}", Fsrs6Optimizer.keepsGradeOrder(fit))
+
+        val report = Fsrs6Optimizer.fitAndValidate(histories, Fsrs6Parameters.DEFAULT_WEIGHTS)
+        report.weights?.let { assertTrue("whatever is adopted keeps the order", Fsrs6Optimizer.keepsGradeOrder(it)) }
+        assertTrue("the published defaults keep their order", Fsrs6Optimizer.keepsGradeOrder(Fsrs6Parameters.DEFAULT_WEIGHTS))
+        assertTrue(!Fsrs6Optimizer.keepsGradeOrder(Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { it[1] = it[2] + 0.1 }))
+    }
+
+    /**
+     * NEVER LENGTHEN reaches the personal set (the owner's decision, 2026-10-02). This learner, from an outside audit
+     * (2026-09-30), forgets exactly as the defaults say but calls 60% of forgotten topics "Hard". The fit predicts those
+     * RATINGS better than the defaults do, so the held-out comparison passed and the set was adopted, lengthening
+     * intervals by about a fifth while it predicted true recall worse. Now it is refused. The learner above, who really
+     * forgets faster, still gets a set: it shortens.
+     */
+    @Test
+    fun `a fit learned from generous ratings that would lengthen intervals is not adopted`() {
+        val rr = kotlin.random.Random(99101)
+        val histories = (0 until 700).map {
+            val first = rr.nextDouble().let { if (it < .25) 2 else if (it < .8) 3 else 4 }
+            val start = rr.nextInt(0, 120)
+            var nowDay = start
+            var truth = Fsrs6.initialState(Grade.entries.first { it.value == first })
+            var belief = truth
+            val grades = mutableListOf(first)
+            val elapsed = mutableListOf(0.0)
+            val times = mutableListOf(start * 86_400_000L)
+            while (grades.size < 14) {
+                val planned = Fsrs6.intervalDays(belief.stability, .9).coerceIn(1.0, 365.0)
+                val gap = maxOf(1, kotlin.math.round(planned * (.7 + rr.nextDouble() * .9)).toInt())
+                nowDay += gap
+                if (nowDay > start + 900) break
+                val recalled = rr.nextDouble() < Fsrs6.retrievability(gap.toDouble(), truth.stability)
+                val honest = if (!recalled) 1 else rr.nextDouble().let { if (it < .2) 2 else if (it < .9) 3 else 4 }
+                val said = if (!recalled && rr.nextDouble() < 0.6) 2 else honest
+                truth = Fsrs6.nextState(truth, gap.toDouble(), Grade.entries.first { it.value == honest })
+                belief = Fsrs6.nextState(belief, gap.toDouble(), Grade.entries.first { it.value == said })
+                grades += said
+                elapsed += gap.toDouble()
+                times += nowDay * 86_400_000L
+            }
+            Fsrs6Optimizer.History(grades.toIntArray(), elapsed.toDoubleArray(), times.toLongArray())
+        }
+        val report = Fsrs6Optimizer.fitAndValidate(histories, Fsrs6Parameters.DEFAULT_WEIGHTS)
+        println("GATE: generous rater z = ${report.zScore}, lengthening = ${report.lengthening}, ${report.verdict}")
+        assertTrue("it predicts the generous ratings better (z = ${report.zScore})", report.zScore >= Fsrs6Optimizer.ACCEPT_Z)
+        assertTrue("and would lengthen this learner's intervals (${report.lengthening})", report.lengthening > 1.0)
+        assertEquals(Fsrs6Optimizer.Verdict.REJECTED, report.verdict)
+        assertNull("the defaults stay", report.weights)
+    }
+
+    @Test
+    fun `lengthening compares the next intervals each set would give`() {
+        val histories = simulate(Fsrs6Parameters.DEFAULT_WEIGHTS, topics = 50, seed = 5)
+        assertEquals(1.0, Fsrs6Optimizer.lengthening(histories, Fsrs6Parameters.DEFAULT_WEIGHTS, 0.9), 1e-12)
+        val reviewsBuyLess = Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { it[8] = it[8] - 0.5 }
+        assertTrue(Fsrs6Optimizer.lengthening(histories, reviewsBuyLess, 0.9) < 1.0)
+        val reviewsBuyMore = Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { it[8] = it[8] + 0.5 }
+        assertTrue(Fsrs6Optimizer.lengthening(histories, reviewsBuyMore, 0.9) > 1.0)
+        assertEquals("nothing to compare", 1.0, Fsrs6Optimizer.lengthening(emptyList(), reviewsBuyMore, 0.9), 0.0)
     }
 }

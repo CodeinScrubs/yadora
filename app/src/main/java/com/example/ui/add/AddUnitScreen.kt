@@ -17,6 +17,8 @@ import com.example.ui.i18n.stateLabel
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -356,9 +358,11 @@ fun AddUnitScreen(
 
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     var showSubjectDropdown by remember { mutableStateOf(false) }
-    var showAddSubjectDialog by remember { mutableStateOf(false) }
-    var newSubjectName by remember { mutableStateOf("") }
-    var newSubjectColor by remember { mutableStateOf("") }
+    // Saveable: turning the phone closed the "new subject" dialog and dropped the name being typed (an outside
+    // emulator audit, 2026-09-30), while the topic form around it was kept.
+    var showAddSubjectDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var newSubjectName by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var newSubjectColor by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var sourceLink by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
 
     // Populate ONCE per edit session: without the guard, rotation re-runs this effect and clobbers
@@ -674,6 +678,12 @@ fun AddUnitScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             // Simple color presets
                             val presets = listOf("#E57373", "#81C784", "#64B5F6", "#FFD54F", "#BA68C8", "#4DB6AC")
+                            // Named for a screen reader: the swatches were nameless buttons, their choice shown only by a border.
+                            val colourNames = when (strings.languageCode) {
+                                "fa" -> listOf("قرمز", "سبز", "آبی", "زرد", "بنفش", "فیروزه‌ای")
+                                "de" -> listOf("Rot", "Grün", "Blau", "Gelb", "Lila", "Türkis")
+                                else -> listOf("Red", "Green", "Blue", "Yellow", "Purple", "Teal")
+                            }
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(presets) { colorHex ->
                                     val parsedColor = androidx.compose.ui.graphics.Color(colorHex.toColorInt())
@@ -681,7 +691,10 @@ fun AddUnitScreen(
                                         onClick = { newSubjectColor = colorHex },
                                         colors = CardDefaults.cardColors(containerColor = parsedColor),
                                         shape = androidx.compose.foundation.shape.CircleShape,
-                                        modifier = Modifier.size(32.dp).padding(2.dp),
+                                        modifier = Modifier.size(32.dp).padding(2.dp).semantics {
+                                            contentDescription = colourNames[presets.indexOf(colorHex)]
+                                            selected = newSubjectColor == colorHex
+                                        },
                                         border = if (newSubjectColor == colorHex) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.onSurface) else null
                                     ) {}
                                 }
@@ -690,6 +703,8 @@ fun AddUnitScreen(
                     },
                     confirmButton = {
                         TextButton(
+                            // Disabled until there is a name: it used to look ready and do nothing on an empty one.
+                            enabled = newSubjectName.isNotBlank(),
                             onClick = {
                                 if (newSubjectName.isNotBlank()) {
                                     viewModel.saveSubject(newSubjectName, if (newSubjectColor.isBlank()) null else newSubjectColor) { newId ->

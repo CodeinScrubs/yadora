@@ -62,4 +62,12 @@ object TopicTitle {
 
     /** True when two titles are the same material as far as duplicate detection is concerned. */
     fun sameTopic(a: String, b: String): Boolean = normalize(a) == normalize(b)
+
+    /**
+     * The Library search key: [normalize]'s folding (Arabic ي/ك typed for Persian ی/ک, case, diacritics) with every
+     * space removed as well, so a Persian compound matches however it was joined: a space, a half-space or nothing.
+     * The search used to compare raw text, so a topic typed on a Persian keyboard was not found from an Arabic one
+     * (an outside audit, 2026-09-30).
+     */
+    fun searchKey(raw: String): String = normalize(raw).replace(" ", "")
 }

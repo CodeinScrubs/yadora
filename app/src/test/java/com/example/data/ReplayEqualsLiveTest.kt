@@ -563,6 +563,29 @@ class ReplayEqualsLiveTest {
         assertEquals("model date is the effective date again", reviewed.nextReviewAt, reviewed.modelDueAt)
     }
 
+    /**
+     * The notification's "Not today" defers today's REVIEWS. A topic never rated stays due: the plan never holds a
+     * first rating back and its schedule counts from the rating (an outside audit, 2026-09-30, found it moved).
+     */
+    @Test
+    fun `the notification's not-today leaves a first rating due`() = runBlocking {
+        val day = 86400000L
+        val now = System.currentTimeMillis()
+        val unrated = repo.insertUnit(newUnit("Hyponatraemia", now - day))
+        val rated = repo.insertUnit(newUnit("Sepsis bundle", now - 6 * day))
+        liveReview(rated, now - 5 * day, MemoryRating.Hard, UnderstandingRating.Clear)
+        val ratedBefore = repo.getUnitById(rated)!!
+        org.junit.Assert.assertTrue("the review is due", ratedBefore.nextReviewAt <= now)
+
+        val tomorrow = now + day
+        db.studyUnitDao().procrastinateAllDue(now, tomorrow, now)
+
+        val first = repo.getUnitById(unrated)!!
+        assertEquals("the first rating is still due on its study day", now - day, first.nextReviewAt)
+        org.junit.Assert.assertNull("and nothing was recorded as deferred", first.deferredUntil)
+        assertEquals("the review moved to tomorrow", tomorrow, repo.getUnitById(rated)!!.nextReviewAt)
+    }
+
     @Test
     fun `per-topic not-today is a transactional deferral with an audit event`() = runBlocking {
         val day = 86400000L

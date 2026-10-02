@@ -492,6 +492,13 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                         "de" -> "Seit $since, aus ${active.availableReviews} Wiederholungen. Bei deinen späteren Wiederholungen sagte es besser voraus als das ersetzte Modell: Log-Loss ${ll(active.currentLogLoss)} → ${ll(active.candidateLogLoss)}, gruppierter Fehler ${pct(active.currentRmseBins)} % → ${pct(active.candidateRmseBins)} %."
                                         else -> "Since $since, from ${active.availableReviews} reviews. On your later reviews it predicted better than the model it replaced: log loss ${ll(active.currentLogLoss)} → ${ll(active.candidateLogLoss)}, binned error ${pct(active.currentRmseBins)}% → ${pct(active.candidateRmseBins)}%."
                                     }
+                                    // Refused although it predicted better: the never-lengthen rule or the grade order.
+                                    latest?.status == com.example.data.local.entity.MemoryParameterSetEntity.REJECTED &&
+                                        latest.zScore >= com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z -> when (strings.languageCode) {
+                                        "fa" -> "آخرین بررسی ${date(latest.createdAt)} با ${n(latest.availableReviews)} مرور: مدلی که بر تو برازش شد مرورهای بعدی‌ات را بهتر پیش‌بینی کرد، اما فاصله‌هایت را طولانی‌تر می‌کرد یا ترتیب گزینه‌های اولین ارزیابی را به هم می‌زد، پس چیزی تغییر نکرد."
+                                        "de" -> "Zuletzt geprüft am ${date(latest.createdAt)} mit ${latest.availableReviews} Wiederholungen: Ein an dich angepasstes Modell sagte deine späteren Wiederholungen besser voraus, hätte aber deine Abstände verlängert oder die Reihenfolge der ersten Bewertung vertauscht, daher bleibt alles, wie es ist."
+                                        else -> "Last checked ${date(latest.createdAt)} on ${latest.availableReviews} reviews: a model fitted to you predicted your later reviews better, but it would have lengthened your intervals or put the first rating's answers out of order, so nothing changed."
+                                    }
                                     latest?.status == com.example.data.local.entity.MemoryParameterSetEntity.REJECTED -> when (strings.languageCode) {
                                         "fa" -> "آخرین بررسی ${date(latest.createdAt)} با ${n(latest.availableReviews)} مرور: مدلی که بر تو برازش شد مرورهای بعدی‌ات را به‌طور قابل‌اعتمادی بهتر پیش‌بینی نکرد، پس چیزی تغییر نکرد."
                                         "de" -> "Zuletzt geprüft am ${date(latest.createdAt)} mit ${latest.availableReviews} Wiederholungen: Ein an dich angepasstes Modell sagte deine späteren Wiederholungen nicht verlässlich besser voraus, daher bleibt alles, wie es ist."
@@ -503,9 +510,9 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                         else -> "The model fitted to you was switched off."
                                     }
                                     else -> when (strings.languageCode) {
-                                        "fa" -> "مدلی متناسب با مرورهای خودت وقتی حدود $min مرورِ یادآوری جمع شود امتحان می‌شود (تا الان ${n(status.recallReviews)}) و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند به کار می‌رود."
-                                        "de" -> "Ein an deine Wiederholungen angepasstes Modell wird erprobt, sobald etwa $min Abruf-Wiederholungen vorliegen (bisher ${status.recallReviews}), und nur verwendet, wenn es deine späteren Wiederholungen besser vorhersagt."
-                                        else -> "A model fitted to your own reviews is tried once about $min recall reviews exist (${status.recallReviews} so far), and used only if it predicts your later reviews better."
+                                        "fa" -> "مدلی متناسب با مرورهای خودت وقتی حدود $min مرورِ یادآوری جمع شود امتحان می‌شود (تا الان ${n(status.recallReviews)}) و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند و فاصله‌هایت را طولانی‌تر نکند به کار می‌رود."
+                                        "de" -> "Ein an deine Wiederholungen angepasstes Modell wird erprobt, sobald etwa $min Abruf-Wiederholungen vorliegen (bisher ${status.recallReviews}), und nur verwendet, wenn es deine späteren Wiederholungen besser vorhersagt und deine Abstände nicht verlängert."
+                                        else -> "A model fitted to your own reviews is tried once about $min recall reviews exist (${status.recallReviews} so far), and used only if it predicts your later reviews better and does not lengthen your intervals."
                                     }
                                 }
                                 Text(headline, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
@@ -606,11 +613,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                     val dayEnd = Calendar.getInstance().apply { timeInMillis = todayStart; add(Calendar.DAY_OF_YEAR, i + 1) }.timeInMillis
                     
                     val dueInDay = activeList.filter { unit ->
-                        if (i == 0) {
-                            unit.nextReviewAt <= dayEnd
-                        } else {
-                            unit.nextReviewAt > dayStart && unit.nextReviewAt <= dayEnd
-                        }
+                        com.example.ui.today.TodayBuckets.isInForecastDay(unit.nextReviewAt, i, dayStart, dayEnd)
                     }
                     
                     val dayNameCalendar = Calendar.getInstance().apply {
@@ -877,6 +880,13 @@ private fun FourteenDayChart(model: ChartEntryModel, bars: Boolean, percent: Boo
             lines = listOf(
                 com.patrykandpatrick.vico.compose.chart.line.lineSpec(
                     lineColor = color,
+                    // A dot on every measured day: a line needs two, so the first day of recall reviews drew an empty
+                    // chart beside "1 review" (an outside emulator audit, 2026-09-30).
+                    point = com.patrykandpatrick.vico.compose.component.shapeComponent(
+                        shape = com.patrykandpatrick.vico.core.component.shape.Shapes.pillShape,
+                        color = color,
+                    ),
+                    pointSize = 6.dp,
                     pointConnector = com.patrykandpatrick.vico.core.chart.DefaultPointConnector(cubicStrength = 0f),
                 )
             ),
