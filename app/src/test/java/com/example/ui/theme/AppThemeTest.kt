@@ -83,4 +83,17 @@ class AppThemeTest {
         compose.waitForIdle()
         assertEquals(true, dark)
     }
+
+    /**
+     * Before Android 10 the navigation bar keeps the colour edge-to-edge picked from the PHONE's mode, so the theme gives
+     * it the app's own scrim: on Android 8 a dark app on a light phone showed white icons on a light bar (emulator,
+     * 2026-10-02). From Android 10 the system draws the contrast itself and the colour is left alone.
+     */
+    @Test
+    fun `before Android 10 the navigation bar takes the app's own scrim`() {
+        assertEquals(DARK_NAVIGATION_SCRIM, navigationBarScrimBeforeQ(darkTheme = true, sdk = 26))
+        assertEquals(LIGHT_NAVIGATION_SCRIM, navigationBarScrimBeforeQ(darkTheme = false, sdk = 28))
+        assertEquals(null, navigationBarScrimBeforeQ(darkTheme = true, sdk = 29))
+        assertEquals(null, navigationBarScrimBeforeQ(darkTheme = false, sdk = 36))
+    }
 }

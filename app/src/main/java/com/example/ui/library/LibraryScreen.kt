@@ -8,7 +8,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MergeType
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Close
@@ -236,6 +238,7 @@ fun LibraryScreen(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val showArchived by viewModel.showArchived.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
+    val sort by viewModel.sortBy.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
     val strings = com.example.ui.i18n.LocalStrings.current
     val libContext = androidx.compose.ui.platform.LocalContext.current
@@ -551,6 +554,7 @@ fun LibraryScreen(
                         )
                     },
                     actions = {
+                        SortMenuButton(strings.languageCode, sort) { viewModel.setSort(it) }
                         TextButton(onClick = { viewModel.showArchived.value = false }) {
                             Text(when (strings.languageCode) { "fa" -> "برگشت به اصلی"; "de" -> "Zur Hauptliste"; else -> "Return to main" })
                         }
@@ -560,6 +564,7 @@ fun LibraryScreen(
                 TopAppBar(
                     title = { Text(strings.library, fontWeight = FontWeight.Bold) },
                     actions = {
+                        SortMenuButton(strings.languageCode, sort) { viewModel.setSort(it) }
                         IconButton(onClick = onNavigateToSettings) {
                             Icon(Icons.Default.Settings, contentDescription = strings.settings, tint = MaterialTheme.colorScheme.onSurface)
                         }
@@ -651,19 +656,6 @@ fun LibraryScreen(
                     onClick = { viewModel.showArchived.value = !showArchived },
                     label = { Text(when (strings.languageCode) { "fa" -> "بایگانی"; "de" -> "Archiviert"; else -> "Archived" }) }
                 )
-                var sortExpanded by remember { mutableStateOf(false) }
-                Box {
-                    TextButton(onClick = { sortExpanded = true }) { Text(when (strings.languageCode) { "fa" -> "مرتب‌سازی"; "de" -> "Sortieren"; else -> "Sort" }) }
-                    DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
-                        listOf(
-                            LibrarySort.DUE to (when (strings.languageCode) { "fa" -> "موعد"; "de" -> "Fälligkeit"; else -> "Due date" }),
-                            LibrarySort.TITLE to (when (strings.languageCode) { "fa" -> "عنوان"; "de" -> "Titel"; else -> "Title" }),
-                            LibrarySort.WEAKNESS to (when (strings.languageCode) { "fa" -> "ضعف"; "de" -> "Schwäche"; else -> "Weakness" })
-                        ).forEach { (s, label) ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = { viewModel.setSort(s); sortExpanded = false })
-                        }
-                    }
-                }
             }
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -850,6 +842,38 @@ fun LibraryScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The Library's sort menu, in the top bar where it is always in reach: it ended the search row until the search got a
+ * row of its own (2026-10-02), and at the end of the scrolling chip row it would have been off screen. The current
+ * order carries a check mark.
+ */
+@Composable
+private fun SortMenuButton(languageCode: String, current: LibrarySort, onSort: (LibrarySort) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                Icons.AutoMirrored.Filled.Sort,
+                contentDescription = when (languageCode) { "fa" -> "مرتب‌سازی"; "de" -> "Sortieren"; else -> "Sort" },
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            listOf(
+                LibrarySort.DUE to (when (languageCode) { "fa" -> "موعد"; "de" -> "Fälligkeit"; else -> "Due date" }),
+                LibrarySort.TITLE to (when (languageCode) { "fa" -> "عنوان"; "de" -> "Titel"; else -> "Title" }),
+                LibrarySort.WEAKNESS to (when (languageCode) { "fa" -> "ضعف"; "de" -> "Schwäche"; else -> "Weakness" })
+            ).forEach { (order, label) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    leadingIcon = { if (order == current) Icon(Icons.Default.Check, contentDescription = null) },
+                    onClick = { onSort(order); expanded = false },
+                )
             }
         }
     }

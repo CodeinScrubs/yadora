@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,9 @@ class AlarmRingActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Edge-to-edge, like MainActivity: the bars sit on the ringer's own background, so the icon colours the theme
+        // sets can be read. Without it Android 8 drew a black status bar, and a light theme's dark icons vanished in it.
+        enableEdgeToEdge()
         active = this
 
         // Show over the lock screen and wake the display, like a real alarm clock.

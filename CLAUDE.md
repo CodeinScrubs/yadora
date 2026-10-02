@@ -111,6 +111,23 @@ focus (`AlarmRingActivity.seen`); with the old build the screen never woke, with
 stayed, and Dismiss and Home still closed it. A new AVD wants a 6 GB data partition and C: had 6.6 GB free, so that
 emulator lived on F: (`avdmanager create avd -p F:\...`).
 
+Then with PR #15's build (debug, then the R8 release debug-signed). On the Samsung: the alarm vibration reads
+`Usage=ALARM`; today's session served all 17 topics (one first rating, then 16 reviews) in exactly the order
+`order1002/expected_plan.py` predicted from the pulled database, near ties included; Undo on the summary put the last
+topic back field-for-field (stability, due date, count, its log gone); a seed restored with a limit of 10 in its
+settings showed that limit in Settings at once; with 12 overdue reviews, nothing done and none due today, Spread out kept
+the 10 most urgent due and moved the other two to 08:00 tomorrow and the day after, exactly as predicted, model dates
+untouched; both Progress charts drew (a dot per day). On Android 8.0: a backup copied in by adb (no MIME type, shown with
+a generic icon) could be picked; restoring one that said Persian, dark and purple switched the app at once; the Jalali
+picker in landscape scrolled to day 30 and kept it through a rotation; the widget at its default 2x1 showed its count
+and label. That pass found one more defect, a regression from PR #14 on Android 8 and 9 only: the bar ICONS followed the
+app's theme but the navigation bar kept the colour edge-to-edge picked from the phone's mode, so a dark app on a light
+phone showed white icons on a light bar, and the ringer (not edge-to-edge) showed a light theme's dark icons on a black
+status bar. Fixed and re-checked on the emulator (entry "Colours follow the APP's theme"). The picker on the owner's
+phone lists their own Download folder: put test files in the auto-backup test folder it opens on
+(`Download/YadoraAutoTest`, any name that is not `yadora_backup_*`), scan them with
+`am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://...`, and delete them afterwards.
+
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
 nothing. After a reboot wait up to two minutes past `sys.boot_completed` before judging whether reminders
@@ -219,7 +236,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
   paper there, and on the full-screen alarm (its own activity) every time. `MyApplicationTheme` now publishes its
   `darkTheme` (read it with `isAppInDarkTheme()`) and sets the status- and navigation-bar icons to match. Any colour
   chosen outside the colour scheme must ask `isAppInDarkTheme()`; `AppThemeTest` pins both mismatched cases (it fails
-  on the old code).
+  on the old code). Before Android 10 the bar BACKGROUND has to follow too (2026-10-02): the system draws no contrast
+  scrim there, and the navigation bar kept the colour edge-to-edge chose from the phone's mode, so a dark app on a light
+  Android 8 phone showed white icons on a light bar; the theme now sets the app's own scrim on API 26–28
+  (`navigationBarScrimBeforeQ`). The full-screen alarm is edge-to-edge too, so its status bar is its own background:
+  on Android 8 it was black, and a light theme's dark icons vanished in it.
 - **Digits follow the interface language, dates the calendar setting** (2026-09-27). `AppDate.date/dateTime/weekdayDate`
   take a REQUIRED `persianDigits` (the Persian interface): Jalali dates used to print Latin digits beside Persian ones.
   An English interface on the Jalali calendar keeps Latin digits. `PersianDate.faDigits` also turns a decimal point
@@ -1092,7 +1113,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     summary offers it); a question score that will not be kept vanishing without a word (`QuestionScore.problem`, shown
     under the fields; the rating still goes ahead); Library search comparing raw text, so Arabic ي/ك or a half-space
     found nothing (`TopicTitle.searchKey`, off the main thread); the search field squeezed to a sliver beside "Archived"
-    and "Sort" in German at 360 dp and everywhere at 320 dp (own row, a clear button, the list above the keyboard); a
+    and "Sort" in German at 360 dp and everywhere at 320 dp (own row, a clear button, the list above the keyboard;
+    Sort moved to the top bar with a check mark on the current order, Archived to the end of the chips); a
     card's subject and state running into its date; the review header pushing the pencil off at a large font; the
     reminder row's switch past the edge at 320 dp; the Jalali picker cut after its first row in landscape, resetting
     on rotation, and printing Persian digits and weekday letters on an English screen (digits and letters now follow
