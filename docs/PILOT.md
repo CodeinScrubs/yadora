@@ -97,7 +97,14 @@ Standard library only. `pilot_report/` gets:
   observed over expected, calibration-in-the-large and the calibration slope, with 95% intervals (descriptive;
   the decision rules below do not read them); per phone, how many posted reminders were tapped within three hours
   and followed by a review that day; and whether the first rating predicts the first real review better than
-  ignoring it (a rating given right after studying measures fluency more than memory);
+  ignoring it (a rating given right after studying measures fluency more than memory). Since 2026-10-03 also:
+  - the calibration gap with a 95% interval that counts each topic's reviews as one cluster, and its design
+    effect (how far the review count overstates the evidence);
+  - calibration by subject;
+  - each learner's raw interval scale with its 95% interval;
+  - the spread between learners that the app's prior assumes, which turns the 120 pseudo-reviews into a measurement
+    once enough learners exist;
+  - memory ratings against bands of the question score, the only objective view of generous rating;
 - `summary.json`: the same numbers, machine-readable;
 - `reviews.csv`, `topics.csv`, `participants.csv`: tidy tables, UTF-8, open in Excel.
 
@@ -118,12 +125,12 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 | id | question | threshold | if LOOK |
 |---|---|---|---|
 | D1 | Did every phone schedule exactly what the rules say? | 0 replay mismatches, 0 self-check issues | BUG. Find the phone, the build and the log in `report.md` §2. A time-zone change is the one benign cause. |
-| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300 | The per-user calibration is not keeping up. Check D4 before touching it. |
+| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300; past 5 points it is LOOK only if the topic-clustered 95% interval of the gap excludes 0, otherwise WAIT (amended 2026-10-03) | The per-user calibration is not keeping up. Check D4 before touching it. |
 | D3 | First review after a Hard / Medium / Easy first rating: close to predicted? | −7 to +5 points, n ≥ 60 per rating | Compare "implied S0" with the default. Simulate a first-study prior for topics, or a different cap, before changing either. |
 | D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
 | D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
 | D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
-| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
+| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each; at 5+ points it is LOOK only if the 95% interval excludes 0, otherwise WAIT (amended 2026-10-03) | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
 | D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
 | D9 | Are at least 80% of first ratings given on the study day? | ≥ 80%, n ≥ 50 | The first-rating flow is being skipped. Look at "Save and rate now" and the Today prompt. |
 | D10 | Are fewer than 40% of successful reviews answered Partial/Confused? | < 40%, n ≥ 100 | The repair clock is adding a lot of load. Check its backoff in simulation. |
@@ -162,6 +169,31 @@ Why these thresholds:
   A fitted m is a candidate to simulate, not a measured effect. (Outside reviews, 2026-09-28:
   one plan multiplied stability itself, up to ×1.25; a follow-up answer used this gain form with m up to 2.2.
   Neither range has a source.)
+
+### What each rule can detect (computed 2026-10-03, before any data)
+
+Outside researchers asked what these rules can and cannot find with a handful of learners. The answers were
+computed with normal approximations, and the D4 row with the measured noise of the raw scale
+(`tools/pilot/test_analyze.py` checks that noise against simulation). Read a WAIT or an OK with them in mind: with
+few learners, silence is not proof that nothing is wrong.
+
+| rule | the evidence it gets | false alarm (nothing wrong) | what it catches |
+|---|---|---|---|
+| D2 | 300 reviews; the design effect of the gap was 2.1 on the fixture's simulated learner | under 1% if the reviews were independent, about 4% at a design effect of 2 (before the 2026-10-03 interval requirement, which removes most of that) | an 8-point gap about 9 times in 10 |
+| D3 | 60 first reviews per first rating: a standard error of 4–5 points | about 13% at 90% predicted | a 10-point shortfall 7 times in 10, a 15-point one 9 in 10 |
+| D4 | per learner, 150–600 evidence reviews (an average learner's raw scale falls outside 0.8–1.25 about half the time at 150, a fifth at 600) | with 5 learners, 24% at 150 reviews each, 10% at 300, 2% at 600; with 10 learners, 5% / 1% / 0% | with 300+ evidence reviews each: a group whose scale is truly 0.75 (or 1.35) about 2 times in 3, 0.6 (or 1.7) nearly always |
+| D6 | 50 scored reviews | a true rank correlation of 0.5 reads below 0.3 6% of the time | a true correlation of 0.1 is flagged 92% of the time, 0.2 76% |
+| D7 | 100 next reviews after each method, within learners | 24% on the old 5-point threshold alone; 5% with the interval requirement | a true 10-point difference 65% of the time (92% at 200 each) |
+
+- **D4 at 8 weeks is a screen.** A LOOK sends a population prior to D5's held-out test anyway, so a false
+  alarm costs a simulation, not a change.
+- **The calibration slope** (descriptive, no rule) has a wide interval by design: the schedule puts almost every
+  review near 90% predicted recall, where the slope has little leverage.
+- **The generous-rating rate** cannot be estimated for one learner in 8 weeks. A learner who calls lapses Hard
+  looks like a slow forgetter, and only the question score tells them apart. That needs about 80 scored lapses
+  for ±10 points, about 600–800 scored reviews per learner. Pooled over the pilot it is within reach.
+- **The two amendments do not move the thresholds.** They ask the threshold to be crossed by more than noise:
+  D2 now uses the topic-clustered interval, and D7 the within-learner interval.
 
 ## Optional: a direct retention check at week 8
 

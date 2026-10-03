@@ -32,9 +32,12 @@ parameter.
 | Personalised spacing beats one-size-fits-all spacing | Semester-long classroom study: personalised review +16.5% retention over massed study and +10.0% over a fixed spaced schedule, a month after the course ([Lindsey et al. 2014](https://journals.sagepub.com/doi/abs/10.1177/0956797613504302)); optimal-control scheduling on Duolingo data ([Tabibian et al. 2019](https://www.pnas.org/doi/10.1073/pnas.1815156116)); SSP-MMC on 220M MaiMemo logs ([Ye et al. 2022](https://dl.acm.org/doi/10.1145/3534678.3539081)) | Supports per-user calibration and the personal weight set. |
 | Spaced education works in medicine and lasts | Randomised trials: spaced e-mailed questions improved end-of-year scores ([Kerfoot 2007](https://pubmed.ncbi.nlm.nih.gov/17209889/)); across 724 urology residents, ~4× learning efficiency; benefits persisted 2 years ([Kerfoot 2009](https://www.auajournals.org/doi/10.1016/j.juro.2009.02.024)) | Direct evidence in the target population. |
 | Spaced-repetition use tracks exam scores, but causality is unproven | Systematic review, 11 studies, 1,135 students: consistent Step 1 associations, dose-dependent; none randomised, strong self-selection ([2026 review](https://pmc.ncbi.nlm.nih.gov/articles/PMC13197492/)); ~1 Step 1 point per 1,700 cards ([Deng 2015](https://ijms.info/IJMS/article/view/1549)) | Encouraging, not proof. It is also why the twin claim cannot be settled by comparing friends with classmates. |
+| Spaced repetition works in medical education, at scale | Meta-analysis of 13 studies, 21,415 learners: SMD 0.78 (0.56–0.99) against standard studying ([Maye & Hurley 2026](https://doi.org/10.1111/tct.70353)); a randomized trial in 26,258 family physicians: learning d = 0.62, transfer to new questions d = 0.26, and two spaced repetitions beat one ([Price et al. 2025](https://doi.org/10.1097/ACM.0000000000005856)); 9 RCTs in health professions: retention g = 0.62, at high risk of bias ([Sezgin & Bektaş 2026](https://doi.org/10.1016/j.nedt.2026.107285)) | The mechanism holds in the target population. The comparison is ordinary study, not an equal-time alternative schedule: it is evidence for spacing, not for Yadora over another spacing method (§5.1). |
+| A single study session fades fast; higher-order knowledge fades less | Residents after one online tutorial kept half its gain at 3–8 days and none measurable at 55 days, the curve following the 1/4 power of the delay ([Bell et al. 2008](https://doi.org/10.1007/s11606-008-0604-2)); over about 15 months physical-therapy students forgot 9% of higher-level (Bloom's) items and 17.5% of lower-level ones, at the same rate for top and bottom performers ([Ambler et al. 2025](https://doi.org/10.1093/ptj/pzaf133)) | Topics can forget faster than an average Anki card early on, which the per-user calibration shortens for; how fast depends on the kind of knowledge, which the pilot's per-subject table watches. |
+| The shape of forgetting depends on the material | 210 data sets: the logarithmic, power and two square-root functions fit about equally ([Rubin & Wenzel 1996](https://doi.org/10.1037/0033-295x.103.4.734)); 916 data sets: exponential-power, logarithmic and linear fit most widely, the power function was not the best fit most often, and some materials showed stable or improving memory ([Radvansky et al. 2024](https://doi.org/10.3758/s13423-024-02514-3)) | FSRS-6's curve is a fitted choice, not a law, so the pilot checks it (calibration by predicted recall and by time since the last review). A topic made of parts that forget at different rates does NOT need another curve: one FSRS-6 curve stays within 2 points of such a mixture over a year (computed 2026-10-03: 1.8 points for 70% of a topic at S = 50 d and 30% at S = 3 d; at most 1 point for a log-normal spread of 1). |
 | Unrehearsed medical knowledge fades, but not to nothing | Modal retention after a year is ~⅔–¾ for unrehearsed basic science ([Custers 2010 review](https://hopkins-stile.med.jhmi.edu/media/Custers.pdf)) | This is the baseline Yadora has to beat: the no-schedule twin still keeps most of it. |
 | A judgement made right after studying is unreliable; a delayed one is far better | Immediate judgements of learning predict recall poorly; judgements made after a delay, from a retrieval attempt, rank which items will be recalled far more accurately (relative accuracy, on word pairs: it says which items are known, not that the absolute level is right) ([Nelson & Dunlosky 1991](https://journals.sagepub.com/doi/10.1111/j.1467-9280.1991.tb00147.x)) | Supports the first-study cap (the first rating is an immediate judgement), and the review question "how much did you still remember **before** rereading?", which asks for the delayed, retrieval-based judgement. It is answered afterwards, though, so it is not the same measurement: hindsight (next row) can still inflate it, which is why the pilot checks ratings against question scores (D6). |
-| Knowing the answer inflates what you think you knew | Hindsight bias reaches metamemory: after seeing the answer, people overestimate their earlier confidence ([Memory 2021](https://www.tandfonline.com/doi/abs/10.1080/09658211.2021.1919144)) | **The largest threat to the ratings.** A learner who rates after rereading drifts toward Hard/Good on a topic they had lost. The pilot measures this against question scores (D6); §2 shows the cost. |
+| Knowing the answer inflates what you think you knew | Hindsight bias reaches metamemory: once people know the outcome, they misremember their earlier judgements of learning toward it ([Zimdahl & Undorf 2021](https://doi.org/10.1080/09658211.2021.1919144)). Across 95 studies hindsight bias averages d = 0.39, and the manipulations designed to reduce it did not ([Guilbault et al. 2004](https://doi.org/10.1080/01973533.2004.9646399)) | **The largest threat to the ratings.** A learner who rates after rereading drifts toward Hard/Good on a topic they had lost. A better wording is unlikely to remove it; the pilot measures it against question scores (D6, and the score bands in the report); §2 shows the cost. |
 | FSRS-6 is the most accurate transparent model with a released reference implementation | Public benchmark, ~10k Anki users: FSRS-6 log loss 0.346, RMSE(bins) 0.065, AUC 0.703 vs FSRS-5 0.356 / 0.074 / 0.701 ([srs-benchmark](https://github.com/open-spaced-repetition/srs-benchmark)); per-user optimisation beats the defaults for ~84% of users ([benchmark write-up](https://expertium.github.io/Benchmark.html)). FSRS-7 now predicts better on the same benchmark (0.337 / 0.059) but has no py-fsrs release (§2.7). All of it is flashcard data, not whole topics | FSRS-6 stays the live model. Personalisation (calibration, then the personal set) is worth it. |
 | The best retention target trades workload against knowledge | FSRS computes the optimum by minimising workload per unit of knowledge in simulation ([FSRS wiki](https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-optimal-retention)) | Yadora's own sweep (§2.3) confirms 0.90 as the default. |
 
@@ -548,3 +551,37 @@ anyone into a change. Ranked by how much they matter to the twin claim:
 Afterwards, rerun the twin simulation with the fitted weights as the true memory:
 `python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json`. That answers the twin
 question for the pilot's real learners rather than for an average Anki user.
+
+### 5.1 The study that would test the goal (after the pilot; not decided)
+
+The pilot measures the model; it cannot show that Yadora raises exam scores at equal study time, because it has no
+comparison. The study that could is a later decision. Its main points, worked out on 2026-10-03 when outside
+researchers proposed designs (their sample sizes disagreed, from 30 to 120 students, and none checked what effect to
+expect):
+
+- **Randomise topics within each student.** Each student's topics are split at random between Yadora's schedule and
+  the comparison, so ability, motivation and hours cancel. Splitting students instead needs several times more of
+  them. Every arm reviews (nothing is withheld), the app times nothing, and "equal study" is held as an equal number
+  of reviews per topic, counted from the logs.
+- **The comparison decides whether the study is feasible.** Against a fixed ladder (1-3-7-21-60 days), §2.5 expects
+  the averages within about 1 point (+0.2 to +1.4); the gain is in the weakest tenth of topics (72–83% against
+  90–92%). Against the student's own unscheduled review, §2 expects 5 to 8 points. A study powered for 5 points will
+  almost surely find nothing against a ladder. That is not evidence against Yadora: the expected gain there is
+  below what the study can see.
+- **How many students** (accuracy about 80%, topics differing by about 15 points, one paired difference per student,
+  80% power, two-sided 5%; normal approximation):
+
+  | topics per arm × questions per topic | 1 point | 3 points | 5 points | 8 points |
+  |---|---|---|---|---|
+  | 20 × 2 | 876 | 98 | 36 | 14 |
+  | 40 × 2 | 473 | 53 | 19 | 8 |
+  | 40 × 4 | 316 | 36 | 13 | 5 |
+  | 80 × 2 | 272 | 31 | 11 | 5 |
+
+  More topics per student buys more than more students. A 5-point difference is within reach of about 20 students
+  with 40 topics in each arm. One point, the expected average gain over a fixed ladder, would take a very large study (about 270
+  students with 80 topics in each arm).
+- **The outcome:** questions on randomly sampled topics at one fixed date, written by someone who does not know the
+  arms, analysed as one difference per student or by a mixed-effects logistic model with students and topics as
+  random effects. Threats: learning one topic helps a related topic in the other arm (randomise related topics
+  together), reviews done outside the schedule (visible in the logs), and unequal effort.

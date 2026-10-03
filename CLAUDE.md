@@ -525,8 +525,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   the history is cut in time into five chunks, each of the last four is predicted by a fit on the reviews
   before it (`FOLDS`), and the pooled per-review log loss must beat the weights in use with a one-sided
   paired z of at least `Fsrs6Optimizer.ACCEPT_Z` (2.33: a nominal one-sided 1% if every review were
-  independent; reviews of one topic are not, and the fit is repeated, so the real rate of adopting a
-  worse set is NOT established — 0 in 40 below has a 95% upper bound of about 7%). Measured by `Fsrs6OptimizerGateTest`:
+  independent; the fit is repeated, so the real rate of adopting a worse set is NOT established — 0 in 40 below
+  has a 95% upper bound of about 7%). Reviews of one topic turned out NOT to matter here: their held-out log-loss
+  differences barely move together (design effect median 0.97, measured 2026-10-03), so a topic-clustered z reaches
+  the same verdict every time, and `Fsrs6OptimizerGateTest` pins it. Measured by `Fsrs6OptimizerGateTest`:
   a learner the defaults describe was adopted 0 times in 40 refits; moderate departures 0 in 10 (once
   real reviews correct the state, the defaults' predictions differ too little); a strong departure 9 in
   10 at ~9,000 reviews and not yet at ~4,000. Only then
@@ -1324,7 +1326,63 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - the pilot's power, and the design of the equal-time study.
 
   Check any answer that comes back against its sources and against this file before changing anything: outside
-  reports so far have invented papers and constants. If the algorithm changes, update section 2 of the prompt.
+  reports so far have invented papers and constants. If the algorithm changes, update section 2 of the prompt
+  (and rebuild its copy page; the Handbook memory note says how).
+- **Four AI researchers answered that prompt, 2026-10-03** (Priority A in full, B partly; one in Persian). Every
+  citation was checked against PubMed and Crossref, every number recomputed, and the gate claim measured.
+  - **Done:**
+    - `analyze.py`:
+      - the calibration gap with an interval that counts each topic's reviews as one cluster, and its design effect
+        (2.1 on the fixture's simulated learner: one topic's reviews DO move together there);
+      - each learner's raw interval scale with a 95% interval (delta method; it matches the estimate's real spread in
+        simulation, about 19/n for var(ln k) near 90% predicted recall);
+      - the between-learner spread τ that the 120 prior assumes, and the prior it implies;
+      - memory ratings against question-score bands, per learner;
+      - calibration by subject (Sense et al. 2016: materials forget at different rates).
+    - PILOT.md: what each rule can detect, with false-alarm and hit rates. D2 and D7 were amended before any data:
+      past the threshold they are LOOK only when the 95% interval excludes 0. On equal methods D7's threshold alone
+      fired about one time in four.
+    - RESEARCH.md: verified evidence rows, and §5.1 on the later equal-time study. The comparison method decides
+      whether that study is feasible: the expected gain over a fixed ladder is about 1 point, over unscheduled review
+      5–8.
+    - `Fsrs6OptimizerGateTest` pins the gate measurement above.
+  - **True, and already the case:**
+    - κ (forgetting speed) and φ (lapses rated as successes) cannot be told apart from ratings when reviews sit near
+      90% predicted recall. That is the reason for the never-lengthen rule; only the question score separates them.
+    - The 120 prior is the empirical-Bayes value 19/τ² for τ = 0.4 (the `RecallCalibration` note).
+    - The by-time and by-predicted-recall diagnostics were already in the report.
+    - Hindsight inflation is the largest threat to the ratings. Manipulations designed to reduce hindsight bias did
+      not (Guilbault et al. 2004, 95 studies), so the rating copy is not changed for it.
+  - **False:**
+    - "One stability hides a topic's weak tail; one curve is not within 2 points for a disease or a lecture." One
+      FSRS-6 curve stays within 1.8 points of their own 70/30 two-part topic over a year (at most 1 point for a
+      log-normal spread of 1). The weak parts inside a topic are the known cost of reviewing whole topics, which the
+      owner chose (a review is whatever the learner chooses; topics are not split into cards).
+    - "The gate's z is inflated by a third": measured median design effect 0.97.
+    - "Maye et al. 2026 not found" (two researchers): it is Maye & Hurley, The Clinical Teacher 23(2):e70353.
+    - FSRS-7 "35 weights": the srs-benchmark table says 34.
+    - One researcher's corrections of another were themselves wrong: Murre 2022 is in Scientific Reports, and
+      Ingendahl et al. 2025 (JOL reactivity g = 0.22) exists.
+    - D6 "under-powered": it is a point threshold, not a significance test. At n = 50 it flags a true correlation of
+      0.1 92% of the time.
+    - The Persian report:
+      - invented quotes with page numbers (Rubin & Wenzel found four functions fit about equally, not "power best");
+      - wrong authors for the Memory 2021 paper (it is Zimdahl & Undorf);
+      - references the brief never had;
+      - an optimal target of about 0.82 that its own formula contradicts (that efficiency peaks at 0.70 for every
+        cost);
+      - a between-student design effect applied to a within-student design.
+    - The third report:
+      - sources on croup, delirium and cardiac anaesthesia;
+      - wrong authors and DOIs (the DPT study is Ambler et al. 2025; Bell et al. 2008, not "Prince 2007");
+      - "slower decay = higher w20" (it is the reverse);
+      - invented constants ("S0 ×1.2 for large topics", "prior 60", "φ = 0.3 from Davis 2006");
+      - an "anticipation rating" before the review, which is the recall-first review the owner declined.
+  - **Not adopted:**
+    - an A/B test of a new rating wording inside the pilot (5–20 learners cannot test it);
+    - per-topic interval caps (the aggregate never-lengthen rule is the owner's);
+    - an ordinal likelihood, inverse-propensity weights and topic decomposition (tentative: pilot data first);
+    - anytime-valid e-values for the gate (the null z sits below 0, and never-lengthen bounds a false adoption).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

@@ -18,6 +18,7 @@ import json
 import math
 import os
 import random
+import statistics
 import sys
 import tempfile
 
@@ -190,6 +191,112 @@ def test_method_comparison_is_made_within_each_learner():
     print("the method comparison is made within each learner (a between-person gap is not read as a method effect)")
 
 
+def test_the_clustered_interval_widens_when_a_topic_s_reviews_move_together():
+    # 300 topics x 5 reviews at 90% predicted. Independent outcomes: the design effect is about 1. A topic that is
+    # remembered or lost as a block (all 5 reviews alike): about 5, the cluster size, and the interval sqrt(5) wider.
+    rng = random.Random(11)
+    independent = [(0.9, rng.random() < 0.9, t) for t in range(300) for _ in range(5)]
+    blocks = []
+    for t in range(300):
+        y = rng.random() < 0.9
+        blocks += [(0.9, y, t)] * 5
+    a, b = analyze.clustered_gap(independent), analyze.clustered_gap(blocks)
+    assert 0.7 < a["design_effect"] < 1.4, a
+    assert 3.5 < b["design_effect"] < 6.5, b
+    assert a["clusters"] == b["clusters"] == 300
+    assert a["gap_ci"][0] < a["gap"] < a["gap_ci"][1]
+    print(f"clustered interval: design effect {a['design_effect']:.2f} independent, {b['design_effect']:.2f} in blocks of 5")
+
+
+def test_the_raw_scale_interval_matches_its_real_sampling_spread():
+    # 400 learners the defaults describe, 300 evidence reviews each near 90% predicted recall. The delta-method
+    # interval must match how much the moment estimate really varies, and cover the truth about 95% of the time.
+    # This is also the number behind the app's prior: var(ln k) is about 19 / n at these predictions.
+    rng = random.Random(5)
+    model = analyze.ym.Fsrs6()
+    logs, ses, covered = [], [], 0
+    for _ in range(400):
+        preds = [rng.uniform(0.86, 0.94) for _ in range(300)]
+        est = analyze.moment_scale_ci(preds, [rng.random() < p for p in preds], model)
+        logs.append(math.log(est["scale"]))
+        ses.append(est["se_log"])
+        covered += est["ci"][0] <= 1.0 <= est["ci"][1]
+    spread = statistics.stdev(logs)
+    assert 0.85 < spread / statistics.fmean(ses) < 1.18, (spread, statistics.fmean(ses))
+    assert 0.92 <= covered / 400 <= 0.98, covered
+    assert 15 < statistics.fmean(ses) ** 2 * 300 < 24
+    print(f"raw-scale interval: real spread {spread:.3f} vs stated {statistics.fmean(ses):.3f}, coverage {covered / 400:.0%}")
+
+
+def test_generous_rating_shows_in_the_question_score_bands():
+    # A learner who calls lapses Hard: every review rated Forgot or Hard got 1 of 5 right, the rest 5 of 5. From
+    # ratings alone this learner looks like a slow forgetter; the bands show the Hard answers sitting under 40%.
+    d = fixture()
+    hard = forgot = 0
+    for log in d["reviewLogs"]:
+        if log["logType"] != "RECALL":
+            continue
+        low = log["memoryRating"] in ("Forgot", "Hard")
+        log["questionsCorrect"], log["questionsTotal"] = (1, 5) if low else (5, 5)
+        hard += log["memoryRating"] == "Hard"
+        forgot += log["memoryRating"] == "Forgot"
+    summary, _, files = run([d])
+    band = summary["question_scores"]["bands"]["under 40%"]
+    assert band["n"] == hard + forgot and band["counts"]["Hard"] == hard, band
+    assert abs(band["rated_success"] - hard / (hard + forgot)) < 1e-9
+    assert "rated a success" in files["report.md"]
+    print(f"score bands: {hard} Hard answers with 1 of 5 right show as {band['rated_success']:.0%} 'rated a success' under 40%")
+
+
+def test_d2_and_d7_need_an_interval_that_excludes_zero():
+    # Amended 2026-10-03, before any pilot data: a gap past the threshold is LOOK only when its 95% interval excludes 0,
+    # otherwise WAIT (not enough evidence), so noise cannot pass for a finding.
+    base = dict(integrity=dict(mismatched=0, consistency_issues=0), participants={}, adherence={}, understanding={},
+                reminders={}, first_review={}, question_scores={}, pooled_fit={})
+
+    def verdict(rule, **extra):
+        s = dict(base, **extra)
+        return next(x["verdict"] for x in analyze.decide(s, []) if x["id"] == rule)
+
+    def cal(observed, ci):
+        return {"FSRS-6/0": dict(raw={}, calibrated=dict(n=400, observed=observed, predicted=0.90, clustered=dict(gap_ci=ci)))}
+
+    assert verdict("D2", calibration=cal(0.92, (-0.01, 0.05))) == "OK"
+    assert verdict("D2", calibration=cal(0.83, (-0.10, -0.04))) == "LOOK"
+    assert verdict("D2", calibration=cal(0.83, (-0.15, 0.01))) == "WAIT"
+
+    def d7(diff, ci):
+        return verdict("D7", method_residuals={"Questions only": dict(n=150, mean=0.0), "Reading only": dict(n=150, mean=0.0)},
+                       method_within_participant=dict(diff=diff, ci=ci, participants=3))
+
+    assert d7(0.02, (-0.05, 0.09)) == "OK"
+    assert d7(0.07, (0.01, 0.13)) == "LOOK"
+    assert d7(0.07, (-0.01, 0.15)) == "WAIT"
+    rng = random.Random(3)
+    noisy = {p: {"Questions only": [rng.gauss(0.0, 0.3) for _ in range(40)],
+                 "Reading only": [rng.gauss(0.0, 0.3) for _ in range(40)]} for p in "ABC"}
+    wp = analyze.within_participant_difference(noisy)
+    assert wp["ci"][0] < wp["diff"] < wp["ci"][1] and 0.03 < wp["se"] < 0.05, wp
+    print("D2 and D7: a gap past the threshold is LOOK only when its interval excludes 0, otherwise WAIT")
+
+
+def test_subjects_and_the_spread_between_learners_are_reported():
+    # Three copies of one learner: no spread beyond noise, so no prior the data could support; and the per-subject
+    # calibration table is there.
+    a = fixture()
+    copies = []
+    for i, pid in enumerate(("YD-TEST-AAA1", "YD-TEST-BBB2", "YD-TEST-CCC3")):
+        c = copy.deepcopy(a)
+        c["participantId"] = pid
+        copies.append(c)
+    summary, _, files = run(copies)
+    sp = summary["scale_spread"]
+    assert sp["learners"] == 3 and sp["tau"] == 0.0 and sp["prior_reviews"] is None, sp
+    assert summary["by_subject"] and "By subject:" in files["report.md"]
+    assert all(p.get("scale_raw_ci") for p in summary["participants"].values())
+    print(f"per-subject calibration ({len(summary['by_subject'])} subjects) and the between-learner spread are reported")
+
+
 def with_reminders(d, missing_days=(), late_days=(), off_days=()):
     """The fixture with a planted reminder history (export v13): two alarms a day for the 20 days before the export,
     none on `missing_days`, the evening one 30 minutes late on `late_days`, reminders switched off from noon to noon
@@ -306,6 +413,11 @@ if __name__ == "__main__":
     test_rows_a_correction_recomputed_are_not_calibration_evidence()
     test_calibration_slope_and_intercept_recover_a_planted_miscalibration()
     test_method_comparison_is_made_within_each_learner()
+    test_the_clustered_interval_widens_when_a_topic_s_reviews_move_together()
+    test_the_raw_scale_interval_matches_its_real_sampling_spread()
+    test_generous_rating_shows_in_the_question_score_bands()
+    test_d2_and_d7_need_an_interval_that_excludes_zero()
+    test_subjects_and_the_spread_between_learners_are_reported()
     test_reminder_delivery_finds_the_days_a_phone_never_reminded()
     test_a_backup_is_refused_with_an_explanation()
     test_a_file_saved_with_a_byte_order_mark_still_loads()

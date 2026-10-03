@@ -223,10 +223,14 @@ the way the model assumes. That needs the literature, sound statistics and real 
 - Custers 2010;
 - Nelson & Dunlosky 1991;
 - Brunmair & Richter 2019;
-- a 2021 paper in Memory on hindsight bias in metamemory (doi:10.1080/09658211.2021.1919144);
+- Zimdahl & Undorf 2021 (Memory), on hindsight bias in metamemory;
+- Guilbault et al. 2004 and Christensen-Szalanski & Willham 1991, the hindsight-bias meta-analyses;
 - the open-spaced-repetition srs-benchmark;
-- a 2026 meta-analysis in The Clinical Teacher (Maye et al.), reported as 13 studies, 21,415 learners and a
-  standardized mean difference of 0.78 against usual study. Please verify this one.
+- Maye & Hurley 2026 (The Clinical Teacher): 13 studies, 21,415 learners, SMD 0.78 against standard studying;
+- Price et al. 2025 (Academic Medicine), Sezgin & Bektaş 2026 (Nurse Education Today);
+- Bell et al. 2008, Ambler et al. 2025, Custers & ten Cate 2011, D'Eon 2006 (medical forgetting);
+- Rubin & Wenzel 1996, Radvansky et al. 2024 (the shape of forgetting);
+- Sense et al. 2016 (forgetting rates differ across materials).
 
 **Facts that earlier reports got wrong:**
 
@@ -236,16 +240,28 @@ the way the model assumes. That needs the literature, sound statistics and real 
   many items, treated as independent.
 - Yadora stores no stability, difficulty or time zone with each review.
 - Two AI reports that agree are not independent evidence.
+- One FSRS-6 curve stays within 2 points of a topic whose parts forget at different rates (a 70/30 two-part topic:
+  1.8 points over a year; a log-normal spread of 1: 1 point). Do not argue for another curve shape from mixing alone.
+- The personal-model gate's z is not inflated by reviews of one topic moving together: the measured design effect
+  of its held-out log-loss differences is about 1.
+
+**Answers already received (2026-10-03):** four researchers answered Priority A. What held up and what did not is
+recorded in CLAUDE.md. Questions still open after them:
+- **B1–B5 and all of C.**
+- **A1's empirical half:** how fast whole medical topics are forgotten, measured.
+- **A4(a):** run the benchmark data by review count.
 
 **The pilot.** It starts soon: a small group (plan for 5 to 20 students) for 8 weeks, with data exported at
 weeks 2 and 8. Its decision rules are fixed in advance. Among them:
 
-- reported recall within 5 points of the calibrated prediction (n ≥ 300);
+- reported recall within 5 points of the calibrated prediction (n ≥ 300; past 5 points the topic-clustered 95% interval
+  must exclude 0);
 - the first review after each kind of first rating within −7 to +5 points of the prediction (n ≥ 60 each);
 - most learners' raw scale between 0.8 and 1.25;
 - a pooled refit beating the defaults (z ≥ 2.33);
 - memory ratings correlating with question scores (rank correlation ≥ 0.3, n ≥ 50);
-- review methods compared within each learner (n ≥ 100 each);
+- review methods compared within each learner (n ≥ 100 each; a 5-point difference must have a 95% interval that
+  excludes 0);
 - checks on adherence and on reminder delivery.
 
 ## 4. Fixed constraints: answer within them
