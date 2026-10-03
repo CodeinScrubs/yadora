@@ -205,8 +205,9 @@ the run, so regenerate it the day you use it (`--tests "com.example.data.DeviceS
   (the identical-twins simulation), `experiments.py` (each scheduling choice against its alternatives) and
   `residency.py` (two years to an exam, against competitor-style schedulers). `docs/RESEARCH.md` holds the
   evidence and results, `docs/PILOT.md` the pilot protocol and its pre-registered decision rules,
-  `docs/PILOT_GUIDE_FA.md` the participant guide, and `docs/COMPETITOR_REVIEWS.md` what 271 users of the closest
-  comparable app valued and suffered, with Yadora's answer to each.
+  `docs/PILOT_GUIDE_FA.md` the participant guide, `docs/COMPETITOR_REVIEWS.md` what 271 users of the closest
+  comparable app valued and suffered, with Yadora's answer to each, and `docs/RESEARCHER_PROMPT.md` the open
+  scientific questions, written for an outside researcher.
 
 ## Settled decisions — do NOT re-propose these
 
@@ -222,7 +223,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   the core was there, with real gaps; Good: remembered most of it; Easy: knew it thoroughly). Rating
   how hard the session FELT would feed the model the wrong quantity. Then "How well do you understand it
   now?" drives the repair clock as before. The Settings guide says the same, and that doing questions
-  usually sticks better than rereading alone.
+  usually sticks better than rereading alone. Re-confirmed 2026-10-03, when a recall-first review was put to the
+  owner: the learner may rate whenever they like, but the aim is a rating after the review.
 - **The review screen's topic card never shrinks below 200 dp** (`ReviewCardLayout` in `ReviewSessionScreen`,
   2026-09-26). The card used to be simply weighted above the rating controls. When the controls grew (method row,
   question score, hint, one full-width button per rating), a 360x640 phone in Persian squeezed the card to an
@@ -362,7 +364,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **The exam date is DECORATIVE on purpose.** It powers the countdown on Today /
   Library / Progress and nothing else. It must NEVER compress intervals, cap the
   schedule, or otherwise feed the scheduler. Confirmed by the user 2026-08;
-  do not propose exam-horizon capping again.
+  do not propose exam-horizon capping again. Re-confirmed 2026-10-03: no exam hint on Today either (the date is
+  purely cosmetic).
 - **The FIRST graded rating is always review #0** (POLICY `YADORA-2`), however
   late it happens. It seeds the model from the rating (`Fsrs.initialState`) and
   is capped by `FIRST_STUDY_MAX_DAYS`. The old rule treated a back-dated first
@@ -562,7 +565,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Today shows NO time estimate** (2026-09-23). It used to print "about N min" from the median of the
   last 50 measured review durations. A review is done however the learner likes, mostly outside the
   app, so the seconds a card sits open measure nothing, and the estimate would be invented.
-  `reviewDurationMs` is still logged as research data.
+  `reviewDurationMs` is still logged as research data. Nor does a review ask how long it took (the owner,
+  2026-10-03): the time a student spends depends on how much time they have that day, not on the topic.
 - **The daily limit is a limit per DAY** (`ui/today/DailyPlan`, 2026-09-23). It used to cap each
   session: finishing N and starting again loaded the next N, while Today claimed the rest were "held for
   later by your daily limit". Now the reviews already done today (`logType != FIRST_STUDY` since local
@@ -1207,7 +1211,7 @@ These were decided deliberately. Re-suggesting them wastes a session:
     opens on top and Back returns to the intact draft, as the second QA pass itself found); "the personal optimizer
     can never activate" (it does at about 9,000 reviews for a strong departure); a 4 AM day rollover or an exam
     horizon being a fix (both are settled decisions above).
-  - **Not built, the owner's call or the pilot's:** a minutes-per-review chip, research dither of intervals, a
+  - **Not built, the owner's call or the pilot's:** a minutes-per-review chip (declined 2026-10-03), research dither of intervals, a
     randomised score nudge, a "still shaky" chip, renaming the retention slider, D2b (item-level shortfall) and the
     other parts of the "path to 90" plan, whose numbers came from its author's own simulated world; subject rename and
     delete; a hint that long-press opens review-now.
@@ -1299,13 +1303,28 @@ These were decided deliberately. Re-suggesting them wastes a session:
       caught it), and its guessing model and grade probabilities were placeholders.
     - Verified, by contrast: the 2026 medical meta-analysis (Maye et al., The Clinical Teacher: 13 studies, 21,415
       learners, SMD 0.78 against ordinary study, not an equal-time active control).
-  - **The owner's call, asked 2026-10-03:**
-    - a recall-first review: the memory rating before the notes and answers, reversing the 2026-09-23 no-gate decision;
-    - an optional time-spent answer per review, the only measurement of the "same hours" goal;
-    - a research-grade DB v11: original predictions beside replayed ones, a per-log zone, merge checkpoints;
-    - an exam hint on Today;
-    - the repair-vs-fuzz fix, at the next policy bump;
-    - an equal-time randomised study after the pilot.
+  - **Put to the owner and declined, 2026-10-03 (settled; do not re-propose):**
+    - a recall-first review (the memory rating before the notes and answers). The learner may rate whenever they
+      like; the aim stays a rating AFTER the review, and the 2026-09-23 decision stands;
+    - an optional time-spent answer per review. How long a student spends depends on how much time they have that
+      day, so it would not measure the topic;
+    - a research-grade DB v11 (original predictions beside replayed ones, a per-log zone, merge checkpoints): only if
+      an analysis turns out to need it. The pilot runs in one zone, and corrections are already logged and left out
+      of the evidence;
+    - an exam hint on Today: the exam date stays purely cosmetic.
+  - **Later, no decision needed:** the repair-vs-fuzz fix at the next policy bump; an equal-time randomised study
+    after the pilot. Its design is one of the questions in `docs/RESEARCHER_PROMPT.md` (next entry).
+- **The open scientific questions are written down for an outside researcher** (`docs/RESEARCHER_PROMPT.md`,
+  2026-10-03, at the owner's request). It states the algorithm exactly, the fixed constraints (the owner's decisions
+  above) and 17 questions in three priorities. The most important ask:
+  - whether whole topics forget like flashcards;
+  - how much ratings given after re-exposure are inflated;
+  - a measurement model that could separate generous rating from slow forgetting with the question score;
+  - faster personalization, and an adoption test that holds its error rate;
+  - the pilot's power, and the design of the equal-time study.
+
+  Check any answer that comes back against its sources and against this file before changing anything: outside
+  reports so far have invented papers and constants. If the algorithm changes, update section 2 of the prompt.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
