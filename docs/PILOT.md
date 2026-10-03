@@ -74,7 +74,8 @@ The file (`yadora_research_YD-XXXX-XXXX_<date>.json`):
 - **Contains:** every review's timing, ratings, predictions and intervals; subject names; device model and
   Android version; time zone; the last crash log; the research ID; every reminder alarm (when it was due, how
   late it came, whether the phone was in Doze) and what the phone allowed reminders to do when the file was made
-  (notifications, exact alarms, battery optimization, standby bucket).
+  (notifications, exact alarms, battery optimization, standby bucket); each tap on a reminder, the alarm or the widget
+  that opened the app; and every corrected rating with the answer it replaced.
 - **Does not contain:** topic titles, notes, scope lines, key points or sources.
 
 It is sensitive, not anonymous: subject names and a device model can identify someone who knows them.
@@ -94,7 +95,9 @@ Standard library only. `pilot_report/` gets:
 
 - `report.md`: the findings, including the standard calibration checks for each weight set: the Brier score,
   observed over expected, calibration-in-the-large and the calibration slope, with 95% intervals (descriptive;
-  the decision rules below do not read them);
+  the decision rules below do not read them); per phone, how many posted reminders were tapped within three hours
+  and followed by a review that day; and whether the first rating predicts the first real review better than
+  ignoring it (a rating given right after studying measures fluency more than memory);
 - `summary.json`: the same numbers, machine-readable;
 - `reviews.csv`, `topics.csv`, `participants.csv`: tidy tables, UTF-8, open in Excel.
 

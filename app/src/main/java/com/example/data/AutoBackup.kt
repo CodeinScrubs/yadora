@@ -122,9 +122,30 @@ object AutoBackup {
         fun create(name: String): Entry?
         fun openOutput(entry: Entry): OutputStream
         fun delete(entry: Entry): Boolean
+        /** Whether [entry] can be renamed; a folder that cannot gets each backup under its final name directly. */
+        fun canRename(entry: Entry): Boolean
+        /** [entry] under [name], or null when the rename failed. */
+        fun rename(entry: Entry, name: String): Entry?
     }
 
-    /** One backup into [folder]: write a new file, clean up after a failure, prune after a success. */
+    /**
+     * The name a backup is written under until it is complete. It never matches a backup's name, so neither the
+     * pruning nor a learner looking for a backup takes it for one: a write the system kills half-way leaves this
+     * file, not a truncated file named like the day's backup that the pruning would keep in place of a good one (an
+     * outside audit, 2026-10-02).
+     */
+    const val STAGED_PREFIX = "yadora_partial_"
+
+    /** A staged file older than an hour was never renamed: the run that wrote it was killed, so it is incomplete. */
+    fun isStaleStaged(name: String, at: LocalDateTime): Boolean =
+        name.startsWith(STAGED_PREFIX) &&
+            (timeOf("yadora_backup_" + name.removePrefix(STAGED_PREFIX))?.isBefore(at.minusHours(1)) ?: false)
+
+    /**
+     * One backup into [folder]: write it under a staged name ([STAGED_PREFIX]) and rename it once complete, clean up after
+     * a failure, prune after a success. A folder that cannot rename gets the backup under its final name directly, as
+     * every backup was written before 2026-10-03.
+     */
     suspend fun writeInto(
         folder: Folder,
         at: LocalDateTime,
@@ -133,18 +154,39 @@ object AutoBackup {
     ): Outcome {
         if (topicCount <= 0) return Outcome.Skipped("the library is empty")
         val name = fileName(at)
-        val entry = folder.create(name) ?: return Outcome.Failed("could not create $name")
-        try {
-            folder.openOutput(entry).use { write(it) }
+
+        suspend fun writeTo(target: Folder.Entry): String? = try {
+            folder.openOutput(target).use { write(it) }
+            null
         } catch (t: Throwable) {
-            runCatching { folder.delete(entry) }
-            return Outcome.Failed(t.message ?: t.javaClass.simpleName)
+            runCatching { folder.delete(target) }
+            t.message ?: t.javaClass.simpleName
         }
+
+        val staged = folder.create(STAGED_PREFIX + name.removePrefix("yadora_backup_"))?.let { e ->
+            if (runCatching { folder.canRename(e) }.getOrDefault(false)) e else { runCatching { folder.delete(e) }; null }
+        }
+        val entry: Folder.Entry
+        if (staged != null) {
+            writeTo(staged)?.let { return Outcome.Failed(it) }
+            entry = runCatching { folder.rename(staged, name) }.getOrNull() ?: run {
+                // The rename failed after all: write the backup again under its real name, and drop the staged copy.
+                runCatching { folder.delete(staged) }
+                val direct = folder.create(name) ?: return Outcome.Failed("could not create $name")
+                writeTo(direct)?.let { return Outcome.Failed(it) }
+                direct
+            }
+        } else {
+            entry = folder.create(name) ?: return Outcome.Failed("could not create $name")
+            writeTo(entry)?.let { return Outcome.Failed(it) }
+        }
+
         val existing = folder.list()
         val doomed = toDelete(existing.map { it.name }).toSet()
         // Never the file just written, whatever name the provider actually gave it.
         existing.filter { it.name in doomed && it.name != name && it.name != entry.name && it.handle != entry.handle }
             .forEach { runCatching { folder.delete(it) } }
+        existing.filter { isStaleStaged(it.name, at) && it.handle != entry.handle }.forEach { runCatching { folder.delete(it) } }
         return Outcome.Written(entry.name)
     }
 
@@ -267,12 +309,22 @@ object AutoBackup {
         override fun create(name: String): Folder.Entry? =
             DocumentsContract.createDocument(resolver, dir, "application/json", name)?.let { uri ->
                 // The provider may have changed the name (a clash becomes "… (1).json"): report the real one.
-                val actual = runCatching {
-                    resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
-                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-                }.getOrNull()
-                Folder.Entry(actual ?: name, uri)
+                Folder.Entry(displayName(uri) ?: name, uri)
             }
+
+        private fun displayName(uri: Uri): String? = runCatching {
+            resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()
+
+        override fun canRename(entry: Folder.Entry): Boolean = runCatching {
+            resolver.query(entry.handle as Uri, arrayOf(DocumentsContract.Document.COLUMN_FLAGS), null, null, null)
+                ?.use { c -> c.moveToFirst() && (c.getInt(0) and DocumentsContract.Document.FLAG_SUPPORTS_RENAME) != 0 } ?: false
+        }.getOrDefault(false)
+
+        override fun rename(entry: Folder.Entry, name: String): Folder.Entry? =
+            runCatching { DocumentsContract.renameDocument(resolver, entry.handle as Uri, name) }.getOrNull()
+                ?.let { uri -> Folder.Entry(displayName(uri) ?: name, uri) }
 
         override fun openOutput(entry: Folder.Entry): OutputStream =
             resolver.openOutputStream(entry.handle as Uri, "w") ?: throw java.io.IOException("cannot write ${entry.name}")

@@ -71,10 +71,10 @@ data class StudyUnitEntity(
     val memoryModel: String = "FSRS-5",
     // --- DB v8 ---
     /**
-     * Optional KEY POINTS: the answer to this topic split into the few ideas a complete recall must
-     * contain, one per line ([com.example.domain.srs.KeyPoints]). At a review the learner ticks the
-     * ones they actually produced, and the ticks cap the memory rating. Null = none, and the rating is
-     * the learner's own judgement, exactly as before.
+     * Optional KEY POINTS: the few ideas this topic contains, one per line ([com.example.domain.srs.KeyPoints]),
+     * shown with the notes at a review as REFERENCE TEXT. From DB v8 until 2026-09-23 the learner ticked the ones
+     * they produced and the ticks capped the memory rating; that cap is retired (a review is done by any method,
+     * not recited in the app). The column stays because migrations are additive. Null = none.
      */
     val keyPoints: String? = null,
     // --- DB v9 ---

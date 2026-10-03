@@ -207,6 +207,7 @@ class AlarmRingActivity : ComponentActivity() {
                     // instead of destroying whatever the user had open.
                     flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
                     putExtra("open_review", true)
+                    putExtra(com.example.MainActivity.EXTRA_OPENED_FROM, "alarm")
                 }
             )
         }

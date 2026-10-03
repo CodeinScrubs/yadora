@@ -478,6 +478,59 @@ class ReplayEqualsLiveTest {
         assertEquals("first log previousIntervalDays unchanged by replay", 0.0, firstLogAfter.previousIntervalDays, 1e-9)
     }
 
+    /**
+     * A phone clock set back between two reviews (changed by hand, or a phone that boots with the wrong date) gives the
+     * later review the EARLIER time. The live path counts that gap as zero. Sorted by time, a replay put the two in
+     * the wrong order and rebuilt a state the topic never had (an outside audit, 2026-10-02); it walks the saved order
+     * now (REVIEW_HISTORY_ORDER), and the repair-clock streak counts back in that order too.
+     */
+    @Test
+    fun `replay equals live when the clock was set back between two reviews`() = runBlocking {
+        val zone = java.time.ZoneId.systemDefault()
+        val studyDay = java.time.LocalDate.now(zone).minusDays(40)
+        fun at(daysAfter: Long, hour: Int): Long =
+            studyDay.plusDays(daysAfter).atTime(hour, 0).atZone(zone).toInstant().toEpochMilli()
+
+        val unitId = repo.insertUnit(newUnit("Hyperkalaemia", at(0, 9)))
+        liveReview(unitId, at(0, 10), MemoryRating.Good, UnderstandingRating.Clear)
+        liveReview(unitId, at(9, 10), MemoryRating.Hard, UnderstandingRating.Partial)
+        liveReview(unitId, at(4, 10), MemoryRating.Good, UnderstandingRating.Partial) // the clock five days behind
+        liveReview(unitId, at(12, 10), MemoryRating.Good, UnderstandingRating.Clear)
+        val live = repo.getUnitById(unitId)!!
+
+        repo.editReviewRating(unitId, -1L, MemoryRating.Good, UnderstandingRating.Clear) // a pure replay
+        val replayed = repo.getUnitById(unitId)!!
+
+        assertEquals("stability", live.stability, replayed.stability, 1e-9)
+        assertEquals("difficulty", live.difficulty, replayed.difficulty, 1e-9)
+        assertEquals("interval", live.currentIntervalDays, replayed.currentIntervalDays, 1e-9)
+        assertEquals("nextReviewAt", live.nextReviewAt, replayed.nextReviewAt)
+        assertEquals("understandingDueAt", live.understandingDueAt, replayed.understandingDueAt)
+        assertEquals("lastReviewedAt", live.lastReviewedAt, replayed.lastReviewedAt)
+    }
+
+    /** A correction rewrites the log in place; the answer it replaced is kept as an event (2026-10-03). */
+    @Test
+    fun `a correction records the answer it replaced, and nothing else does`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val day = 86_400_000L
+        val unitId = repo.insertUnit(newUnit("Hyponatraemia", now - 20 * day))
+        liveReview(unitId, now - 20 * day + 60_000, MemoryRating.Good, UnderstandingRating.Clear)
+        val second = liveReview(unitId, now - 15 * day, MemoryRating.Good, UnderstandingRating.Clear)
+        liveReview(unitId, now - 5 * day, MemoryRating.Easy, UnderstandingRating.Clear)
+        fun corrections() = runBlocking { db.eventLogDao().getAll().filter { it.type == "RATING_CORRECTED" } }
+
+        repo.editReviewRating(unitId, -1L, MemoryRating.Good, UnderstandingRating.Clear) // a pure replay
+        repo.editReviewRating(unitId, second, MemoryRating.Good, UnderstandingRating.Clear) // changes nothing
+        assertEquals("a replay or an unchanged correction records nothing", 0, corrections().size)
+
+        repo.editReviewRating(unitId, second, MemoryRating.Forgot, UnderstandingRating.Partial)
+        val recorded = corrections().single()
+        assertEquals(unitId, recorded.unitId)
+        assertEquals("log=$second memory=Good>Forgot understanding=Clear>Partial", recorded.detail)
+        assertEquals("and the log holds the new answer", "Forgot", db.reviewLogDao().getLogsForUnitOnce(unitId).first { it.id == second }.memoryRating)
+    }
+
     private fun newUnit(title: String, studiedAt: Long): StudyUnitEntity {
         val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, highYield = false)
         return StudyUnitEntity(

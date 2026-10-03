@@ -279,7 +279,7 @@ class ReviewViewModel(
                 if (dismissedAt >= 0 && unit.reviewCount < dismissedAt + 5) return@launch
                 val recalls = repository.getLogsForUnit(unit.id).first()
                     .filter { it.logType == "RECALL" }
-                    .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+                    .sortedWith(com.example.data.local.entity.REVIEW_HISTORY_ORDER)
                 if (recalls.size < 4) return@launch
                 // A "reversal" = adjacent ratings jumping between strong (Good/Easy) and Forgot.
                 fun strong(r: String) = r == "Good" || r == "Easy"

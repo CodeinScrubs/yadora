@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.example.MedReviewApplication
 import com.example.data.JsonStreams.jsonValue
+import com.example.data.local.entity.REVIEW_HISTORY_ORDER
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -58,7 +59,12 @@ object AnalyticsExporter {
             "(the notification's 'Not today'), REDISTRIBUTE ('Spread out'), SNOOZE, MERGE, NOTIF_SHOWN (a reminder posted; " +
             "source=alarm, snooze, safety_worker or boot_catchup, the last two being catch-ups for an alarm that did not come), " +
             "MISSED_REMINDER_REPORT (the learner's own report, with a snapshot), REMINDER_FIRED, REMINDERS_ON / REMINDERS_OFF " +
-            "(the Settings switch) and the PERSONAL_MODEL family.")
+            "(the Settings switch), APP_OPENED (from=notification, alarm or widget: a tap that opened the app), " +
+            "RATING_CORRECTED (log=<id> memory=<before>><after> understanding=<before>><after>: the log itself holds the " +
+            "corrected answer, and every later log of that topic was recomputed) and the PERSONAL_MODEL family.")
+        put("historyOrder", "Walk a topic's reviewLogs by id, the order they were saved, not by reviewedAt: a phone clock set " +
+            "back between two reviews gives the later one the earlier time. The app replays in id order, and elapsedDays is " +
+            "never negative.")
         put("reminderFired", "REMINDER_FIRED: one per reminder alarm that reached the app. detail: slot (primary = the set time " +
             "and its ~3-hourly repeats, secondary, snooze, test), scheduled (epoch ms it was armed for), late_s (seconds after " +
             "that), exact (1 = exact alarm), idle (Doze), saver (battery saver), bucket (standby: 10 active, 20 working set, " +
@@ -159,7 +165,10 @@ object AnalyticsExporter {
         // exact or not, Doze, battery saver, standby bucket, what it did), the Settings switch logs REMINDERS_ON/OFF,
         // and reminderHealth snapshots what decides whether a reminder can reach the learner. Two months on friends'
         // phones are the only way to see Doze and OEM battery managers over real days (docs/PILOT.md, D11).
-        root.put("exportVersion", 13)
+        // v14: histories in saved order (historyOrder: by id, not time), APP_OPENED (a tap on a reminder, the alarm or
+        // the widget) and RATING_CORRECTED (the answer a correction replaced), so a reminder can be followed to the review
+        // it led to, and a corrected rating told from an original one.
+        root.put("exportVersion", 14)
         root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
@@ -344,7 +353,7 @@ object AnalyticsExporter {
         val scheduledForByLog = HashMap<Long, Long>(logs.size)
         for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
             var dueAt = unitStudiedAt[unitId]
-            for (l in unitLogs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))) {
+            for (l in unitLogs.sortedWith(REVIEW_HISTORY_ORDER)) {
                 if (dueAt != null) scheduledForByLog[l.id] = dueAt
                 dueAt = l.reviewedAt + (l.nextIntervalDays * 86400000.0).toLong()
             }
@@ -375,7 +384,7 @@ object AnalyticsExporter {
         }
         val deferralsByLog = HashMap<Long, Int>(logs.size)
         for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
-            val ordered = unitLogs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+            val ordered = unitLogs.sortedWith(REVIEW_HISTORY_ORDER)
             var windowStart = unitStudiedAt[unitId] ?: 0L
             val ownTimes = unitDeferralTimes[unitId].orEmpty()
             for (l in ordered) {
@@ -466,7 +475,7 @@ object AnalyticsExporter {
             if (u.parameterSetId !in usableSetIds) flag("UNKNOWN_PARAMETER_SET", u.id, "topic names weight set ${u.parameterSetId}")
         }
         for (u in units) {
-            val mine = logsByUnit[u.id].orEmpty().sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+            val mine = logsByUnit[u.id].orEmpty().sortedWith(REVIEW_HISTORY_ORDER)
             // A graded review is the first log plus every non-FIRST_STUDY log; later FIRST_STUDY rows
             // are re-encoding exposures (post-merge) and must not be counted as retrievals.
             val graded = mine.filterIndexed { i, log -> i == 0 || log.logType != "FIRST_STUDY" }

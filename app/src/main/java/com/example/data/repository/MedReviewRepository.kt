@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.example.data.local.dao.CategoryDao
 import com.example.data.local.dao.ReviewLogDao
 import com.example.data.local.dao.StudyUnitDao
+import com.example.data.local.entity.REVIEW_HISTORY_ORDER
 import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.data.text.TopicTitle
@@ -166,7 +167,7 @@ class MedReviewRepository(
         // A personal weight set is projected onto exactly like a new model: by replaying the real history.
         val target = MedScheduler.activeParameterSet
 
-        val logs = history.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+        val logs = history.sortedWith(REVIEW_HISTORY_ORDER)
         if (logs.isEmpty()) {
             // Never rated: no evidence to replay, so only the model label changes.
             return unit.copy(memoryModel = MedScheduler.CURRENT_MODEL.id, parameterSetId = target.id, updatedAt = System.currentTimeMillis())
@@ -258,7 +259,7 @@ class MedReviewRepository(
         val merged = mergedUnitIds()
         return reviewLogDao.getAllLogsOnce().groupBy { it.studyUnitId }.filterKeys { it !in merged }.values.mapNotNull { logs ->
             com.example.domain.srs.Fsrs6Optimizer.historyOf(
-                logs.sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+                logs.sortedWith(REVIEW_HISTORY_ORDER)
                     .map { com.example.domain.srs.Fsrs6Optimizer.Event(it.reviewedAt, it.memoryRating, it.logType) },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
         }
@@ -501,9 +502,8 @@ class MedReviewRepository(
             // counts left the survivor one review ahead of its own history per absorbed first study (seen on the
             // Samsung: "row says 8, history has 7"), so a later correction silently changed the count and with it
             // the fuzz seed. Only those demoted seeds come off the sum; every real review still counts.
-            val byTime = compareBy<com.example.data.local.entity.ReviewLogEntity>({ it.reviewedAt }, { it.id })
-            val copyFirstLogs = (listOf(survivorLogs) + absorbedLogs).mapNotNull { it.minWithOrNull(byTime) }
-            val combinedFirstId = copyFirstLogs.minWithOrNull(byTime)?.id
+            val copyFirstLogs = (listOf(survivorLogs) + absorbedLogs).mapNotNull { it.minWithOrNull(REVIEW_HISTORY_ORDER) }
+            val combinedFirstId = copyFirstLogs.minWithOrNull(REVIEW_HISTORY_ORDER)?.id
             val demotedSeeds = copyFirstLogs.filter { it.id != combinedFirstId && it.logType == "FIRST_STUDY" }
 
             // The merged topic comes back on the earliest date any copy had. When that date is later than both
@@ -727,7 +727,7 @@ class MedReviewRepository(
      * from the logs, the single source of truth, so the preview, the commit and the replay agree.
      */
     suspend fun unrepairedStreak(unitId: Long): Int = MedScheduler.unrepairedStreak(
-        reviewLogDao.getLogsForUnitOnce(unitId).map { it.memoryRating to it.understandingRating },
+        reviewLogDao.getLogsForUnitOnce(unitId).sortedWith(REVIEW_HISTORY_ORDER).map { it.memoryRating to it.understandingRating },
     )
 
     /** Every committed study action's timestamp — feeds the growth visual (survives topic deletion). */
@@ -1037,11 +1037,10 @@ class MedReviewRepository(
         newUnderstanding: UnderstandingRating?,
     ) {
         val unit = studyUnitDao.getUnitById(unitId) ?: return
-        // Deterministic ordering: two logs can share a millisecond (restored/synthetic data) — break
-        // ties by insertion id so replay order can never silently differ between runs. One-shot read: a
-        // Flow's query would run outside this transaction.
+        // The order the reviews happened in (REVIEW_HISTORY_ORDER: saved order, not the clock, which can go back).
+        // One-shot read: a Flow's query would run outside this transaction.
         val logs = reviewLogDao.getLogsForUnitOnce(unitId)
-            .sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+            .sortedWith(REVIEW_HISTORY_ORDER)
         if (logs.isEmpty()) return
         if (logId != -1L) {
             // A correction of a log that is gone (undone meanwhile) corrects nothing.
@@ -1309,6 +1308,19 @@ class MedReviewRepository(
         database.withTransaction {
             updatedLogs.forEach { reviewLogDao.insertLog(it) }
             studyUnitDao.updateUnit(finalUnit)
+            // The answer the learner first gave survives its correction: the replay rewrites the log in place, and
+            // without this the research export could not tell a corrected rating from an original one, nor which
+            // later predictions a correction recomputed (an outside audit, 2026-10-02).
+            if (logId != -1L) logs.firstOrNull { it.id == logId }?.let { before ->
+                database.eventLogDao().insert(
+                    com.example.data.local.entity.EventLogEntity(
+                        type = "RATING_CORRECTED",
+                        unitId = unitId,
+                        detail = "log=$logId memory=${before.memoryRating}>${newMemory.name} " +
+                            "understanding=${before.understandingRating}>${newUnderstanding?.name ?: before.understandingRating}",
+                    )
+                )
+            }
         }
     }
 }

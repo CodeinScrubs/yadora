@@ -67,6 +67,31 @@ def test_real_export_replays_exactly():
     print(f"real export: {logs} logs replayed exactly; {len(summary['decisions'])} decision rules evaluated")
 
 
+def test_a_clock_set_back_and_a_corrected_rating_replay_exactly():
+    """The fixture holds a topic reviewed with the clock set back (a later review with an earlier time) and one
+    corrected rating (export v14). Both replay exactly in saved order, and the predictions the correction recomputed
+    are left out of the calibration evidence here (the app's own calibration still counts them; recorded in CLAUDE.md)."""
+    d = fixture()
+    by_unit = {}
+    for log in d["reviewLogs"]:
+        by_unit.setdefault(log["studyUnitId"], []).append(log)
+    skewed = [u for u, logs in by_unit.items()
+              if [l["id"] for l in sorted(logs, key=lambda l: l["reviewedAt"])] != sorted(l["id"] for l in logs)]
+    assert skewed, "the fixture must keep a history whose saved order differs from its time order"
+    fixes = [e for e in d["eventLogs"] if e["type"] == "RATING_CORRECTED"]
+    assert len(fixes) == 1, fixes
+    summary, _, files = run([d])
+    assert summary["integrity"]["mismatched"] == 0, summary["integrity"]
+    unit, fix = fixes[0]["unitId"], fixes[0]
+    corrected_log = int(analyze.parse_detail(fix["detail"])["log"])
+    recomputed = [l for l in by_unit[unit] if l["logType"] == "RECALL" and l["id"] > corrected_log and l["reviewedAt"] < fix["at"]]
+    assert recomputed, "the correction must have recomputed later reviews"
+    assert "a rating correction recomputed their prediction" in files["report.md"]
+    assert summary["participants"][d["participantId"]]["rating_corrections"] == 1
+    assert summary["first_rating_value"]["n"] > 0, summary["first_rating_value"]
+    print(f"a clock set back and a corrected rating replay exactly; {len(recomputed)} recomputed predictions left out")
+
+
 def test_a_tampered_interval_is_caught():
     d = fixture()
     bad = copy.deepcopy(d)
@@ -192,6 +217,10 @@ def with_reminders(d, missing_days=(), late_days=(), off_days=()):
     events.append(dict(at=at(3, 9), type="REMINDER_FIRED", unitId=None,
                        detail=f"slot=test scheduled={at(3, 9) - 99_000_000} late_s=99000 exact=1 idle=0 saver=0 bucket=10 outcome=test"))
     events.append(dict(at=at(4, 16), type="NOTIF_SHOWN", unitId=None, detail="source=safety_worker due=3"))
+    # one posted reminder that was tapped five minutes later, and a widget tap
+    events.append(dict(at=at(2, 10) + 2000, type="NOTIF_SHOWN", unitId=None, detail="source=alarm due=3"))
+    events.append(dict(at=at(2, 10, 5), type="APP_OPENED", unitId=None, detail="from=notification"))
+    events.append(dict(at=at(6, 13), type="APP_OPENED", unitId=None, detail="from=widget"))
     d["eventLogs"] = sorted(events, key=lambda e: e["at"])
     d["exportVersion"] = 13
     d["reminderHealth"] = dict(notificationsAllowed=True, reminderChannelOn=True, exactAlarmsAllowed=True, fullScreenAllowed=True,
@@ -207,6 +236,7 @@ def test_reminder_delivery_finds_the_days_a_phone_never_reminded():
     assert len(r["missed_days"]) == 2, r
     assert r["late"] == 1 and r["fires"] == 2 * 16, r  # the test reminder is not counted
     assert r["safety_net"] == 1 and r["health_problems"] == ["battery optimization on"], r
+    assert (r["posted"], r["opened"], r["widget_opens"]) == (2, 1, 1), r  # the safety-net one was not tapped
     d11 = next(x for x in summary["decisions"] if x["id"] == "D11")
     assert d11["verdict"] == "LOOK" and "88.9% of days" in d11["result"], d11
     assert "days without a reminder" in files["report.md"] and r["missed_days"][0] in files["report.md"]
@@ -269,6 +299,7 @@ def test_the_summary_prints_on_a_console_that_cannot_encode_it():
 
 if __name__ == "__main__":
     test_real_export_replays_exactly()
+    test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
     test_a_tampered_interval_is_caught()
     test_a_tampered_prediction_and_elapsed_are_caught()
     test_several_participants_and_duplicates()
