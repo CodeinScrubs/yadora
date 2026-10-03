@@ -396,9 +396,11 @@ class OwnerYearSoakTest {
             writeText(json.toString())
         }
 
-        // A backup restores to exactly the same data.
+        // A backup restores to exactly the same data. The file is kept too: a year-sized library to restore on a phone or
+        // an emulator (Settings -> Import backup), where only a device shows how long a restore of this size takes.
         fun comparable(s: String) = JSONObject(s).apply { remove("exportedAt") }.toString()
         assertEquals("backup -> restore -> backup is the identity", comparable(backup), comparable(BackupManager.buildBackupJson(app)))
+        java.io.File(System.getProperty("user.dir"), "build/owner-soak/yadora_owner_year_backup.json").writeText(backup)
 
         // Replay == live: rebuilding every topic's schedule from its own history reproduces the row.
         for (id in order) {

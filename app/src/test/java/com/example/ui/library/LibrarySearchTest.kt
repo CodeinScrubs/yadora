@@ -61,18 +61,56 @@ class LibrarySearchTest {
         4L to "كليه", 5L to "Infectious")
     private val systems = mapOf(1L to "Internal medicine", 2L to "داخلی", 3L to "Surgery", 4L to "Step 2")
 
-    @Test fun the_index_finds_exactly_what_the_per_keystroke_search_found() {
+    /**
+     * One word: exactly what the per-keystroke search found. Several words: everything it found and more, and every
+     * extra topic holds each word somewhere (a text, its subject or its collection).
+     */
+    @Test fun the_index_finds_what_the_per_keystroke_search_found() {
         val rng = Random(7)
         val units = library(400, rng)
         val index = LibrarySearch.index(units)
         val queries = words + words.flatMap { w -> (1..w.length).map { w.take(it) } } +
-            listOf("", " ", "  acute  ", "a", "1", "۱", "ي", "ی", "card", "قلب و", "step", "zzz")
+            listOf("", " ", "  acute  ", "a", "1", "۱", "ي", "ی", "card", "قلب و", "step", "zzz",
+                "pneumonia acute", "acute pneumonia", "card ecg", "قلب نارسایی")
+        var widened = 0
         for (q in queries.distinct()) {
-            assertEquals("query \"$q\"", reference(units, q, subjects, systems).map { it.id },
-                LibrarySearch.search(index, q, subjects, systems).map { it.id })
+            val before = reference(units, q, subjects, systems).map { it.id }
+            val now = LibrarySearch.search(index, q, subjects, systems).map { it.id }
+            val queryWords = TopicTitle.normalize(q).split(' ').filter { it.isNotEmpty() }
+            if (queryWords.size <= 1) {
+                assertEquals("query \"$q\"", before, now)
+                continue
+            }
+            assertTrue("query \"$q\": nothing the old search found is lost", now.containsAll(before))
+            assertEquals("query \"$q\": the list keeps its order", units.map { it.id }.filter { it in now }, now)
+            val byId = units.associateBy { it.id }
+            for (id in now - before.toSet()) {
+                val u = byId.getValue(id)
+                val texts = LibrarySearch.keysOf(u) + listOfNotNull(subjects[u.subjectId], systems[u.systemId]).map { TopicTitle.searchKey(it) }
+                assertTrue("query \"$q\": topic $id holds every word", queryWords.all { w -> texts.any { it.contains(w) } })
+                widened++
+            }
         }
+        assertTrue("several-word queries found topics the one-run search missed", widened > 0)
         // A blank query keeps the list as it is, in its order.
         assertEquals(units.map { it.id }, LibrarySearch.search(index, "  ", subjects, systems).map { it.id })
+    }
+
+    /** Each word on its own: another word order, or a subject together with a word of the title (2026-10-04). */
+    @Test fun every_word_of_the_query_is_found_on_its_own() {
+        fun topic(id: Long, title: String, subjectId: Long?) =
+            StudyUnitEntity(id = id, title = title, studyType = "Topic", studiedAt = 0L, nextReviewAt = 0L, subjectId = subjectId)
+        val heartFailure = "نارسایی قلب" // "heart failure", Persian word order
+        val units = listOf(topic(1, heartFailure, 2), topic(2, "Topic 303-0", 1), topic(3, "Topic 304-1", 3))
+        val index = LibrarySearch.index(units)
+        fun ids(q: String) = LibrarySearch.search(index, q, subjects, systems).map { it.id }
+        assertEquals("the words in the other order", listOf(1L), ids("قلب نارسایی"))
+        assertEquals("and in the stored order", listOf(1L), ids(heartFailure))
+        assertEquals("typed with an Arabic yeh", listOf(1L), ids("قلب نارسايي"))
+        assertEquals("a subject and a word of the title", listOf(2L), ids("cardio 303"))
+        assertEquals("every word must be found", emptyList<Long>(), ids("cardio 304"))
+        assertEquals("a word repeated counts once", listOf(2L), ids("303 303"))
+        assertEquals("one word, as before", listOf(3L), ids("304"))
     }
 
     /** Typing in a year's library: about 2,000 topics, many with long notes. Printed, so a slow phone build shows. */

@@ -107,6 +107,29 @@ class DailySnapshotTest {
         assertEquals(listOf("code=4 name=1.1 previous=0", "code=5 name=1.2 previous=4"), details)
     }
 
+    /**
+     * A restore replaces the event log, so both are recorded again afterwards: the restored library's load the same day,
+     * and the build on this phone. Their marks are device-local, and kept they silenced both on a phone restored onto.
+     */
+    @Test
+    fun `after a restore the day's load and the build are recorded again`() = runBlocking {
+        val db = app.database
+        val now = System.currentTimeMillis()
+        // Never rated: a backup whose topics claim reviews must carry their history, or the restore refuses it.
+        db.studyUnitDao().insertUnit(unit("a topic", 0, now - 2 * day))
+        val backup = BackupManager.buildBackupJson(app) // a file from before anything was recorded
+        DailySnapshot.recordOnce(app, now)
+        AppVersionLog.recordIfChanged(app, 4, "1.1")
+        assertEquals(1, snapshots().size)
+        BackupManager.restoreFromJson(app, backup)
+        assertEquals("the file's own events replace this phone's", 0, snapshots().size)
+        DailySnapshot.recordOnce(app, now + 60_000L)
+        AppVersionLog.recordIfChanged(app, 4, "1.1")
+        assertEquals("the restored library's load, the same day", 1, snapshots().size)
+        assertEquals(listOf("code=4 name=1.1 previous=0"),
+            db.eventLogDao().getAll().filter { it.type == AppVersionLog.EVENT }.map { it.detail })
+    }
+
     @Test
     fun `the research export carries both and explains them`() = runBlocking {
         app.database.studyUnitDao().insertUnit(unit("a topic", 2, System.currentTimeMillis() - 2 * day))

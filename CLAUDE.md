@@ -1447,8 +1447,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Changed:** "Save and review now" on an existing topic's page saves the form, then opens the one-topic session
     ("Save and rate now" for an unrated topic; hidden when the page was opened from a review in progress,
     `Screen.EditUnit.fromReview`; `SaveAndReviewNowTest`). The Library search folds each topic's texts once per change
-    of the list, not per keystroke (`ui/library/LibrarySearch`; `LibrarySearchTest` pins it against the per-keystroke
-    search: 2,000 topics with long notes, 47 ms a keystroke before, 0.3 ms now). A restore inserts in batches, and
+    of the list, not per keystroke (`ui/library/LibrarySearch`: 2,000 topics with long notes, about 50 ms a keystroke
+    before, 0.3–2 ms now), and since 2026-10-04 matches each WORD of the query on its own: "قلب نارسایی" finds
+    "نارسایی قلب", "neuro 303" a Neurology topic with 303 in its title (the whole query used to have to appear as one
+    run of text). One word is the old rule exactly, and more words only add matches; `LibrarySearchTest` pins both
+    against the per-keystroke search. A restore inserts in batches, and
     Settings shows a progress dialog, which cannot be dismissed, during a backup, an export, a restore or a share (the
     soak's year, 1,935 topics and 16,699 reviews in a 14 MB file, restored in 2.8 s on the desktop JVM against 9.6 s one
     row at a time; a phone is several times slower). "Spread out" writes `OverdueRedistributor.deferrals`, the one definition the soak drives too.
@@ -1459,8 +1462,21 @@ These were decided deliberately. Re-suggesting them wastes a session:
     limit), written by MainActivity's start or the 6-hourly safety worker, whichever runs first; APP_VERSION
     (`data/AppVersionLog`), the first run of each build. Neither is written at process start: a thread there raced
     every test that reads the event log (BackupRoundTripTest's `single()`). The day already recorded and the last build
-    live in the device-only transient prefs. `analyze.py` reports a daily-load table per phone (the backlog's trend per
-    30 days included) and each phone's builds; descriptive, no decision rule. `DailySnapshotTest`, `test_analyze.py`.
+    live in the device-only transient prefs; a restore clears both marks, because it replaces the event log (kept, they
+    stopped a phone restored onto from logging that day's load, or its build at all). `analyze.py` reports a daily-load
+    table per phone (the backlog's trend per 30 days included) and each phone's builds; descriptive, no decision rule.
+    `DailySnapshotTest`, `test_analyze.py`.
+  - **On an emulator** (2026-10-04, Android 16, a temporary AVD on F:, Persian): install, launch and both reminders as
+    `smoke.sh` checks them; the 1,935-topic year (`app/build/owner-soak/yadora_owner_year_backup.json`, written by the
+    soak) restored through Settings with the progress dialog up the whole time, Today then showing 37 reviews, the
+    Library 1,935 topics; the R8 release installed over it; "drugs heart" found "Heart failure — drugs"; after a restore
+    of the seed the rebuilt app logged APP_VERSION and a DAILY_SNAPSHOT matching Today (14 offered: 2 first ratings, 12
+    reviews). Not measured: how long a year-sized restore takes on a phone (this emulator, with software graphics and a
+    busy host, gave 40–200 s and is no guide). Gotcha: the headless emulator (`-no-window`, SwiftShader) crashed, an
+    access violation in its JIT-compiled renderer code, each time a reviewed topic's page opened (the forgetting-curve
+    chart; all 120,475 of its points across both test libraries are finite and in [0, 1], and the page works on the
+    Samsung). Started from Git Bash such a crash leaves no Windows error report and looks like the emulator being
+    killed; start it with PowerShell's `Start-Process` to see the report.
   - **Measured on the real code** (`OwnerYearSoakTest`: Asia/Tehran, 365 days, the default limit of 50; 10% of days
     off, 15% light, 0–10 new topics on the rest; Not today, Spread out, Review more anyway, review-now including
     same-day second looks, Review ahead on spare evenings and a last-month push, rating corrections, a mid-year phone

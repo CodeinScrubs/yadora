@@ -7,8 +7,8 @@ import com.example.data.text.TopicTitle
  * The Library search, with each topic's texts folded ONCE ([TopicTitle.searchKey]) when the list changes, not on every
  * keystroke. The search used to fold the title, scope, key points, notes and source of every topic for each letter
  * typed: with a year of exam preparation (about 2,000 topics, many with long notes) that is megabytes of text per
- * keystroke on a phone, queued behind each other as the learner types. The matching rule is unchanged: a topic matches
- * when any of its own texts, its subject or its collection contains the query, all folded the same way.
+ * keystroke on a phone, queued behind each other as the learner types. A topic matches when every word of the query is
+ * in one of its own texts, its subject or its collection, all folded the same way ([search]).
  */
 internal object LibrarySearch {
 
@@ -23,8 +23,12 @@ internal object LibrarySearch {
             .filter { it.isNotEmpty() }
 
     /**
-     * The topics matching [query], in the order given; every topic for a blank query. Subject and collection names are
-     * folded per search: there are a few dozen of them, not thousands.
+     * The topics matching [query], in the order given; every topic for a blank query. Each WORD of the query must be
+     * found on its own, in any of the topic's texts, its subject or its collection (2026-10-04): "قلب نارسایی" finds
+     * "نارسایی قلب", and "neuro 303" a Neurology topic titled "Topic 303". The whole query used to have to appear as one
+     * run of text, so a phrase typed in another word order, or a subject plus a word of the title, found nothing. A
+     * one-word query is the rule it always was, and more words only ever add matches: words found together are also
+     * found one by one. Subject and collection names are folded per search: there are a few dozen, not thousands.
      */
     fun search(
         entries: List<Entry>,
@@ -32,12 +36,17 @@ internal object LibrarySearch {
         subjectNames: Map<Long, String>,
         systemNames: Map<Long, String>,
     ): List<StudyUnitEntity> {
-        val key = TopicTitle.searchKey(query)
-        if (key.isEmpty()) return entries.map { it.unit }
-        val subjectHits = subjectNames.filterValues { TopicTitle.searchKey(it).contains(key) }.keys
-        val systemHits = systemNames.filterValues { TopicTitle.searchKey(it).contains(key) }.keys
+        // normalize() folds the words exactly as searchKey() folds the texts; split on the single spaces it leaves.
+        val words = TopicTitle.normalize(query).split(' ').filter { it.isNotEmpty() }.distinct()
+        if (words.isEmpty()) return entries.map { it.unit }
+        val subjectHits = words.map { w -> subjectNames.filterValues { TopicTitle.searchKey(it).contains(w) }.keys }
+        val systemHits = words.map { w -> systemNames.filterValues { TopicTitle.searchKey(it).contains(w) }.keys }
         return entries
-            .filter { e -> e.keys.any { it.contains(key) } || e.unit.subjectId in subjectHits || e.unit.systemId in systemHits }
+            .filter { e ->
+                words.indices.all { i ->
+                    e.keys.any { it.contains(words[i]) } || e.unit.subjectId in subjectHits[i] || e.unit.systemId in systemHits[i]
+                }
+            }
             .map { it.unit }
     }
 }

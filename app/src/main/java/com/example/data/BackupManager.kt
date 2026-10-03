@@ -505,6 +505,15 @@ object BackupManager {
         }
         // The scheduler must see the restored weight sets before anything schedules again.
         runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }
+        // The event log was just replaced, so today's load and this phone's build are recorded again from the restored
+        // data when the app next starts (DailySnapshot, AppVersionLog). Their "already recorded" marks are device-local
+        // and would otherwise keep a phone restored onto from logging either until tomorrow, or its build at all.
+        runCatching {
+            com.example.notifications.NotificationScheduler.transientPrefs(context).edit {
+                remove(DailySnapshot.PREF_DAY)
+                remove(AppVersionLog.PREF_LAST_VERSION_CODE)
+            }
+        }
 
         // Restore the study setup too (v3+ backups; older files simply have no settings object).
         // Language/theme apply fully on the next app start; the caller already re-arms the reminder.
