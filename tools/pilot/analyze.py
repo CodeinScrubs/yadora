@@ -27,10 +27,13 @@ What it checks, in the order the report gives it:
      study day. A scheduling problem and a usage problem look alike in the numbers; this separates them. And
      the reminders: did each phone deliver one every day, on time (export v13+, REMINDER_FIRED events)?
   3. Calibration: does the model's predicted recall match what learners report? Pooled, per participant,
-     per review number, per first rating, per elapsed time, per method; for each weight set also the Brier
-     score, observed over expected, calibration-in-the-large and the calibration slope, with 95% intervals.
+     per review number, per first rating, per elapsed time, per subject, per method; for each weight set also
+     the Brier score, observed over expected, calibration-in-the-large and the calibration slope, with 95%
+     intervals, and the gap with an interval that counts each topic's reviews as one cluster. Each learner's
+     raw interval scale with its interval, and the spread between learners that the app's prior assumes.
   4. The first interval: observed recall at the first review, per first rating, against the default weights.
-  5. Self-ratings against question scores, where learners entered them.
+  5. Self-ratings against question scores, where learners entered them, by score band: the only objective
+     check of generous rating.
   6. Review method: does the next review find a topic better or worse than predicted, by how it was reviewed?
   7. A held-out pooled refit of a few weights, judged the way the app judges its personal model.
   8. Decision rules, fixed in advance in docs/PILOT.md, evaluated on the numbers above.
@@ -682,7 +685,7 @@ def within_participant_difference(by_person: Dict[str, Dict[str, List[float]]]) 
     nq*nr/(nq+nr). Pooling everyone instead compares people as much as methods: if one learner mostly does
     questions and rates generously while another mostly reads, the pooled gap is theirs, not the methods'. Topics
     are still chosen by the learner, so the result stays observational. Added 2026-09-28."""
-    num = den = 0.0
+    num = den = var_num = 0.0
     people, nq_total, nr_total = 0, 0, 0
     for groups in by_person.values():
         q, r = groups.get("Questions only", []), groups.get("Reading only", [])
@@ -691,12 +694,58 @@ def within_participant_difference(by_person: Dict[str, Dict[str, List[float]]]) 
         w = len(q) * len(r) / (len(q) + len(r))
         num += w * (statistics.fmean(q) - statistics.fmean(r))
         den += w
+        # Since 2026-10-03 the difference carries a 95% interval, and D7 needs it to exclude 0: with 100 reviews
+        # after each method a 5-point threshold alone fires about one time in four when the methods are equal.
+        var_num += w * w * (statistics.variance(q) / len(q) + statistics.variance(r) / len(r))
         people += 1
         nq_total += len(q)
         nr_total += len(r)
     if not people:
         return None
-    return dict(diff=num / den, participants=people, n_questions=nq_total, n_reading=nr_total)
+    diff, se = num / den, math.sqrt(var_num) / den
+    return dict(diff=diff, se=se, ci=(diff - 1.96 * se, diff + 1.96 * se), participants=people,
+                n_questions=nq_total, n_reading=nr_total)
+
+
+def clustered_gap(items: Sequence[Tuple[float, bool, object]]) -> Optional[dict]:
+    """Reported minus predicted recall, with a 95% interval that counts each topic's reviews as one cluster (a
+    cluster-robust variance). Reviews of one topic can move together, for instance a topic harder than its prediction
+    failing several times in a row, and an interval that treats them as independent is then too narrow.
+    design_effect is the clustered variance over the independent one (1 = the reviews behave as independent).
+    Added 2026-10-03, when outside researchers asked whether the pilot's review counts overstate its certainty."""
+    n = len(items)
+    if n < 2:
+        return None
+    gaps = [(1.0 if y else 0.0) - p for p, y, _ in items]
+    g = statistics.fmean(gaps)
+    sums: Dict[object, float] = defaultdict(float)
+    for (_, _, c), d in zip(items, gaps):
+        sums[c] += d - g
+    k = len(sums)
+    if k < 2:
+        return dict(gap=g, gap_ci=None, design_effect=None, clusters=k)
+    naive = sum((d - g) ** 2 for d in gaps) / (n * (n - 1))
+    clustered = k / (k - 1) * sum(s * s for s in sums.values()) / (n * n)
+    half = 1.96 * math.sqrt(clustered)
+    return dict(gap=g, gap_ci=(g - half, g + half), design_effect=clustered / naive if naive > 0 else None, clusters=k)
+
+
+def moment_scale_ci(predicted: Sequence[float], recalled: Sequence[bool], model: ym.Fsrs6) -> dict:
+    """The raw interval scale (RecallCalibration's moment estimate) with a 95% interval, by the delta method on the
+    moment equation sum R_i(k) = recalls: var(ln k) = sum R(1 - R) / (sum dR/dln k)^2 at the estimate. Near 90%
+    predicted recall a review says little about k (about 19/n for var(ln k)), which is why the app shrinks the
+    estimate by n / (n + 120): 120 is that 19 over an assumed spread between learners of 0.4 in ln k. Added 2026-10-03."""
+    k = ym.moment_scale(predicted, recalled, model)
+    num = den = 0.0
+    for p in predicted:
+        x = min(max(p, 1e-9), 1.0) ** (1.0 / model.decay) - 1.0
+        r = (1.0 + x / k) ** model.decay
+        num += r * (1.0 - r)
+        den += -model.decay * (x / k) * (1.0 + x / k) ** (model.decay - 1.0)
+    if den <= 0:
+        return dict(scale=k, ci=None, se_log=None)
+    se = math.sqrt(num) / den
+    return dict(scale=k, ci=(k * math.exp(-1.96 * se), k * math.exp(1.96 * se)), se_log=se)
 
 
 def calib_block(rows: List[Row], pred_attr="predicted") -> dict:
@@ -711,6 +760,8 @@ def calib_block(rows: List[Row], pred_attr="predicted") -> dict:
         log_loss=ym.log_loss(pairs), auc=ym.auc(pairs),
         rmse_bins=ym.rmse_bins([(getattr(r, pred_attr), r.success, r.elapsed_days or 0.0, max(r.review_number, 1),
                                  r.lapses_before) for r in rows if getattr(r, pred_attr) is not None]),
+        clustered=clustered_gap([(getattr(r, pred_attr), r.success, (r.participant, r.unit_id))
+                                 for r in rows if getattr(r, pred_attr) is not None]),
         **logistic_calibration(pairs),
     )
 
@@ -1141,6 +1192,13 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                    "calibration slope (95% CI; ideal 1)"],
                   [[label, fmt(b.get("brier"), 4), fmt(b.get("oe"), 3), ci(b, "citl"), ci(b, "slope")]
                    for label, b in (("raw model", c), ("with the per-user scale", cc))])
+        cl = cc.get("clustered") or {}
+        if cl.get("gap_ci"):
+            rep.p(f"Reported minus predicted (with the per-user scale): **{100 * cl['gap']:+.1f} points**, 95% CI "
+                  f"{100 * cl['gap_ci'][0]:+.1f} to {100 * cl['gap_ci'][1]:+.1f} counting each topic's reviews as one "
+                  f"cluster ({cl['clusters']} topics; design effect {fmt(cl['design_effect'], 2)}: 1 means the reviews "
+                  "behave as independent, 2 means the review count overstates the evidence twofold). The intervals above "
+                  "treat every review as independent.")
         summary.setdefault("calibration", {})[f"{model}/{sid}"] = dict(raw=c, calibrated=cc)
     bins = [(0, .5), (.5, .7), (.7, .8), (.8, .85), (.85, .9), (.9, .95), (.95, 1.0001)]
     rows_b = []
@@ -1180,25 +1238,49 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                              lambda r: "none" if r.notes_length <= 0 else ("1–200 chars" if r.notes_length <= 200 else "200+ chars"),
                              recalls_pred)
     summary["by_session"] = by("session kind", lambda r: r.session_kind or "not recorded", recalls_pred)
+    # Different materials are forgotten at different rates (Sense et al. 2016; across medical disciplines D'Eon 2006),
+    # so a per-subject calibration may one day beat a per-learner one. This is where the pilot would show it.
+    summary["by_subject"] = by("subject", lambda r: r.subject or "(no subject)", recalls_pred)
 
     # per-participant scale, as the app computes it
     rows_k = []
     m0 = ym.Fsrs6()
+    spread = []
     for pid in summary["participants"]:
         ev = [r for r in recalls_pred if r.participant == pid and r.parameter_set == 0 and r.elapsed_days is not None
               and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
         ev = ev[-ym.CAL_WINDOW:]
         if ev:
-            raw = ym.moment_scale([r.predicted for r in ev], [r.success for r in ev], m0)
+            est = moment_scale_ci([r.predicted for r in ev], [r.success for r in ev], m0)
+            raw = est["scale"]
             shr = ym.calibration_scale([r.predicted for r in ev], [r.success for r in ev], m0)
-            rows_k.append([pid, len(ev), fmt(raw, 2), fmt(shr, 2)])
+            rows_k.append([pid, len(ev), fmt(raw, 2), f"{fmt(est['ci'][0], 2)}–{fmt(est['ci'][1], 2)}" if est["ci"] else "–",
+                           fmt(shr, 2)])
             summary["participants"][pid]["scale_raw"] = raw
+            summary["participants"][pid]["scale_raw_ci"] = est["ci"]
             summary["participants"][pid]["scale_app"] = shr
+            if est["se_log"] and 0.25 < raw < 4.0:
+                spread.append((math.log(raw), est["se_log"], len(ev)))
     rep.p("Per-user interval scale (RecallCalibration; 1 = the defaults fit this learner; above 1 = remembers longer "
           "than predicted). 'raw' is the moment estimate on the evidence rows, 'app' what the app applies after shrinkage "
           "(never above 1 since 2026-09-28: generous ratings look exactly like slower forgetting, so only 'raw' shows "
-          "a slower forgetter):")
-    rep.table(["participant", "evidence reviews", "raw scale", "app scale"], rows_k)
+          "a slower forgetter). Near 90% predicted recall one review says little about the scale, so expect wide "
+          "intervals below a few hundred evidence reviews:")
+    rep.table(["participant", "evidence reviews", "raw scale", "95% CI", "app scale"], rows_k)
+    summary["scale_spread"] = None
+    if len(spread) >= 3:
+        between = statistics.variance([s[0] for s in spread])
+        noise = statistics.fmean([s[1] ** 2 for s in spread])
+        tau2 = max(0.0, between - noise)
+        per_review = statistics.fmean([s[1] ** 2 * s[2] for s in spread])
+        prior = per_review / tau2 if tau2 > 0 else None
+        summary["scale_spread"] = dict(tau=math.sqrt(tau2), prior_reviews=prior, learners=len(spread))
+        rep.p(f"Spread of the raw scale between learners beyond each one's own noise: τ = **{math.sqrt(tau2):.2f}** in "
+              f"ln k, from {len(spread)} learners. The app's prior of {ym.CAL_PRIOR_REVIEWS} pseudo-reviews is the "
+              "empirical-Bayes value for τ ≈ 0.4 at reviews near 90% predicted recall; the prior that would match these "
+              "learners is " + (f"**{prior:.0f}** pseudo-reviews" if prior else "larger than any these data can support "
+              "(no spread beyond noise)") + ". With this few learners τ is a rough guide, not a reason to change the "
+              "constant (a population prior goes through D4 and D5).")
 
     # ---- first interval ----------------------------------------------------------------------------------
     rep.h("5. The first interval: is the first review too early or too late?")
@@ -1251,6 +1333,33 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
               f"{over}; Forgot with 80%+ right: {under}.")
         rep.table(["rating", "reviews", "mean right", "median right", "questions answered"], rows_q)
         summary["question_scores"].update(over_rated=over, under_rated=under)
+        # The objective check outside researchers asked for (2026-10-03, docs/RESEARCHER_PROMPT.md A3): from ratings
+        # alone a learner who calls lapses Hard looks exactly like one who forgets slowly; the score tells them apart.
+        bands = (("under 40%", 0.0, 0.4), ("40–59%", 0.4, 0.6), ("60–79%", 0.6, 0.8), ("80–100%", 0.8, 1.0001))
+        rows_band, band_summary = [], {}
+        for name, lo, hi in bands:
+            rs = [r for r in scored if lo <= r.q_pct < hi]
+            if not rs:
+                continue
+            counts = Counter(r.rating for r in rs)
+            ok = sum(1 for r in rs if r.rating != "Forgot") / len(rs)
+            rows_band.append([name, len(rs)] + [counts.get(x, 0) for x in RATINGS] + [fmt_p(ok)])
+            band_summary[name] = dict(n=len(rs), counts={x: counts.get(x, 0) for x in RATINGS}, rated_success=ok)
+        rep.p("The same reviews by the share answered right. Chance alone gets 20–25% of 4- or 5-option questions right, "
+              "so a low band full of Hard, Good and Easy is what generous rating looks like; only these scores can tell it "
+              "from slow forgetting:")
+        rep.table(["share right", "reviews"] + list(RATINGS) + ["rated a success"], rows_band)
+        per_q = []
+        for pid in summary["participants"]:
+            rs = [r for r in scored if r.participant == pid]
+            if not rs:
+                continue
+            low = [r for r in rs if r.q_pct < 0.4]
+            rho_p = spearman([RATINGS.index(r.rating) for r in rs], [r.q_pct for r in rs])
+            per_q.append([pid, len(rs), fmt(rho_p, 2), len(low),
+                          fmt_p(sum(1 for r in low if r.rating != "Forgot") / len(low)) if low else "–"])
+        rep.table(["participant", "scored reviews", "rank correlation", "under 40% right", "of those rated a success"], per_q)
+        summary["question_scores"].update(bands=band_summary)
     else:
         rep.p("No review carries a question score yet.")
 
@@ -1285,8 +1394,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     wp = summary["method_within_participant"]
     rep.p("The same comparison inside each learner (Questions only minus Reading only, among learners with at least "
           f"{WITHIN_MIN} next reviews after each), so that differences between people cannot pose as a difference "
-          "between methods: " + (f"**{wp['diff']:+.3f}** from {wp['participants']} learner(s), "
-                                 f"{wp['n_questions']}/{wp['n_reading']} reviews. D7 reads this number."
+          "between methods: " + (f"**{wp['diff']:+.3f}** (95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}) from "
+                                 f"{wp['participants']} learner(s), {wp['n_questions']}/{wp['n_reading']} reviews. D7 "
+                                 "reads this number and its interval."
                                  if wp else "no learner used both methods often enough yet. D7 waits for it."))
     own = defaultdict(list)
     for r in recalls_pred:
@@ -1336,6 +1446,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
 
     rep.h("Notes for whoever reads this next")
     rep.p("- The ratings are self-reports. Section 6 is the only check against something objective.")
+    rep.p("- How often each decision rule fires by chance, and what it can miss, is in docs/PILOT.md (\"What each rule "
+          "can detect\"). With a handful of learners a WAIT or an OK is not proof that nothing is wrong.")
     rep.p("- Two months of data cannot test long intervals: almost every review here is within ~60 days of the previous one.")
     rep.p("- Change nothing that CLAUDE.md lists as a settled decision without the owner; the reasons are written there.")
     rep.p("- Behaviour changes are simulated before they are argued: tools/pilot/simulate.py (add --weights fitted_weights.json).")
@@ -1364,9 +1476,14 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
     if cal and cal[0]["calibrated"].get("n", 0) >= 300:
         c = cal[0]["calibrated"]
         gap = c["observed"] - c["predicted"]
+        # Amended 2026-10-03, before any pilot data: a gap past 5 points must also have a topic-clustered 95% interval
+        # that excludes 0, so reviews that move together within a topic cannot pass for evidence (PILOT.md).
+        ci_gap = (c.get("clustered") or {}).get("gap_ci")
+        sure = ci_gap is not None and (ci_gap[0] > 0 or ci_gap[1] < 0)
         add("D2", "Does reported recall match the (calibrated) prediction within 5 points?",
-            f"reported {fmt_p(c['observed'])} vs predicted {fmt_p(c['predicted'])} (n={c['n']})",
-            "OK" if abs(gap) <= 0.05 else "LOOK")
+            f"reported {fmt_p(c['observed'])} vs predicted {fmt_p(c['predicted'])} (n={c['n']}"
+            + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else ")"),
+            "OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT"))
     else:
         add("D2", "Does reported recall match the (calibrated) prediction within 5 points?", "fewer than 300 reviews", "WAIT")
 
@@ -1411,9 +1528,13 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
     wp = summary.get("method_within_participant")
     if q and rd and q["n"] >= 100 and rd["n"] >= 100 and wp:
         # Judged within each learner (2026-09-28, before any pilot data): the pooled gap is shown for comparison only.
+        # Amended 2026-10-03, before any data: a 5-point difference must also have a 95% interval that excludes 0. With
+        # 100 reviews after each method the threshold alone fired about one time in four on equal methods (PILOT.md).
+        sure = wp["ci"][0] > 0 or wp["ci"][1] < 0
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
-            f"{wp['diff']:+.3f} within learners ({wp['participants']}); pooled {q['mean'] - rd['mean']:+.3f} "
-            f"(n={q['n']}/{rd['n']})", "LOOK" if abs(wp["diff"]) >= 0.05 else "OK")
+            f"{wp['diff']:+.3f} (95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}) within learners ({wp['participants']}); "
+            f"pooled {q['mean'] - rd['mean']:+.3f} (n={q['n']}/{rd['n']})",
+            "OK" if abs(wp["diff"]) < 0.05 else ("LOOK" if sure else "WAIT"))
     elif q and rd and q["n"] >= 100 and rd["n"] >= 100:
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
             f"no learner used both methods {WITHIN_MIN}+ times; pooled {q['mean'] - rd['mean']:+.3f} compares people, "
@@ -1490,7 +1611,7 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
     with open(os.path.join(out_dir, "participants.csv"), "w", newline="", encoding="utf-8-sig") as f:
         keys = ["participant", "file", "app", "device", "time_zone", "language", "retention", "daily_limit", "reminders",
                 "topics", "active_topics", "logs", "first_studies", "recalls", "span_days", "active_days",
-                "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_app",
+                "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_raw_ci", "scale_app",
                 "reminder_days", "days_without_reminder", "reminder_fires", "late_reminders", "safety_net_reminders",
                 "reminder_health_problems", "opened_from_reminder", "reviewed_after_reminder", "rating_corrections"]
         w = csv.writer(f)
