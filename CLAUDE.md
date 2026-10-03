@@ -1487,8 +1487,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **The simulation's finding** (§2.8, model-based): with a fixed daily budget and a finite syllabus, the split of the
     day between new material and reviews decides the exam score when time is tight (20–45 points at 20 units a day),
     and the target then moves it by about one point; spare time on Review ahead beats a higher target (98.7% against
-    95.0% unused and 97.6% at 0.95); targets switched in phases never beat a flat one. The lever in the app is the daily
-    limit. Its default (50) and the 0.90 target stay.
+    95.0% unused and 97.6% at 0.95); targets switched in phases never beat a flat one. For the owner's 2,000 topics, 30
+    review-units a day cannot cover them, 45 does only with new material protected (92%), 70 is comfortable (97.6%):
+    seven hours is 70 units only at about six minutes a review. The lever in the app is the daily limit. Its default
+    (50) and the 0.90 target stay.
   - **Not built** (the owner, 2026-10-03): a mock-exam log (the results go to the chat, to be compared with the logs),
     and a time field per review (a topic's review time varies, and that is fine).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact

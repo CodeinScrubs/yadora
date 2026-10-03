@@ -521,8 +521,21 @@ studied at least once, unless a share is given):
   best flat target by more than 0.1 point, and 0.90 then 0.97 cost about 3 points on the weakest tenth.
 - **Feasibility is the real risk.** If a review of one chapter-sized topic takes 10–15 minutes, seven hours is about
   28–42 units. Around 30 is the edge for 1,000 topics. For 1,600, 30 units covers the syllabus only with new material
-  protected (86.5% on exam day), and 45 units reaches 95–96%; 2,000 was not simulated. Only the logs can show which
-  side of that edge a learner is on, so the app records the day's load since 2026-10-03 (export v15, DAILY_SNAPSHOT;
+  protected (86.5% on exam day), and 45 units reaches 95–96%. For **2,000 topics**, the owner's own target (run
+  2026-10-04, 3 seeds a cell; at most 10 new topics a day, so covering them takes about eight months anyway):
+
+  | review units a day | reviews first: 0.85 / 0.90 / 0.95 | reviews at most 40% of the day until covered |
+  |---|---|---|
+  | 30 | 52.4 / 46.5 / 33.1 (studied 57 / 49 / 34%) | 72.8 / 72.6 / 72.1 (93% studied) |
+  | 45 | 79.9 / 70.5 / 50.1 (86 / 74 / 51%) | 91.7 / 92.1 / 91.9 |
+  | 70 | 97.6 / 97.5 / 77.2 | 97.6 / 97.6 / 97.5 |
+
+  Thirty units a day cannot cover 2,000 topics, 45 does only with new material protected, and 70 is comfortable at any
+  target. Seven hours is 70 units only if a review averages about six minutes (a skim, a block of questions, a
+  rapid-review page, not a reread of the chapter), and the model charges a first study only three reviews' time, less
+  than a first reading of a chapter takes, so a real budget is tighter still. Time per review is the number that
+  decides the year, and the app does not measure it (by the owner's choice). Only the logs can show which side of
+  the edge a learner is on, so the app records the day's load since 2026-10-03 (export v15, DAILY_SNAPSHOT;
   `analyze.py` reports whether a backlog grows month after month).
 - **How many passes the default gives.** A topic studied now and reviewed on schedule until an exam 365 days later
   gets 9.3 passes at 0.90, the first study included (7.3 at 0.85, 11.1 at 0.93, 15.1 at 0.95), and is recalled at
