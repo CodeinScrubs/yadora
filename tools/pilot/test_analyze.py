@@ -165,6 +165,66 @@ def test_method_comparison_is_made_within_each_learner():
     print("the method comparison is made within each learner (a between-person gap is not read as a method effect)")
 
 
+def with_reminders(d, missing_days=(), late_days=(), off_days=()):
+    """The fixture with a planted reminder history (export v13): two alarms a day for the 20 days before the export,
+    none on `missing_days`, the evening one 30 minutes late on `late_days`, reminders switched off from noon to noon
+    across `off_days` (two consecutive days), a test reminder and one safety-net catch-up. Days count back from the
+    export day."""
+    import datetime as dt
+    d = copy.deepcopy(d)
+    tz, _ = analyze.zone_of(d)
+    export_day = dt.datetime.fromtimestamp(d["exportedAt"] / 1000, tz).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def at(days_back, hour, minute=0):
+        return int((export_day - dt.timedelta(days=days_back)).replace(hour=hour, minute=minute).timestamp() * 1000)
+
+    events = [e for e in d.get("eventLogs") or [] if e["type"] not in ("REMINDER_FIRED", "REMINDERS_ON", "REMINDERS_OFF")]
+    for k in range(1, 21):
+        if k in missing_days or k in off_days:
+            continue
+        for hour, slot in ((10, "primary"), (20, "secondary")):
+            late = 1800 if (k in late_days and slot == "secondary") else 2
+            events.append(dict(at=at(k, hour) + late * 1000, type="REMINDER_FIRED", unitId=None,
+                               detail=f"slot={slot} scheduled={at(k, hour)} late_s={late} exact=1 idle=1 saver=0 bucket=10 outcome=posted due=3"))
+    if off_days:
+        events.append(dict(at=at(max(off_days), 12), type="REMINDERS_OFF", unitId=None, detail=None))
+        events.append(dict(at=at(min(off_days), 12), type="REMINDERS_ON", unitId=None, detail=None))
+    events.append(dict(at=at(3, 9), type="REMINDER_FIRED", unitId=None,
+                       detail=f"slot=test scheduled={at(3, 9) - 99_000_000} late_s=99000 exact=1 idle=0 saver=0 bucket=10 outcome=test"))
+    events.append(dict(at=at(4, 16), type="NOTIF_SHOWN", unitId=None, detail="source=safety_worker due=3"))
+    d["eventLogs"] = sorted(events, key=lambda e: e["at"])
+    d["exportVersion"] = 13
+    d["reminderHealth"] = dict(notificationsAllowed=True, reminderChannelOn=True, exactAlarmsAllowed=True, fullScreenAllowed=True,
+                               batteryOptimizationIgnored=False, backgroundRestricted=False, standbyBucket=10, powerSaveMode=False)
+    return d
+
+
+def test_reminder_delivery_finds_the_days_a_phone_never_reminded():
+    d = with_reminders(fixture(), missing_days=(15, 5), late_days=(7,), off_days=(10, 9))
+    summary, _, files = run([d])
+    r = summary["reminders"][d["participantId"]]
+    assert r["days"] == 18, r  # 20 days, less the two with reminders switched off
+    assert len(r["missed_days"]) == 2, r
+    assert r["late"] == 1 and r["fires"] == 2 * 16, r  # the test reminder is not counted
+    assert r["safety_net"] == 1 and r["health_problems"] == ["battery optimization on"], r
+    d11 = next(x for x in summary["decisions"] if x["id"] == "D11")
+    assert d11["verdict"] == "LOOK" and "88.9% of days" in d11["result"], d11
+    assert "days without a reminder" in files["report.md"] and r["missed_days"][0] in files["report.md"]
+    clean = with_reminders(fixture())
+    summary, _, _ = run([clean])
+    assert next(x for x in summary["decisions"] if x["id"] == "D11")["verdict"] == "OK"
+    none, _, files = run([fixture()])  # a v13 export without a single fire: WAIT, and the report says why
+    assert next(x for x in none["decisions"] if x["id"] == "D11")["verdict"] == "WAIT"
+    assert "No reminder alarm fired" in files["report.md"]
+    old = copy.deepcopy(fixture())
+    old["exportVersion"] = 12
+    old.pop("reminderHealth", None)
+    summary, _, files = run([old])
+    assert next(x for x in summary["decisions"] if x["id"] == "D11")["verdict"] == "WAIT"
+    assert "predate it" in files["report.md"]
+    print("reminder delivery: missed days, a late alarm, days switched off and a safety-net catch-up are told apart")
+
+
 def test_a_backup_is_refused_with_an_explanation():
     backup = {"backupVersion": 9, "studyUnits": [], "reviewLogs": [], "subjects": []}
     backup.pop("reviewLogs")
@@ -183,6 +243,17 @@ def test_a_file_saved_with_a_byte_order_mark_still_loads():
         exports = analyze.load_exports([p], warnings.append)
         assert len(exports) == 1 and not warnings, warnings
     print("an export re-saved with a byte-order mark still loads")
+
+
+def test_fitted_weights_saved_with_a_byte_order_mark_still_load_in_the_simulation():
+    import simulate
+    weights = [0.2] * 21
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "fitted_weights.json")
+        with open(p, "w", encoding="utf-8-sig") as f:  # what Windows Notepad can write
+            json.dump({"weights": weights}, f)
+        assert simulate.load_weights(p) == weights
+    print("fitted_weights.json re-saved with a byte-order mark still loads in simulate.py")
 
 
 def test_the_summary_prints_on_a_console_that_cannot_encode_it():
@@ -204,7 +275,9 @@ if __name__ == "__main__":
     test_rows_a_correction_recomputed_are_not_calibration_evidence()
     test_calibration_slope_and_intercept_recover_a_planted_miscalibration()
     test_method_comparison_is_made_within_each_learner()
+    test_reminder_delivery_finds_the_days_a_phone_never_reminded()
     test_a_backup_is_refused_with_an_explanation()
     test_a_file_saved_with_a_byte_order_mark_still_loads()
+    test_fitted_weights_saved_with_a_byte_order_mark_still_load_in_the_simulation()
     test_the_summary_prints_on_a_console_that_cannot_encode_it()
     print("all checks passed")

@@ -467,6 +467,14 @@ def fmt(pair, pct=True, digits=1):
     return f"{mean:.{digits}f} ±{sd:.{digits}f}"
 
 
+def load_weights(path):
+    """A weight list, or analyze.py's fitted_weights.json ({"weights": [...]}). utf-8-sig: Windows Notepad can save it
+    with a byte-order mark, which json.load refuses (an outside audit, 2026-10-03)."""
+    with open(path, encoding="utf-8-sig") as f:
+        w = json.load(f)
+    return w["weights"] if isinstance(w, dict) else w
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--seeds", type=int, default=8)
@@ -477,8 +485,7 @@ def main():
     seeds = 3 if args.quick else args.seeds
     scenarios = standard_scenarios()
     if args.weights:
-        w = json.load(open(args.weights))
-        w = w["weights"] if isinstance(w, dict) else w
+        w = load_weights(args.weights)
         for sc in scenarios:
             sc.true_weights = w
     if args.quick:

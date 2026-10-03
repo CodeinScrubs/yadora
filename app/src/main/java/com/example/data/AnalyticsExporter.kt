@@ -54,6 +54,19 @@ object AnalyticsExporter {
             "AHEAD = 'review ahead' (not yet due, weakest first). Null = logged before v12.")
         put("understandingRating", "'How well do you understand it now?' Confused / Partial / Clear; NotAsked after Forgot.")
         put("consistency", "consistency.issues lists broken invariants: each one is a bug report, not a statistic. Empty is expected.")
+        put("eventLogs", "Non-review actions, oldest first: STUDY_ACTION, PROCRASTINATE (a topic's 'Not today'), PROCRASTINATE_ALL " +
+            "(the notification's 'Not today'), REDISTRIBUTE ('Spread out'), SNOOZE, MERGE, NOTIF_SHOWN (a reminder posted; " +
+            "source=alarm, snooze, safety_worker or boot_catchup, the last two being catch-ups for an alarm that did not come), " +
+            "MISSED_REMINDER_REPORT (the learner's own report, with a snapshot), REMINDER_FIRED, REMINDERS_ON / REMINDERS_OFF " +
+            "(the Settings switch) and the PERSONAL_MODEL family.")
+        put("reminderFired", "REMINDER_FIRED: one per reminder alarm that reached the app. detail: slot (primary = the set time " +
+            "and its ~3-hourly repeats, secondary, snooze, test), scheduled (epoch ms it was armed for), late_s (seconds after " +
+            "that), exact (1 = exact alarm), idle (Doze), saver (battery saver), bucket (standby: 10 active, 20 working set, " +
+            "30 frequent, 40 rare, 45 restricted), outcome (posted, nothing_due, just_shown, not_posted, error, test) and due. " +
+            "A day with reminders on and no fire at all is a reminder the phone never delivered.")
+        put("reminderHealth", "Read at export: notifications allowed, the reminder channel on, exact alarms allowed, full-screen " +
+            "alarm allowed, battery optimization ignored, background restricted, standby bucket, battery saver, the second " +
+            "daily slot's hour, and when a reminder was last shown. Null = could not be read.")
         put("tools", "tools/pilot/analyze.py in the Yadora repository reads one or many of these files and writes a report.")
     }
 
@@ -142,7 +155,11 @@ object AnalyticsExporter {
         // question score (questionsCorrect/questionsTotal) and which kind of session logged it
         // (sessionKind: PLAN / EXTRA / TOPIC / AHEAD); per topic content-free size proxies (notesLength,
         // hasSource); and a fieldGuide, so the file explains itself to whoever -- or whatever -- reads it.
-        root.put("exportVersion", 12)
+        // v13: reminder delivery. Every reminder alarm logs a REMINDER_FIRED event (when it was due, how late it came,
+        // exact or not, Doze, battery saver, standby bucket, what it did), the Settings switch logs REMINDERS_ON/OFF,
+        // and reminderHealth snapshots what decides whether a reminder can reach the learner. Two months on friends'
+        // phones are the only way to see Doze and OEM battery managers over real days (docs/PILOT.md, D11).
+        root.put("exportVersion", 13)
         root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
@@ -182,6 +199,13 @@ object AnalyticsExporter {
             java.io.File(context.filesDir, "crash.log").takeIf { it.exists() }?.readText()?.takeLast(8000)
         }.getOrNull()
         root.put("lastCrashLog", crashTail ?: JSONObject.NULL)
+
+        // What decides whether a reminder can reach the learner, read now: the same checks as Settings' Reminder
+        // Health, plus the battery and standby state Android rations alarms by. With the REMINDER_FIRED events it
+        // tells a phone that stopped reminding from a learner who stopped reviewing.
+        root.put("reminderHealth", JSONObject().apply {
+            com.example.notifications.ReminderTelemetry.healthSnapshot(context).forEach { (k, v) -> put(k, v ?: JSONObject.NULL) }
+        })
 
         // Subject/system id → name maps, so exported unit ids are interpretable without the raw DB.
         root.put("subjects", JSONObject().apply { subjects.forEach { put(it.id.toString(), it.name) } })

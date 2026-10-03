@@ -730,10 +730,6 @@ class MedReviewRepository(
         reviewLogDao.getLogsForUnitOnce(unitId).map { it.memoryRating to it.understandingRating },
     )
 
-    suspend fun deleteLogById(logId: Long) {
-        reviewLogDao.deleteLogById(logId)
-    }
-
     /** Every committed study action's timestamp — feeds the growth visual (survives topic deletion). */
     fun studyActionTimes(): Flow<List<Long>> = database.eventLogDao().observeStudyActionTimes()
 

@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -101,7 +102,10 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
         NavHost(
             navController = navController,
             startDestination = Screen.Today,
-            modifier = Modifier.padding(innerPadding),
+            // Consumed as well as applied: every screen has its own Scaffold, and its top bar and content insets counted
+            // the status and navigation bars a second time. Every screen opened with a status bar's height of empty
+            // space above its title, and the + button and the keyboard sat a navigation bar too high (2026-10-03).
+            modifier = Modifier.padding(innerPadding).consumeWindowInsets(innerPadding),
             // Calm cross-fade between screens — direction-agnostic, so it reads the same in RTL and
             // never fights the bottom-tab siblings. Momentum, not fireworks.
             enterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(com.example.ui.theme.AppMotion.StandardMs, easing = com.example.ui.theme.AppMotion.Standard)) },

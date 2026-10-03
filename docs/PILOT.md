@@ -10,6 +10,8 @@ the short Persian guide in [PILOT_GUIDE_FA.md](PILOT_GUIDE_FA.md). The reasoning
 
 - whether every phone scheduled exactly what the rules say (the integrity replay);
 - whether friends use it as intended: first ratings on the study day, reviews near their dates, the backlog;
+- whether each phone delivered a reminder every day, on time (Doze and the makers' battery managers over real
+  weeks, which no afternoon of device testing shows);
 - whether reported recall matches predicted recall, overall and at the first review;
 - whether memory ratings follow question scores;
 - whether learners forget faster or slower than the defaults assume;
@@ -70,7 +72,9 @@ Settings → **Share research data** → send the file to the organiser.
 The file (`yadora_research_YD-XXXX-XXXX_<date>.json`):
 
 - **Contains:** every review's timing, ratings, predictions and intervals; subject names; device model and
-  Android version; time zone; the last crash log; the research ID.
+  Android version; time zone; the last crash log; the research ID; every reminder alarm (when it was due, how
+  late it came, whether the phone was in Doze) and what the phone allowed reminders to do when the file was made
+  (notifications, exact alarms, battery optimization, standby bucket).
 - **Does not contain:** topic titles, notes, scope lines, key points or sources.
 
 It is sensitive, not anonymous: subject names and a device model can identify someone who knows them.
@@ -120,11 +124,17 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 | D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
 | D9 | Are at least 80% of first ratings given on the study day? | ≥ 80%, n ≥ 50 | The first-rating flow is being skipped. Look at "Save and rate now" and the Today prompt. |
 | D10 | Are fewer than 40% of successful reviews answered Partial/Confused? | < 40%, n ≥ 100 | The repair clock is adding a lot of load. Check its backoff in simulation. |
+| D11 | Did every phone deliver a reminder on at least 95% of days, and at least 95% within 10 minutes of their time? | per phone with ≥ 14 days of reminder data (export v13+) | A phone that drops or delays reminders. Read its "health at export" in `report.md` §3 first (battery optimization, exact alarms, standby bucket) and fix that phone's settings. If they were right, it is a bug in the reminder path: a missed reminder is a product failure. |
 
 Why these thresholds:
 
 - D2 and D3 allow ~5–7 points, because two months of self-reported recall on whole topics cannot resolve
   finer than that.
+- D11 (added 2026-10-03, before any data): every reminder alarm that reaches the app is logged, and every day
+  with reminders on has at least one (the set time or the second slot fires even when nothing is due), so a day
+  without one is a reminder the phone never delivered. Days with reminders switched off in Settings are left
+  out. Exact alarms come within seconds, even in Doze; 10 minutes leaves room for a busy phone, and an inexact
+  alarm (no exact-alarm permission) can come up to about an hour late, which D11 should flag.
 - D5 uses exactly the gate the app applies to the personal model, so the pilot cannot adopt weights the app
   itself would reject. Two limits, stated before the data exists (2026-09-28): the split is in TIME within the
   same participants, so a pass shows the refit predicts these learners' later reviews, not a new student's;
@@ -181,7 +191,7 @@ file, with this prompt:
 >
 > 1. Check report.md §2 (integrity). Any mismatch is a bug: say which phone, build and log, and what code
 >    path could produce it.
-> 2. Go through decision rules D1–D10 in docs/PILOT.md. For every LOOK, use reviews.csv to test whether it
+> 2. Go through decision rules D1–D11 in docs/PILOT.md. For every LOOK, use reviews.csv to test whether it
 >    holds per participant, or whether one person drives it.
 > 3. For any change you recommend, state the expected effect and how to test it with
 >    tools/pilot/simulate.py, and name the tests that must change (goldens, ReplayEqualsLiveTest,
@@ -195,6 +205,6 @@ file, with this prompt:
 | when | what |
 |---|---|
 | week 0 | build tagged, installed, onboarding done, reminders tested, research IDs noted |
-| week 2 | first export from everyone → `analyze.py` → fix any D1 bug, reply to confusion |
+| week 2 | first export from everyone → `analyze.py` → fix any D1 bug, fix the settings of any phone the reminder table in §3 flags, reply to confusion |
 | weeks 3–8 | normal use; no setting changes |
 | week 8 | final export, optional retention check, full analysis, simulation on fitted weights |

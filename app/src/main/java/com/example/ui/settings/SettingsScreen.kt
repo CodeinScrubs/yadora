@@ -488,6 +488,14 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 } else {
                                     NotificationScheduler.cancelReminder(context)
                                 }
+                                // The pilot reads days without a reminder as a phone problem unless it can see they were off.
+                                exportScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching {
+                                        (context.applicationContext as com.example.MedReviewApplication).database.eventLogDao().insert(
+                                            com.example.data.local.entity.EventLogEntity(type = if (isChecked) "REMINDERS_ON" else "REMINDERS_OFF")
+                                        )
+                                    }
+                                }
                             }
                         )
                     }

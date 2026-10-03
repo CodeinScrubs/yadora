@@ -45,6 +45,10 @@ object TopicTitle {
                 'أ', 'إ', 'آ' -> 'ا' // hamza-carrying alefs -> bare alef
                 'ؤ' -> 'و'           // waw with hamza -> waw
                 'ئ' -> 'ی'           // yeh with hamza -> yeh
+                // Persian and Arabic-Indic digits -> ASCII: NFKC leaves them alone, and a Persian keyboard types
+                // "فصل ۱" for a topic saved as "فصل 1" (an outside report, 2026-10-03).
+                in '۰'..'۹' -> '0' + (ch - '۰')
+                in '٠'..'٩' -> '0' + (ch - '٠')
                 else -> ch
             }
             when {
