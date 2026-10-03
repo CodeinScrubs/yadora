@@ -563,9 +563,9 @@ expect):
   the comparison, so ability, motivation and hours cancel. Splitting students instead needs several times more of
   them. Every arm reviews (nothing is withheld), the app times nothing, and "equal study" is held as an equal number
   of reviews per topic, counted from the logs.
-- **The comparison decides whether the study is feasible.** Against a fixed ladder (1-3-7-21-60 days), §2.5 expects
-  the averages within about 1 point (+0.2 to +1.4); the gain is in the weakest tenth of topics (72–83% against
-  90–92%). Against the student's own unscheduled review, §2 expects 5 to 8 points. A study powered for 5 points will
+- **The comparison decides whether the study is feasible.** Against a fixed ladder (§2.5 tested 1, 3, 7, 14, 30, 60,
+  120, 240 and 365 days), the averages came within about 1 point (+0.2 to +1.4); the gain is in the weakest tenth of
+  topics (72–83% against 90–92%). Against the student's own unscheduled review, §2 expects 5 to 8 points. A study powered for 5 points will
   almost surely find nothing against a ladder. That is not evidence against Yadora: the expected gain there is
   below what the study can see.
 - **How many students** (accuracy about 80%, topics differing by about 15 points, one paired difference per student,
