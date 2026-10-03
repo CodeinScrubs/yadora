@@ -476,10 +476,68 @@ literature the testing effect is worth about half a standard deviation over rest
 Adesope et al. 2017, g = 0.51 against restudying), far more than any interval rule left to tune. The Settings guide already says so; the pilot
 records the method (D7) so Yadora's own data can confirm it.
 
+### 2.8 One exam, a fixed daily budget (2026-10-03)
+
+The owner's year, as they described it: one residency exam in about a year, at least seven hours of study a day,
+about 2,000 topics by the end, new topics on some days and none on others. §2 to §2.7 give every learner a fixed
+number of new topics a day and ask whether scheduling beats no schedule at equal time. A student with one exam asks
+something else: with this much time a day and this syllabus, how should the day be split between new material and
+reviews, which target leaves the most on exam day, and what is a spare evening worth?
+
+`tools/pilot/one_exam.py` simulates exactly that (3 seeds a cell; with no budget it reproduces §2's Yadora twin,
+95.4% against 95.3%, 6.0 reviews a topic). Each study day (6 of 7) has a budget of review units: a remembered review
+costs 1, a forgotten one 1.5, and first studying a topic and rating it costs 3. The day runs as the app runs it: due
+reviews by the queue's own score, then new topics with what is left (up to 10 a day) until the syllabus has been
+studied once, then Review ahead with any time left. The exam score is the average recall over the WHOLE syllabus, a
+topic never studied counting 0: what a perfectly calibrated candidate earns on a four-option exam with negative
+marking. True memory is FSRS-6 and ratings are honest.
+
+A syllabus of 1,000 topics, a learner the defaults describe. Exam score at targets 0.85 / 0.90 / 0.95 (every topic
+studied at least once, unless a share is given):
+
+| review units a day | reviews first, new topics with what is left | reviews take at most 60% of the day until the syllabus is covered | at most 40% |
+|---|---|---|---|
+| 20 | 69.8 / 60.2 / 44.7 (studied 75 / 63 / 46%) | 79.9 / 77.1 / 74.6 (89 / 85 / 82%) | 89.2 / 89.1 / 88.1 |
+| 30 | 96.2 / 92.9 / 66.1 (100 / 98 / 68%) | 96.7 / 96.1 / 96.8 | 95.9 / 95.5 / 96.4 |
+| 45 | 98.6 / 98.7 / 98.0 | 98.7 / 98.6 / 98.5 | 98.5 / 98.5 / 98.4 |
+
+- **When time is tight, the split decides, not the target.** With reviews first, every review the schedule asks for
+  takes time from material not yet studied once, and a higher target asks for more of them: at 20 units a day, 0.95
+  leaves more than half the syllabus never studied. Protecting time for new material until the syllabus is covered
+  is worth 20–45 points there, and the target then moves the score by about one point. With time to spare (45 units)
+  nothing matters much. In the app the split is the daily limit, and doing the day's new material before "Review more
+  anyway". The price of protecting new material is the tail: at 20 units and 40%, the weakest tenth sits at 57–68%,
+  against 86–95% for the topics a reviews-first learner covered.
+- **The same held** for a learner who forgets 1.7× faster (at 30 units: 89.7 / 81.2 / 59.4 reviews first, 92.8–94.6
+  with the share protected), for a first study costing 5 units, and for 1,600 topics, where 30 units a day cannot
+  cover the syllabus with reviews first (58% at 0.90) and covers it with 40% protected (86.5%), and 45 units reaches
+  95% only when new material is protected or the target is 0.85.
+- **Spare time is worth more on Review ahead than on a higher target.** At 45 units a day and 0.90, the time left
+  after the day's reviews brings 98.7% on exam day when it goes to Review ahead and 95.0% when it is left unused; a
+  0.95 target without Review ahead reaches 97.6%. At 70 units: 99.3% against 95.1% and 97.7%. So Review ahead pays
+  whenever time is left, not only in the last four weeks (§2.5 tested only those). Today's caption says so since
+  2026-10-03.
+- **Switching the target in phases** (0.85 or 0.90 until the syllabus is covered, then 0.95 or 0.97) never beat the
+  best flat target by more than 0.1 point, and 0.90 then 0.97 cost about 3 points on the weakest tenth.
+- **Feasibility is the real risk.** If a review of one chapter-sized topic takes 10–15 minutes, seven hours is about
+  28–42 units. Around 30 is the edge for 1,000 topics. For 1,600, 30 units covers the syllabus only with new material
+  protected (86.5% on exam day), and 45 units reaches 95–96%; 2,000 was not simulated. Only the logs can show which
+  side of that edge a learner is on, so the app records the day's load since 2026-10-03 (export v15, DAILY_SNAPSHOT;
+  `analyze.py` reports whether a backlog grows month after month).
+- **How many passes the default gives.** A topic studied now and reviewed on schedule until an exam 365 days later
+  gets 9.3 passes at 0.90, the first study included (7.3 at 0.85, 11.1 at 0.93, 15.1 at 0.95), and is recalled at
+  94.8% on exam day (0.95: 97.6%). A plan of "about ten passes per subject" is what the default already does for the
+  first topics; the last ones get fewer.
+
+Not tested: exam-aware skipping or ordering, subjects that weigh more on the exam, topics with different review
+costs, whole topics forgetting differently from flashcards (§2.6), and inflated ratings in this setting. The exam
+date still feeds nothing: none of this needs it.
+
 ## 3. What changed in the app because of this research
 
 1. **Review ahead.** Weakest first, not yet due, on Today when the day is done (§2.1). The exam-countdown
-   copy in Settings now points to it for the final weeks.
+   copy in Settings now points to it for the final weeks, and since 2026-10-03 (§2.8) Today's caption and the
+   countdown copy call it a good use of any spare time.
 2. **Pilot data that cannot be backfilled later** (DB v10, export v12, backup v9):
    - how each review was done (optional: Questions, Reading, Lecture/video, Other);
    - an optional question score (right / out of);

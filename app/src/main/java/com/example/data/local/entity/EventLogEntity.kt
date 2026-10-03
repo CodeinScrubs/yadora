@@ -20,7 +20,9 @@ data class EventLogEntity(
     // PROJECTION_FAILED | MISSED_REMINDER_REPORT | PERSONAL_MODEL | PERSONAL_MODEL_FAILED | PERSONAL_MODEL_OFF |
     // PERSONAL_MODEL_DISCARDED | PERSONAL_MODEL_RETIRED (an active set with its grades out of order, at refresh) |
     // REMINDER_FIRED (every reminder alarm, ReminderTelemetry) | REMINDERS_ON | REMINDERS_OFF (the Settings switch) |
-    // APP_OPENED (from a reminder, the alarm or the widget) | RATING_CORRECTED (com.example.data.RecomputedPredictions)
+    // APP_OPENED (from a reminder, the alarm or the widget) | RATING_CORRECTED (com.example.data.RecomputedPredictions) |
+    // DAILY_SNAPSHOT (the day's load, once a day: com.example.data.DailySnapshot) |
+    // APP_VERSION (the first run of a new build: code, name, previous code; com.example.data.AppVersionLog)
     val type: String,
     val unitId: Long? = null,
     val detail: String? = null,

@@ -363,6 +363,66 @@ def test_reminder_delivery_finds_the_days_a_phone_never_reminded():
     print("reminder delivery: missed days, a late alarm, days switched off and a safety-net catch-up are told apart")
 
 
+def with_daily_load(d, days=40, missing=(33,), backlog_from=20):
+    """The fixture with a planted daily-load history (export v15): one DAILY_SNAPSHOT at 07:00 on each of the `days`
+    days before the export, none on `missing` (days back), a backlog that starts `backlog_from` days into the span and
+    grows by 2 a day with half of it held back by the limit, a second snapshot on one day that must not count, and two
+    builds (4 from the first day, 5 from day 25)."""
+    import datetime as dt
+    d = copy.deepcopy(d)
+    tz, _ = analyze.zone_of(d)
+    export_day = dt.datetime.fromtimestamp(d["exportedAt"] / 1000, tz).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def at(days_back, hour):
+        return int((export_day - dt.timedelta(days=days_back)).replace(hour=hour).timestamp() * 1000)
+
+    events = [e for e in d.get("eventLogs") or [] if e["type"] not in ("DAILY_SNAPSHOT", "APP_VERSION")]
+    for k in range(days):  # k = days into the span; days_back = days - k
+        if days - k in missing:
+            continue
+        overdue = 2 * max(0, k - backlog_from)
+        events.append(dict(at=at(days - k, 7), type="DAILY_SNAPSHOT", unitId=None,
+                           detail=f"active={100 + k} rated={90 + k} due={30 + overdue} overdue={overdue} "
+                                  f"oldest_overdue_days={max(0, k - backlog_from)} first=2 offered={min(50, 30 + overdue)} "
+                                  f"held={overdue // 2} done=0 deferred=1 limit=50"))
+    events.append(dict(at=at(days - 30, 21), type="DAILY_SNAPSHOT", unitId=None,  # a second writer that day: ignored
+                       detail="active=1 rated=1 due=999 overdue=999 oldest_overdue_days=999 first=0 offered=0 held=999 done=0 deferred=0 limit=10"))
+    events.append(dict(at=at(days, 6), type="APP_VERSION", unitId=None, detail="code=4 name=1.1 previous=0"))
+    events.append(dict(at=at(days - 25, 13), type="APP_VERSION", unitId=None, detail="code=5 name=1.2 previous=4"))
+    d["eventLogs"] = sorted(events, key=lambda e: e["at"])
+    d["exportVersion"] = 15
+    return d
+
+
+def test_the_daily_load_and_the_app_builds_are_reported():
+    d = with_daily_load(fixture())
+    summary, _, files = run([d])
+    pid = d["participantId"]
+    load = summary["load"][pid]
+    assert (load["days"], load["span_days"], load["days_without"]) == (39, 40, 1), load
+    assert load["overdue_max"] == 2 * 19 and load["oldest_overdue_max"] == 19, load  # the 999 day is not counted
+    assert load["days_with_backlog"] == 19 and load["days_held"] == 19 and load["held_max"] == 19, load
+    assert load["overdue_first30"] < load["overdue_last30"] and load["overdue_trend_per_30d"] > 0, load
+    assert load["limits"] == [50] and load["active_last"] == 139, load
+    builds = summary["app_versions"][pid]
+    assert [(b["code"], b["name"], b["previous"]) for b in builds] == [(4, "1.1", 0), (5, "1.2", 4)], builds
+    report = files["report.md"]
+    assert "Daily load: was the plan keeping up?" in report and "39 (40)" in report, report[-3000:]
+    assert "5 (1.2) from" in report
+    assert "app_builds" in files["participants.csv"].splitlines()[0]
+    # A file from before v15 says why there is no load table; a v15 file without snapshots says what writes one.
+    old = copy.deepcopy(fixture())
+    old["exportVersion"] = 14
+    _, _, files = run([old])
+    assert "these files predate it" in files["report.md"].split("Daily load")[1][:200]
+    none = copy.deepcopy(fixture())
+    none["exportVersion"] = 15
+    none["eventLogs"] = [e for e in none.get("eventLogs") or [] if e["type"] != "DAILY_SNAPSHOT"]
+    _, _, files = run([none])
+    assert "no snapshots in these files" in files["report.md"]
+    print("the daily load (a growing backlog, days held back, a day without a snapshot) and each build's first day are reported")
+
+
 def test_a_backup_is_refused_with_an_explanation():
     backup = {"backupVersion": 9, "studyUnits": [], "reviewLogs": [], "subjects": []}
     backup.pop("reviewLogs")
@@ -546,6 +606,7 @@ if __name__ == "__main__":
     test_d2_and_d7_need_an_interval_that_excludes_zero()
     test_subjects_and_the_spread_between_learners_are_reported()
     test_reminder_delivery_finds_the_days_a_phone_never_reminded()
+    test_the_daily_load_and_the_app_builds_are_reported()
     test_a_backup_is_refused_with_an_explanation()
     test_a_file_saved_with_a_byte_order_mark_still_loads()
     test_fitted_weights_saved_with_a_byte_order_mark_still_load_in_the_simulation()

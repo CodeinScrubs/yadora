@@ -1440,6 +1440,41 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Stale or not true:** MATH-01 / ENG-01 (replay by wall-clock order) was fixed in PR #17, as its own later check
     agrees; the instrumentation "Process crashed" was its harness's build-variant mismatch, not a product defect;
     "retention 70–99%" (the slider is 0.85–0.97); "the gate's z is inflated by clustering" (design effect 0.97).
+- **The owner's own year, checked end to end (2026-10-03)** (`OwnerYearSoakTest`; `tools/pilot/one_exam.py`, RESEARCH.md
+  §2.8). The owner's real use: one residency exam in about a year, at least seven hours of study a day, about 2,000 topics
+  by the end, new topics on some days and none on others, all reviews done on some days and some left on others, and
+  topics reviewed on their own initiative.
+  - **Changed:** "Save and review now" on an existing topic's page saves the form, then opens the one-topic session
+    ("Save and rate now" for an unrated topic; hidden when the page was opened from a review in progress,
+    `Screen.EditUnit.fromReview`; `SaveAndReviewNowTest`). The Library search folds each topic's texts once per change
+    of the list, not per keystroke (`ui/library/LibrarySearch`; `LibrarySearchTest` pins it against the per-keystroke
+    search: 2,000 topics with long notes, 47 ms a keystroke before, 0.3 ms now). A restore inserts in batches, and
+    Settings shows a progress dialog, which cannot be dismissed, during a backup, an export, a restore or a share (the
+    soak's year, 1,935 topics and 16,699 reviews in a 14 MB file, restored in 2.8 s on the desktop JVM against 9.6 s one
+    row at a time; a phone is several times slower). "Spread out" writes `OverdueRedistributor.deferrals`, the one definition the soak drives too.
+    Today's Review-ahead caption and the exam-countdown copy call it a good use of ANY spare time, not only of the last
+    four weeks.
+  - **Logged for the analysis (export v15):** DAILY_SNAPSHOT (`data/DailySnapshot`), at most once a local day, the day's
+    load as counts (due, overdue and the oldest, first ratings, offered, held back by the limit, done, deferred, the
+    limit), written by MainActivity's start or the 6-hourly safety worker, whichever runs first; APP_VERSION
+    (`data/AppVersionLog`), the first run of each build. Neither is written at process start: a thread there raced
+    every test that reads the event log (BackupRoundTripTest's `single()`). The day already recorded and the last build
+    live in the device-only transient prefs. `analyze.py` reports a daily-load table per phone (the backlog's trend per
+    30 days included) and each phone's builds; descriptive, no decision rule. `DailySnapshotTest`, `test_analyze.py`.
+  - **Measured on the real code** (`OwnerYearSoakTest`: Asia/Tehran, 365 days, the default limit of 50; 10% of days
+    off, 15% light, 0–10 new topics on the rest; Not today, Spread out, Review more anyway, review-now including
+    same-day second looks, Review ahead on spare evenings and a last-month push, rating corrections, a mid-year phone
+    change, a refit every 20 days): 1,935 topics, 14,764 reviews; exam day 96.9% against 90.7% for random review and
+    93.2% oldest-first at equal time; 99.8% of topics at 90%+, weakest tenth 93.2%, nothing overdue on exam day; every
+    refit refused (the simulated learner is the defaults' learner); the export replays all 16,699 logs exactly. CI runs
+    it and replays its export.
+  - **The simulation's finding** (§2.8, model-based): with a fixed daily budget and a finite syllabus, the split of the
+    day between new material and reviews decides the exam score when time is tight (20–45 points at 20 units a day),
+    and the target then moves it by about one point; spare time on Review ahead beats a higher target (98.7% against
+    95.0% unused and 97.6% at 0.95); targets switched in phases never beat a flat one. The lever in the app is the daily
+    limit. Its default (50) and the 0.90 target stay.
+  - **Not built** (the owner, 2026-10-03): a mock-exam log (the results go to the chat, to be compared with the logs),
+    and a time field per review (a topic's review time varies, and that is fine).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

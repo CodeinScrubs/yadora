@@ -10,6 +10,10 @@ interface EventLogDao {
     @Insert
     suspend fun insert(event: EventLogEntity): Long
 
+    /** Every event at once, for a restore: the same insert as [insert], one call instead of thousands. */
+    @Insert
+    suspend fun insertAll(events: List<EventLogEntity>)
+
     @Query("SELECT * FROM event_logs ORDER BY at ASC")
     suspend fun getAll(): List<EventLogEntity>
 

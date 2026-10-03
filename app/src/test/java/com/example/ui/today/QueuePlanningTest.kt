@@ -102,6 +102,37 @@ class QueuePlanningTest {
         assertEquals(1, OverdueRedistributor.keptToday(5, 0, 0, 0))
     }
 
+    /**
+     * The rows "Spread out" writes (OverdueRedistributor.deferrals, 2026-10-03: the Today screen and OwnerYearSoakTest call
+     * the same function, so the soak never drives its own copy of the plan). First ratings stay due; the most urgent
+     * reviews fill what is left of today and are not written at all; every other review moves to 08:00 on its day as a
+     * USER deferral, with the model's own date untouched.
+     */
+    @Test fun spread_out_writes_deferrals_and_never_the_model_date() {
+        val first = topic(100, reviews = 0, dueDaysAgo = 4)
+        val reviews = (1L..30L).map { topic(it, reviews = 3, highYield = it <= 3, dueDaysAgo = (it % 7).toInt() + 1) }
+        val rows = OverdueRedistributor.deferrals(reviews + first, dueTodayReviews = 2, doneToday = 0, dailyCapacity = 10, now = now)
+        val kept = OverdueRedistributor.keptToday(30, 10, 0, 2)
+        assertEquals("all but the eight kept today are written", 30 - kept, rows.size)
+        assertTrue("a first rating is never deferred", rows.none { it.id == 100L })
+        val ordered = DailyPlan.byPriority(reviews, now)
+        assertEquals("the most urgent stay due today, untouched", ordered.take(kept).map { it.id }.toSet(),
+            reviews.map { it.id }.toSet() - rows.map { it.id }.toSet())
+        val offsets = OverdueRedistributor.dayOffsets(30, 10, kept)
+        val byId = reviews.associateBy { it.id }
+        ordered.drop(kept).forEachIndexed { i, unit ->
+            val row = rows.single { it.id == unit.id }
+            val target = OverdueRedistributor.targetMillis(now, offsets[kept + i])
+            assertEquals(target, row.nextReviewAt)
+            assertEquals("recorded as a deferral", target, row.deferredUntil)
+            assertEquals("the model's own date is never laundered", byId.getValue(unit.id).modelDueAt, row.modelDueAt)
+            assertEquals(now, row.updatedAt)
+        }
+        assertTrue("nothing to spread, nothing written", OverdueRedistributor.deferrals(listOf(first), 0, 0, 10, now).isEmpty())
+        assertEquals("pressed after the day's limit: every review moves", 30,
+            OverdueRedistributor.deferrals(reviews, dueTodayReviews = 0, doneToday = 10, dailyCapacity = 10, now = now).size)
+    }
+
     /** Calendar Plan days are half-open: a topic due at exactly midnight belongs to the day that midnight starts. */
     @Test fun the_forecast_puts_midnight_on_the_day_it_starts() {
         val day = 86_400_000L

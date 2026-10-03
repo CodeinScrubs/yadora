@@ -259,6 +259,36 @@ object OverdueRedistributor {
     /** The days the spread part of the plan actually uses (0 when nothing is spread): what the card announces. */
     fun daysUsed(total: Int, dailyCapacity: Int, kept: Int): Int = dayOffsets(total, dailyCapacity, kept).maxOrNull() ?: 0
 
+    /**
+     * The whole recovery plan as the rows to write: every overdue REVIEW ([spreadable]), most urgent first
+     * ([DailyPlan.byPriority]); the first [keptToday] stay as they are, due today, and the rest move to 08:00 on their
+     * day ([dayOffsets]) as a USER deferral (v5: deferredUntil set, modelDueAt untouched, so the model's own date is
+     * never laundered). The Today screen's "Spread out" writes exactly these rows, and OwnerYearSoakTest drives the
+     * same function, so a test never keeps its own copy of the plan.
+     *
+     * @param overdue active topics due before today (first ratings among them are left due).
+     * @param dueTodayReviews reviews due today anyway (first ratings excluded), which the kept share must leave room for.
+     * @param doneToday reviews already done today, which the daily limit counts.
+     */
+    fun deferrals(
+        overdue: List<StudyUnitEntity>,
+        dueTodayReviews: Int,
+        doneToday: Int,
+        dailyCapacity: Int,
+        now: Long,
+    ): List<StudyUnitEntity> {
+        val prioritized = DailyPlan.byPriority(spreadable(overdue), now)
+        val total = prioritized.size
+        if (total == 0) return emptyList()
+        val kept = keptToday(total, dailyCapacity, doneToday, dueTodayReviews)
+        val offsets = dayOffsets(total, dailyCapacity, kept)
+        return prioritized.mapIndexedNotNull { index, unit ->
+            if (offsets[index] == 0) return@mapIndexedNotNull null // stays due today, untouched
+            val target = targetMillis(now, offsets[index])
+            unit.copy(nextReviewAt = target, deferredUntil = target, updatedAt = now)
+        }
+    }
+
     /** Absolute due time: [dayOffset] days after [now], pinned to 08:00 local. */
     fun targetMillis(now: Long, dayOffset: Int): Long = Calendar.getInstance().apply {
         timeInMillis = now

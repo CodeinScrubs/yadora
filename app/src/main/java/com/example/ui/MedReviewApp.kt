@@ -159,7 +159,14 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 AddUnitScreen(
                     repository = repository,
                     unitId = editUnit.unitId,
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    // "Save and review now": the review replaces this page, so Back returns to where the topic was
+                    // opened (the Library, Today), exactly like "Save and rate now" for a new topic.
+                    onReviewNow = { id ->
+                        navController.popBackStack()
+                        navController.navigate(Screen.ReviewSession(id)) { launchSingleTop = true }
+                    },
+                    showReviewNow = !editUnit.fromReview,
                 )
             }
             composable<Screen.ReviewSession> { backStackEntry ->
@@ -169,7 +176,7 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     unitId = reviewSession.unitId,
                     ignoreLimit = reviewSession.ignoreLimit,
                     ahead = reviewSession.ahead,
-                    onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id)) { launchSingleTop = true } },
+                    onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id, fromReview = true)) { launchSingleTop = true } },
                     onFinish = { navController.popBackStack() }
                 )
             }

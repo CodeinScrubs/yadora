@@ -16,6 +16,11 @@ import java.util.Calendar
 class ReminderSafetyWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         val ctx = applicationContext
+        // For the analysis, first thing and whatever the reminder settings: the first run of a new build and the day's
+        // load (AppVersionLog, DailySnapshot). This worker runs every ~6 hours, so even a day the app is never opened
+        // gets its snapshot. Best effort; neither throws.
+        com.example.data.AppVersionLog.recordIfChanged(ctx)
+        com.example.data.DailySnapshot.recordOnce(ctx)
         val sp = ctx.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
         if (!sp.getBoolean("daily_reminder", true)) return Result.success()
 

@@ -7,7 +7,8 @@ sealed class Screen {
     @Serializable data object Library : Screen()
     @Serializable data object Progress : Screen()
     @Serializable data object AddUnit : Screen()
-    @Serializable data class EditUnit(val unitId: Long) : Screen()
+    /** [fromReview]: opened from a review in progress (its pencil), whose card is this topic already. */
+    @Serializable data class EditUnit(val unitId: Long, val fromReview: Boolean = false) : Screen()
     /**
      * [ignoreLimit]: the learner chose "review more anyway" after today's limit was used up.
      * [ahead]: "review ahead" -- topics not yet due, weakest first (ReviewAhead).

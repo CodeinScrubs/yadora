@@ -105,6 +105,10 @@ Standard library only. `pilot_report/` gets:
   - the spread between learners that the app's prior assumes, which turns the 120 pseudo-reviews into a measurement
     once enough learners exist;
   - memory ratings against bands of the question score, the only objective view of generous rating;
+  - per phone, the daily load (export v15: one DAILY_SNAPSHOT a day with what was due, how much was overdue and for
+    how long, and what the daily limit held back), the backlog's trend per 30 days, and the first day each build ran
+    there (APP_VERSION). Descriptive; no rule reads them. A backlog that grows for months is a plan the learner cannot
+    keep, and the first thing to look at before reading their calibration;
 - `summary.json`: the same numbers, machine-readable;
 - `reviews.csv`, `topics.csv`, `participants.csv`: tidy tables, UTF-8, open in Excel.
 
