@@ -414,7 +414,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   An outside audit (2026-09-27) showed the shift can matter: two reviews an hour apart across midnight
   became a same-day pair after a move, and the current interval went from 40 to 26 days. Since then an
   UNCHANGED rating correction replays nothing, so only a real correction made after a move can shift a
-  history; the complete fix is a per-log day or zone record (a schema change), not taken yet.
+  history; the complete fix is a per-log day or zone record (a schema change), not taken yet. A clock set BACK
+  between two reviews no longer reorders a replay (saved order since 2026-10-03, entry "A topic's history is walked
+  in the order it was saved").
 - **FSRS-6 is fed COMPLETED WHOLE DAYS** (`MedScheduler.completedModelDays`). The reference
   measures a review's age in whole days and the weights were fitted that way, so fractional
   elapsed time runs the model outside its fitted domain — and on a day-granularity app it also
@@ -648,6 +650,17 @@ These were decided deliberately. Re-suggesting them wastes a session:
   — 20 days against the replay's 10 on a study/recall/re-study/recall history. A topic's state
   therefore depended on whether it arrived via migration or via a rating correction. `MergeUnitsTest`
   now pins the two paths against each other; if you touch one, touch both.
+- **A topic's history is walked in the order it was SAVED** (`REVIEW_HISTORY_ORDER`, by log id, 2026-10-03). The id
+  is autoincrement and a restore keeps it, so it records the true sequence; the time stamp does not, because a phone
+  clock set back between two reviews gives the later review the earlier time. The live path clamps that gap to zero.
+  Sorted by time, every replay (projection, a rating correction, the personal fit's histories, a merge's choice of
+  seed), the repair-clock streak and the export's derived fields put the two reviews in the wrong order and rebuilt a
+  state the topic never had. All of them walk saved order now, and so does `analyze.py` (`history_order`); for an
+  ordinary history the two orders are identical, so nothing else moved. `ReplayEqualsLiveTest` pins live == replay with
+  the clock set back, and the pilot fixture carries such a topic, so `test_analyze.py` checks that the toolkit agrees.
+  Still recomputed in the CURRENT zone: elapsed days after a time-zone move (the calendar-days entry). Each log's stored
+  `elapsedDays` would fix that, except that a merged history re-anchors at exposures by design; left for a considered
+  change.
 - **Projection FAILS CLOSED.** `advanceUnit` used to fall back to the raw row when
   `projectOntoCurrentModel` threw — an FSRS-5 stability behind a preview that computes FSRS-6
   intervals, exactly the mismatch the projection exists to prevent. A topic whose history cannot be
@@ -841,7 +854,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   optimization, background restriction and the standby bucket). Every day with reminders on has at least one fire, even
   with nothing due, so `analyze.py` reports per phone the days without one, fires more than 10 minutes late, fires in
   Doze and safety-net catches, and docs/PILOT.md D11 judges them (95% of days, 95% on time, 14+ days of data). Before
-  this, a reminder that never came left no trace: NOTIF_SHOWN is written only when something is posted.
+  this, a reminder that never came left no trace: NOTIF_SHOWN is written only when something is posted. Export v14
+  (2026-10-03) adds APP_OPENED (`MainActivity.EXTRA_OPENED_FROM`: a tap on the notification, the alarm or the widget,
+  logged once, not again when the screen is rebuilt), so the report follows each posted reminder to a tap within three
+  hours and a review that day; and RATING_CORRECTED, the answer a correction replaced.
 - **The pilot toolkit is part of the scheduling contract.** `tools/pilot/yadora_model.py` transcribes
   every rule that decides an interval, and `analyze.py` replays each exported review and demands the
   stored elapsed days, prediction and interval come out EXACTLY (fuzz included). A mismatch in a
@@ -896,6 +912,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
     picked (`OpenDocumentTree`, persisted permission). A folder a sync app mirrors survives losing the phone.
   - **Files:** never overwritten; each run writes a new dated file (`yadora_backup_YYYY-MM-DD_HHmmss.json`; older
     minute-only names and a provider's clash copy "… (1).json" are recognised too). A failed write deletes its own file.
+    Since 2026-10-03 a backup is written under a staged name (`yadora_partial_…`) and renamed once complete, so a write
+    the system kills half-way leaves a file nobody takes for a backup, not a truncated `yadora_backup_…` that the pruning
+    would keep as the day's newest in place of a good one. A staged file older than an hour is a killed write and is
+    deleted; a provider that cannot rename gets the backup under its real name directly, as before (`AutoBackupTest`).
   - **One file per day, and "Back up now" always writes:** on the owner's Samsung, choosing a folder started the daily
     job AND "back up now" at once and left two identical files, the second renamed "(1)" and never pruned. Now runs
     are serialised (`runLock`), names carry seconds, a renamed copy is recognised, and pruning keeps the day's newest,
@@ -1167,11 +1187,12 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Real, recorded, not fixed:** a device clock set BACK between two reviews of a topic makes the replay order its
     logs differently from what happened (the live path clamps the gap to 0; replay sorts by time), so a later
     correction or a new weight set rebuilds a different state. Rare (a manual clock change, or a phone that boots with
-    the wrong date); the complete fix is the per-log day or sequence record already noted above (a schema change).
+    the wrong date). FIXED 2026-10-03 without a schema change: histories are walked in saved order (log id).
     The repair deadline is dropped when it does not beat the memory interval BEFORE fuzz, so in a 5% band a topic can
     come back up to 5% later than its repair date would have; changing it is a replayed rule, for the next POLICY
-    bump. Within one weight set a correction's replayed predictions still count as calibration evidence (known,
-    schema change). `experiments.py`'s equal review count is not equal time (labelled since 2026-09-28; about 0.7% in
+    bump. Within one weight set a correction's replayed predictions still count as the APP's calibration evidence
+    (known, schema change); since 2026-10-03 every correction is logged (RATING_CORRECTED, with the answer it
+    replaced) and `analyze.py` leaves the predictions it recomputed out. `experiments.py`'s equal review count is not equal time (labelled since 2026-09-28; about 0.7% in
     the audit's case). In `simulate.py` the other twin cannot spend time it has no topic for (each topic once a
     day), so in a small library it can end with less time (1.6% in the audit's 30-day case); in the published worlds
     that can only happen in the first days, while the library is a handful of topics.
@@ -1238,6 +1259,48 @@ These were decided deliberately. Re-suggesting them wastes a session:
     - "Bestätigen" for "OK", and `isError` borders on the score fields: the reason already shows under them.
   - Two assistants agreeing is not independent evidence when one orchestrator wrote both prompts. Several of the
     citations are real papers; none supports these formulas or constants.
+- **A ninth outside report, 2026-10-03: an architecture review, a 78/100 scorecard, a research brief, two researchers'
+  dossiers and two syntheses of them** (another assistant). The code claims were checked against the repository, the
+  research claims against their sources where they could be found.
+  - **True, and done:**
+    - three stale comments: `app/build.gradle.kts` listed DB v6, backup v6 and analytics v5; `StudyUnitEntity.keyPoints`
+      described the retired rating cap; `RecallCalibration` said the app carries no 21-weight training loop;
+    - replay in time order (saved order now, no schema change; entry above);
+    - a corrected rating left no trace of the original (RATING_CORRECTED);
+    - nothing recorded whether a reminder led to an open (APP_OPENED);
+    - a killed backup write could displace a good backup (the staged write);
+    - whether the immediate first rating carries information. `analyze.py`'s first-interval section now scores the first
+      reviews with the rating's own initial stability and with Medium's for everyone (paired log loss); on the
+      fixture's simulated learner z = 0.23.
+  - **True, kept:**
+    - a restore reads up to 512 MB into memory; it validates before replacing anything, so an absurd file can only fail;
+    - CI pins actions to major tags, not SHAs; it holds no secrets and does not build the release;
+    - the scheduler's process-global model state, refreshed only at session boundaries (a context-object refactor is not
+      worth the risk now);
+    - the large files.
+  - **Agreed, and already the case:**
+    - FSRS-6 stays. FSRS-7 has 34 parameters and predicts Anki cards better (log loss 0.337 against 0.346 without
+      same-day reviews); it can be scored offline on the pilot's exports later, because a replay that uses only past
+      reviews is prospective, so no in-app shadow model is needed;
+    - none of: a lapse floor, method multipliers, a Beta or mixture topic state, Kalman uncertainty, a value-of-information
+      bonus, fixed retention numbers;
+    - LINEX stays out (the owner's never-lengthen rule);
+    - a Yadora population prior only after a leave-one-participant-out check (PILOT.md D5).
+  - **Not true, or overstated:**
+    - FSRS-7 with "35 trainable parameters": the benchmark says 34 (another report said 21);
+    - MEMORIZE (Tabibian et al., PNAS 2019) solving only one item: it extends to many under independence;
+    - an "August 2026" study of forgetting across timescales: could not be found;
+    - one researcher's planner scored each review outcome at its own 90% date, which makes every branch 0.9 (the synthesis
+      caught it), and its guessing model and grade probabilities were placeholders.
+    - Verified, by contrast: the 2026 medical meta-analysis (Maye et al., The Clinical Teacher: 13 studies, 21,415
+      learners, SMD 0.78 against ordinary study, not an equal-time active control).
+  - **The owner's call, asked 2026-10-03:**
+    - a recall-first review: the memory rating before the notes and answers, reversing the 2026-09-23 no-gate decision;
+    - an optional time-spent answer per review, the only measurement of the "same hours" goal;
+    - a research-grade DB v11: original predictions beside replayed ones, a per-log zone, merge checkpoints;
+    - an exam hint on Today;
+    - the repair-vs-fuzz fix, at the next policy bump;
+    - an equal-time randomised study after the pilot.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

@@ -10,9 +10,10 @@ import kotlin.math.pow
  *
  * WHY ONE NUMBER. The published weights are an average over millions of Anki flashcard reviews.
  * A Yadora topic is a larger unit than a flashcard, and any single learner forgets faster or slower
- * than that average. The proper cure is refitting all 21 weights on the learner's own history (the
- * FSRS optimizer), but that needs on the order of a thousand reviews and a training loop this app
- * does not carry. A single stability scale is the first-order correction: it is exactly what
+ * than that average. The fuller cure is refitting all 21 weights on the learner's own history, which the app
+ * also does since DB v9 ([Fsrs6Optimizer], the personal weight set), but a set is adopted only after hundreds of
+ * reviews and a held-out test. A single stability scale is the first-order correction, until then and on top of
+ * whichever set is active: it is exactly what
  * moving the retention target does (`interval = S/F·(r^(1/decay) − 1)` scales the same way in S and
  * in the retention term), so it corrects the schedule without touching the model's state, it is
  * identifiable from a few hundred reviews, and it is easy to reason about.

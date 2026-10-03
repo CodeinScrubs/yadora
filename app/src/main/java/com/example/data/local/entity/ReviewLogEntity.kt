@@ -73,3 +73,13 @@ data class ReviewLogEntity(
     /** The session that produced this log: PLAN, EXTRA, TOPIC or AHEAD ([com.example.domain.model.SessionKind]); null before v10. */
     val sessionKind: String? = null,
 )
+
+/**
+ * The order a topic's reviews happened in: the order they were saved. The id is autoincrement and a restore keeps
+ * it, so it records the true sequence; the time stamp does not. A phone clock set back between two reviews gives the
+ * later review the earlier time, and sorting a history by time replayed it in the wrong order, so a correction or a
+ * model change rebuilt a state the topic never had (an outside audit, 2026-10-02). The live path clamps such a gap to
+ * zero; replaying in this order reproduces it. Every replay, the repair-clock streak and the export walk histories in
+ * this order (tools/pilot/analyze.py too). Time breaks a tie only between logs not yet saved (id 0).
+ */
+val REVIEW_HISTORY_ORDER: Comparator<ReviewLogEntity> = compareBy({ it.id }, { it.reviewedAt })

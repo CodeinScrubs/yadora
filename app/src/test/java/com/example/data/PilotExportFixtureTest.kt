@@ -119,6 +119,28 @@ class PilotExportFixtureTest {
                 commit(repo, p.id, evening, memory, understanding, methods, score, SessionKind.PLAN)
             }
         }
+        // A topic reviewed once with the phone's clock set back: its third review carries an EARLIER time than its
+        // second. The app and the toolkit walk a history in saved order (REVIEW_HISTORY_ORDER), so the file must still
+        // replay exactly (2026-10-03).
+        val skewed = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Clock set back", studyType = "Topic", subjectId = subjectIds[0],
+                stability = 1.0, difficulty = 5.0, retrievability = 1.0, state = "New",
+                studiedAt = day0 + 30 * day, nextReviewAt = day0 + 30 * day, modelDueAt = day0 + 30 * day,
+                currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0, createdAt = day0 + 30 * day,
+            )
+        )
+        commit(repo, skewed, day0 + 30 * day + 60_000L, MemoryRating.Good, UnderstandingRating.Clear, emptySet(), null to null, SessionKind.TOPIC)
+        commit(repo, skewed, day0 + 36 * day, MemoryRating.Good, UnderstandingRating.Clear, emptySet(), null to null, SessionKind.PLAN)
+        commit(repo, skewed, day0 + 33 * day, MemoryRating.Hard, UnderstandingRating.Partial, emptySet(), null to null, SessionKind.PLAN)
+        commit(repo, skewed, day0 + 40 * day, MemoryRating.Good, UnderstandingRating.Clear, emptySet(), null to null, SessionKind.PLAN)
+
+        // One rating corrected, so the export carries a RATING_CORRECTED event and the history it recomputed.
+        val corrected = topics.first().id
+        val second = app.database.reviewLogDao().getLogsForUnitOnce(corrected).sortedWith(com.example.data.local.entity.REVIEW_HISTORY_ORDER)[1]
+        val fixedRating = if (second.memoryRating == MemoryRating.Forgot.name) MemoryRating.Good else MemoryRating.Forgot
+        repo.editReviewRating(corrected, second.id, fixedRating, null)
+
         // One deferral, so the export carries one.
         repo.procrastinateUnit(topics.last().id, now + 2 * day)
 

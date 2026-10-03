@@ -557,6 +557,7 @@ object NotificationScheduler {
             // MainActivity implements for open_review — instead of destroying in-progress UI state.
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("open_review", true)
+            putExtra(com.example.MainActivity.EXTRA_OPENED_FROM, "notification")
         }
         val openPi = PendingIntent.getActivity(
             context, REQ_OPEN, openIntent,

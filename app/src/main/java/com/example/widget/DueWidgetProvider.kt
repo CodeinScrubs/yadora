@@ -88,6 +88,7 @@ class DueWidgetProvider : AppWidgetProvider() {
                 // One-tap studying: when reviews are waiting, the widget goes straight into the
                 // review session instead of just opening the app.
                 if (due > 0) putExtra("open_review", true)
+                putExtra(com.example.MainActivity.EXTRA_OPENED_FROM, "widget")
             }
             val pi = PendingIntent.getActivity(
                 context, 2001, openIntent,

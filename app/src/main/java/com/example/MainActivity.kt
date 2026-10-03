@@ -8,15 +8,39 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
+import androidx.lifecycle.lifecycleScope
 import com.example.ui.MedReviewApp
+import kotlinx.coroutines.launch
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
+  companion object {
+    /** Which tap opened the app: "notification", "alarm" or "widget" ([logOpen]). */
+    const val EXTRA_OPENED_FROM = "opened_from"
+  }
+
   // Bumped when the app is opened from a "Review now" notification/alarm, so Compose jumps to review.
   private val openReviewSignal = androidx.compose.runtime.mutableStateOf(0)
 
+  /**
+   * One APP_OPENED event per tap on a reminder, the alarm or the widget. With REMINDER_FIRED and NOTIF_SHOWN it
+   * lets the pilot follow a reminder to the review it led to, or did not (an outside audit, 2026-10-02). Consumed,
+   * so a recreated activity does not count the same tap twice.
+   */
+  private fun logOpen(intent: android.content.Intent?) {
+    val from = intent?.getStringExtra(EXTRA_OPENED_FROM) ?: return
+    intent.removeExtra(EXTRA_OPENED_FROM)
+    val app = application as MedReviewApplication
+    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+      runCatching {
+        app.database.eventLogDao().insert(com.example.data.local.entity.EventLogEntity(type = "APP_OPENED", detail = "from=$from"))
+      }
+    }
+  }
+
   override fun onNewIntent(intent: android.content.Intent) {
     super.onNewIntent(intent)
+    logOpen(intent)
     // Opening the app always silences a ringing alarm — the app itself is the answer to it.
     runCatching { com.example.notifications.AlarmRingActivity.dismissActive() }
     if (intent.getBooleanExtra("open_review", false)) {
@@ -31,6 +55,7 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     val app = application as MedReviewApplication
+    if (savedInstanceState == null) logOpen(intent)
     runCatching { com.example.notifications.AlarmRingActivity.dismissActive() } // opening the app silences a ringing alarm
     com.example.widget.DueWidgetProvider.updateAll(this) // keep the home-screen count fresh on open
     if (intent?.getBooleanExtra("open_review", false) == true) {

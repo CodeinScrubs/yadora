@@ -12,12 +12,17 @@ import java.time.LocalDateTime
 class AutoBackupTest {
 
     /** A folder on the JVM file system, standing in for the learner's chosen folder. */
-    private class DirFolder(val dir: java.io.File) : AutoBackup.Folder {
+    private open class DirFolder(val dir: java.io.File) : AutoBackup.Folder {
         override fun list() = dir.listFiles().orEmpty().map { AutoBackup.Folder.Entry(it.name, it) }
         override fun create(name: String): AutoBackup.Folder.Entry? =
             java.io.File(dir, name).takeIf { it.createNewFile() }?.let { AutoBackup.Folder.Entry(name, it) }
         override fun openOutput(entry: AutoBackup.Folder.Entry): OutputStream = (entry.handle as java.io.File).outputStream()
         override fun delete(entry: AutoBackup.Folder.Entry) = (entry.handle as java.io.File).delete()
+        override fun canRename(entry: AutoBackup.Folder.Entry) = true
+        override fun rename(entry: AutoBackup.Folder.Entry, name: String): AutoBackup.Folder.Entry? {
+            val to = java.io.File(dir, name)
+            return if (!to.exists() && (entry.handle as java.io.File).renameTo(to)) AutoBackup.Folder.Entry(name, to) else null
+        }
         fun names() = dir.list().orEmpty().sorted()
     }
 
@@ -101,6 +106,58 @@ class AutoBackupTest {
         assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_213040.json"), out)
         assertEquals(listOf("yadora_backup_2026-09-24_213040.json"), f.names())
         assertEquals("{\"newer\":1}", java.io.File(f.dir, "yadora_backup_2026-09-24_213040.json").readText())
+    }
+
+    /**
+     * A backup is written under a staged name and renamed only once complete, so a write the system kills half-way
+     * can never leave a truncated file named like the day's backup, which the pruning would then keep in place of a
+     * good one (an outside audit, 2026-10-02).
+     */
+    @Test fun `while a backup is written nothing is named like a backup`() = runBlocking {
+        val f = folder()
+        var during = emptyList<String>()
+        val out = AutoBackup.writeInto(f, t0, 12) { during = f.names(); it.write("{\"backupVersion\":9}".toByteArray()) }
+        assertEquals(listOf("yadora_partial_2026-09-24_213000.json"), during)
+        assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_213000.json"), out)
+        assertEquals(listOf("yadora_backup_2026-09-24_213000.json"), f.names())
+        assertEquals("{\"backupVersion\":9}", java.io.File(f.dir, "yadora_backup_2026-09-24_213000.json").readText())
+    }
+
+    @Test fun `a write killed half-way never displaces a good backup, and is cleaned up later`() = runBlocking {
+        val f = folder()
+        AutoBackup.writeInto(f, t0.withHour(8), 12) { it.write("good".toByteArray()) }
+        java.io.File(f.dir, "yadora_partial_2026-09-24_213000.json").writeText("{\"trunc") // what a killed write leaves
+        AutoBackup.writeInto(f, t0.plusDays(1), 12) { it.write("next".toByteArray()) }
+        assertEquals(
+            "the day keeps its good backup, and the stale staged file is gone",
+            listOf("yadora_backup_2026-09-24_083000.json", "yadora_backup_2026-09-25_213000.json"), f.names(),
+        )
+    }
+
+    @Test fun `a staged file younger than an hour is left alone`() = runBlocking {
+        val f = folder()
+        java.io.File(f.dir, "yadora_partial_2026-09-24_210000.json").writeText("{\"busy") // another phone, still writing
+        AutoBackup.writeInto(f, t0, 12) { it.write(1) }
+        assertTrue(f.names().contains("yadora_partial_2026-09-24_210000.json"))
+    }
+
+    @Test fun `a folder that cannot rename gets the backup under its real name`() = runBlocking {
+        val f = object : DirFolder(kotlin.io.path.createTempDirectory("yadora-autobackup").toFile()) {
+            override fun canRename(entry: AutoBackup.Folder.Entry) = false
+        }
+        val out = AutoBackup.writeInto(f, t0, 12) { it.write("{}".toByteArray()) }
+        assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_213000.json"), out)
+        assertEquals(listOf("yadora_backup_2026-09-24_213000.json"), f.names())
+    }
+
+    @Test fun `a rename that fails after the write writes the real name instead`() = runBlocking {
+        val f = object : DirFolder(kotlin.io.path.createTempDirectory("yadora-autobackup").toFile()) {
+            override fun rename(entry: AutoBackup.Folder.Entry, name: String): AutoBackup.Folder.Entry? = null
+        }
+        val out = AutoBackup.writeInto(f, t0, 12) { it.write("{\"full\":1}".toByteArray()) }
+        assertEquals(AutoBackup.Outcome.Written("yadora_backup_2026-09-24_213000.json"), out)
+        assertEquals(listOf("yadora_backup_2026-09-24_213000.json"), f.names())
+        assertEquals("{\"full\":1}", java.io.File(f.dir, "yadora_backup_2026-09-24_213000.json").readText())
     }
 
     @Test fun `Back up now always writes, the daily job once a day`() {

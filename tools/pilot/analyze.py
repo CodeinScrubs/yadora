@@ -183,7 +183,7 @@ class Row:
     stability_before: Optional[float] = None
     difficulty_before: Optional[float] = None
     stability_after: Optional[float] = None
-    recomputed: bool = False   # reviewed before its weight set began scheduling: a correction recomputed it
+    recomputed: bool = False   # its prediction was recomputed by a rating correction, not made at the review
     mismatch: List[str] = field(default_factory=list)
 
     @property
@@ -232,6 +232,24 @@ def set_activations(d: dict) -> Dict[int, int]:
     for s in d.get("memoryParameterSets") or []:
         at = s.get("activatedAt") if s.get("activatedAt") is not None else s.get("createdAt")
         out[int(s["id"])] = int(at or 0)
+    return out
+
+
+def history_order(log: dict) -> Tuple[int, int]:
+    """The order a topic's reviews happened in: saved order (the log id), as the app replays. A phone clock set back
+    between two reviews gives the later one the earlier time, so sorting by time replays them in the wrong order."""
+    return int(log.get("id", 0)), int(log["reviewedAt"])
+
+
+def corrections(d: dict) -> Dict[int, List[Tuple[int, int]]]:
+    """RATING_CORRECTED events (export v14+) per topic: (corrected log id, when). A correction replays the topic, so
+    the stored prediction of every later log reviewed before it was recomputed then, not made at the review."""
+    out: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+    for e in d.get("eventLogs") or []:
+        if e.get("type") == "RATING_CORRECTED" and e.get("unitId") is not None:
+            log_id = as_int(parse_detail(e.get("detail")).get("log"))
+            if log_id is not None:
+                out[int(e["unitId"])].append((log_id, int(e.get("at") or 0)))
     return out
 
 
@@ -296,7 +314,8 @@ def reminder_delivery(d: dict, tz, exported_at: int) -> dict:
         problems.append(f"standby bucket {bucket} (rare or restricted)")
     out = dict(fires=len(fires), days=0, missed_days=[], late=0, known=0, median_late_s=None, p90_late_s=None,
                max_late_s=None, inexact=0, in_doze=0, outcomes={}, health_problems=problems,
-               safety_net=shown.get("safety_worker", 0) + shown.get("boot_catchup", 0), shown_by_source=dict(shown))
+               safety_net=shown.get("safety_worker", 0) + shown.get("boot_catchup", 0), shown_by_source=dict(shown),
+               **reminder_funnel(d, tz))
     if not fires:
         return out
     first_at = min(f["at"] for f in fires)
@@ -337,6 +356,25 @@ def reminder_delivery(d: dict, tz, exported_at: int) -> dict:
         outcomes=dict(Counter(f["outcome"] for f in fires)),
     )
     return out
+
+
+REMINDER_OPEN_WINDOW_MS = 3 * 3_600_000  # a tap on the reminder or the alarm within 3 hours "opened" it
+
+
+def reminder_funnel(d: dict, tz) -> dict:
+    """What each posted reminder led to (export v14+): a tap on it or the alarm within three hours (APP_OPENED), and a
+    review logged later the same local day. Test reminders are left out."""
+    events = d.get("eventLogs") or []
+    posted = sorted(int(e.get("at") or 0) for e in events if e.get("type") == "NOTIF_SHOWN"
+                    and parse_detail(e.get("detail")).get("source") != "test")
+    taps = sorted(int(e.get("at") or 0) for e in events if e.get("type") == "APP_OPENED"
+                  and parse_detail(e.get("detail")).get("from") in ("notification", "alarm"))
+    reviews = sorted(int(l["reviewedAt"]) for l in d.get("reviewLogs") or [])
+    opened = sum(1 for t in posted if any(t <= a <= t + REMINDER_OPEN_WINDOW_MS for a in taps))
+    same_day = sum(1 for t in posted if any(r >= t and local_day(r, tz) == local_day(t, tz) for r in reviews))
+    return dict(posted=len(posted), opened=opened, reviewed_same_day=same_day,
+                widget_opens=sum(1 for e in events if e.get("type") == "APP_OPENED"
+                                 and parse_detail(e.get("detail")).get("from") == "widget"))
 
 
 def fmt_seconds(x) -> str:
@@ -424,12 +462,13 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
     sets = weight_sets(d)
     activated = set_activations(d)
     merged = merged_units(d)
+    fixed = corrections(d)
     by_unit: Dict[int, List[dict]] = defaultdict(list)
     for log in d["reviewLogs"]:
         by_unit[int(log["studyUnitId"])].append(log)
     rows: List[Row] = []
     for uid, logs in by_unit.items():
-        logs.sort(key=lambda l: (int(l["reviewedAt"]), int(l["id"])))
+        logs.sort(key=history_order)
         unit = units.get(uid, {})
         # One replay per weight set the topic's logs name: a log is reproduced on its OWN set.
         replays = {}
@@ -483,7 +522,8 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
                 lapses_before=lapses,
                 merged=uid in merged,
                 decay=-(sets.get(sid) or ym.DEFAULT_WEIGHTS)[20],
-                recomputed=int(log["reviewedAt"]) < activated.get(sid, 0),
+                recomputed=int(log["reviewedAt"]) < activated.get(sid, 0) or any(
+                    int(log["id"]) > cid and int(log["reviewedAt"]) < cat for cid, cat in fixed.get(uid, [])),
             )
             if rp:
                 row.stability_before = rp["before"].stability if rp["before"] else None
@@ -718,9 +758,33 @@ def histories(exports: List[Export]) -> List[Tuple[str, int, List[dict], dict, o
         for uid, logs in by_unit.items():
             if uid in merged:
                 continue
-            logs.sort(key=lambda l: (int(l["reviewedAt"]), int(l["id"])))
+            logs.sort(key=history_order)
             out.append((e.participant, uid, logs, units.get(uid, {}), e.tz))
     return out
+
+
+def first_rating_value(firsts: List["Row"]) -> dict:
+    """The first reviews on the default FSRS-6 weights, scored twice: with the stored prediction, which starts from the
+    first rating's own initial stability, and rating-blind, from the Medium one for everyone (same elapsed days). The
+    paired difference in log loss says whether the immediate rating carries information about later recall."""
+    s0 = {"Hard": ym.DEFAULT_WEIGHTS[1], "Medium": ym.DEFAULT_WEIGHTS[2], "Easy": ym.DEFAULT_WEIGHTS[3]}
+    model = ym.Fsrs6()
+    diffs, rated, blind = [], [], []
+    for r in firsts:
+        if r.first_grade not in s0 or r.elapsed_days is None or r.parameter_set != 0 or r.scheduler_version != "FSRS-6":
+            continue
+        p_rated = r.predicted
+        p_blind = model.retrievability(r.elapsed_days, s0["Medium"])
+        a, b = ym.log_loss([(p_rated, r.success)]), ym.log_loss([(p_blind, r.success)])
+        rated.append(a)
+        blind.append(b)
+        diffs.append(b - a)
+    n = len(diffs)
+    if n < 2:
+        return dict(n=n, ll_rated=None, ll_blind=None, z=None)
+    sd = statistics.stdev(diffs)
+    z = statistics.fmean(diffs) / (sd / math.sqrt(n)) if sd > 0 else 0.0
+    return dict(n=n, ll_rated=statistics.fmean(rated), ll_blind=statistics.fmean(blind), z=z)
 
 
 def split_times(exports: List[Export], frac=0.75) -> Dict[str, int]:
@@ -943,6 +1007,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             reminder_days=rd["days"], days_without_reminder=len(rd["missed_days"]), reminder_fires=rd["fires"],
             late_reminders=rd["late"], safety_net_reminders=rd["safety_net"],
             reminder_health_problems="; ".join(rd["health_problems"]),
+            rating_corrections=sum(len(v) for v in corrections(d).values()),
+            opened_from_reminder=rd["opened"], reviewed_after_reminder=rd["reviewed_same_day"],
         )
         summary["participants"][e.participant] = info
         inv.append(info)
@@ -1037,11 +1103,12 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
               f"{LATE_REMINDER_S // 60} minutes after its time. Safety-net reminders came from the 6-hourly worker or the "
               "boot catch-up instead of the alarm. Health is what the phone allowed at export.")
         rep.table(["participant", "days", "days without a reminder", "alarms", "late", "lateness median / 90th / max",
-                   "inexact", "in Doze", "safety net", "health at export"],
+                   "inexact", "in Doze", "safety net", "reminders posted / tapped / reviewed that day", "health at export"],
                   [[pid, r["days"], (f"{len(r['missed_days'])}: " + ", ".join(r["missed_days"][:6])
                                      + (" …" if len(r["missed_days"]) > 6 else "")) if r["missed_days"] else "0",
                     r["fires"], r["late"], " / ".join(fmt_seconds(r[k]) for k in ("median_late_s", "p90_late_s", "max_late_s")),
-                    r["inexact"], r["in_doze"], r["safety_net"], "; ".join(r["health_problems"]) or "OK"]
+                    r["inexact"], r["in_doze"], r["safety_net"], f"{r['posted']} / {r['opened']} / {r['reviewed_same_day']}",
+                    "; ".join(r["health_problems"]) or "OK"]
                    for pid, r in rem.items()])
     elif all((e.data.get("exportVersion") or 0) < 13 for e in exports):
         rep.p("**Reminders:** no delivery data. Reminder alarms are logged from export version 13; these files predate it.")
@@ -1052,8 +1119,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     # ---- calibration -----------------------------------------------------------------------------------
     rep.h("4. Calibration: does predicted recall match reported recall?")
     if recomputed_left_out:
-        rep.p(f"{recomputed_left_out} recall reviews are left out: they happened before the weight set they are stamped "
-              "with began scheduling, so their prediction was recomputed by a rating correction, not made at the review.")
+        rep.p(f"{recomputed_left_out} recall reviews are left out: a rating correction recomputed their prediction (they "
+              "came after a corrected review, or before the weight set they are stamped with began scheduling), so it "
+              "was not made at the review.")
     groups = defaultdict(list)
     for r in recalls_pred:
         groups[(r.scheduler_version, r.parameter_set)].append(r)
@@ -1153,6 +1221,15 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
           "capped at 5 days (POLICY). 'implied S0' is the first-study stability that best explains these outcomes on "
           "the FSRS-6 curve; compare it with the default:")
     rep.table(["first rating", "reviews", "mean days", "mean predicted", "reported", "95% CI", "default S0", "implied S0"], rows_f)
+    fv = first_rating_value(firsts)
+    summary["first_rating_value"] = fv
+    if fv["n"]:
+        rep.p(f"Does the first rating help? The same {fv['n']} first reviews predicted from the rating's own first-study "
+              f"stability, then from the Medium one for everyone: log loss {fmt(fv['ll_rated'])} with the rating, "
+              f"{fmt(fv['ll_blind'])} without it (paired z = {fmt(fv['z'], 2)}; positive = the rating helps). A rating "
+              "given right after studying measures fluency more than memory; if it does not predict the first real review "
+              "better, a pooled first-study prior and the first delayed review would serve as well (simulate before "
+              "changing; CLAUDE.md, the first-study cap and prior).")
 
     # ---- self-ratings vs question scores -----------------------------------------------------------------
     rep.h("6. Self-ratings against question scores")
@@ -1415,7 +1492,7 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
                 "topics", "active_topics", "logs", "first_studies", "recalls", "span_days", "active_days",
                 "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_app",
                 "reminder_days", "days_without_reminder", "reminder_fires", "late_reminders", "safety_net_reminders",
-                "reminder_health_problems"]
+                "reminder_health_problems", "opened_from_reminder", "reviewed_after_reminder", "rating_corrections"]
         w = csv.writer(f)
         w.writerow(keys)
         for pid, i in summary["participants"].items():

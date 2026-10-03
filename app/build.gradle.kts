@@ -23,7 +23,8 @@ android {
     // versionName = the human-readable version users see ("v1.0"). Bump it however you like.
     // versionCode = the machine version; MUST strictly increase by at least 1 on EVERY release you
     // hand to anyone, or Android refuses to install the update over the old one.
-    // 4: DB v6 (understanding clock + memory-model identity), FSRS-6 live, backup v6, analytics v5.
+    // It only orders uploads: the formats this build reads and writes are versioned in their own code
+    // (AppDatabase, BackupManager, AnalyticsExporter). This line used to list them and went stale.
     versionCode = 4
     versionName = "1.1"
 
