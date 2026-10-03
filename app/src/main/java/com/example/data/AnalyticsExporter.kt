@@ -62,7 +62,17 @@ object AnalyticsExporter {
             "MISSED_REMINDER_REPORT (the learner's own report, with a snapshot), REMINDER_FIRED, REMINDERS_ON / REMINDERS_OFF " +
             "(the Settings switch), APP_OPENED (from=notification, alarm or widget: a tap that opened the app), " +
             "RATING_CORRECTED (log=<id> memory=<before>><after> understanding=<before>><after>: the log itself holds the " +
-            "corrected answer, and every later log of that topic was recomputed) and the PERSONAL_MODEL family.")
+            "corrected answer, and every later log of that topic was recomputed), DAILY_SNAPSHOT (dailySnapshot below), " +
+            "APP_VERSION (code=<new> name=<name> previous=<old code>, 0 = a fresh install or the first build that records it; " +
+            "written when a new build first opens or its 6-hourly worker first runs, so a change in the logs can be dated to " +
+            "an update) and the PERSONAL_MODEL family.")
+        put("dailySnapshot", "DAILY_SNAPSHOT: at most one per local day, written when the app first opens that day or by the " +
+            "6-hourly safety worker, whichever comes first (its time says which part of the day; a day without one is a day " +
+            "the phone ran neither). Counts only, no content. detail: active (topics not archived or deleted), rated (with a " +
+            "first rating), due (effective date by the end of that day, first ratings included), overdue (due before that " +
+            "day), oldest_overdue_days, first (first ratings waiting), offered (that day's plan under the daily limit), held " +
+            "(reviews the limit held for a later day), done (reviews already done that day when it was written), deferred " +
+            "(topics whose current date came from 'Not today' or 'Spread out'), limit (the daily limit).")
         put("historyOrder", "Walk a topic's reviewLogs by id, the order they were saved, not by reviewedAt: a phone clock set " +
             "back between two reviews gives the later one the earlier time. The app replays in id order, and elapsedDays is " +
             "never negative.")
@@ -169,7 +179,11 @@ object AnalyticsExporter {
         // v14: histories in saved order (historyOrder: by id, not time), APP_OPENED (a tap on a reminder, the alarm or
         // the widget) and RATING_CORRECTED (the answer a correction replaced), so a reminder can be followed to the review
         // it led to, and a corrected rating told from an original one.
-        root.put("exportVersion", 14)
+        // v15: the day's load (DAILY_SNAPSHOT: what was due, how much was overdue and for how long, what the daily limit
+        // held back, once a day) and APP_VERSION (the first run of each build). Study is irregular, and whether a year of
+        // it is keeping up is the first thing an analysis must see; the logs alone cannot rebuild it, because the
+        // notification's "Not today" defers every due topic without naming them.
+        root.put("exportVersion", 15)
         root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps

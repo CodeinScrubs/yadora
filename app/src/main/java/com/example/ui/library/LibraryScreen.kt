@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 @Suppress("UNCHECKED_CAST")
@@ -91,21 +92,20 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
     val viewUnits: StateFlow<List<StudyUnitEntity>> = baseList
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    /** The current view with every topic's texts folded once per change of the list (LibrarySearch), not per keystroke. */
+    private val indexedList = baseList
+        .map { LibrarySearch.index(it) }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+
     val filteredUnits: StateFlow<List<StudyUnitEntity>> = combine(
-        baseList, searchQuery, subjects, systems,
+        indexedList, searchQuery, subjects, systems,
         combine(filter, sortBy) { f, s -> f to s }
-    ) { units, query, subjectList, systemList, (activeFilter, sort) ->
-        var result = units
-        val key = com.example.data.text.TopicTitle.searchKey(query)
-        if (key.isNotEmpty()) {
-            fun has(text: String?) = text != null && com.example.data.text.TopicTitle.searchKey(text).contains(key)
-            val subjectHits = subjectList.filter { has(it.name) }.mapTo(HashSet()) { it.id }
-            val systemHits = systemList.filter { has(it.name) }.mapTo(HashSet()) { it.id }
-            result = result.filter { u ->
-                has(u.title) || has(u.studyType) || has(u.recallPrompt) || has(u.keyPoints) || has(u.notes) || has(u.source) ||
-                    u.subjectId in subjectHits || u.systemId in systemHits
-            }
-        }
+    ) { entries, query, subjectList, systemList, (activeFilter, sort) ->
+        var result = LibrarySearch.search(
+            entries, query,
+            subjectNames = subjectList.associate { it.id to it.name },
+            systemNames = systemList.associate { it.id to it.name },
+        )
         val endOfToday = java.util.Calendar.getInstance().apply {
             set(java.util.Calendar.HOUR_OF_DAY, 23)
             set(java.util.Calendar.MINUTE, 59)

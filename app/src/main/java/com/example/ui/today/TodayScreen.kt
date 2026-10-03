@@ -144,14 +144,6 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
 
     fun redistributeOverdueUnits(context: android.content.Context) {
         viewModelScope.launch {
-            val overdueList = OverdueRedistributor.spreadable(overdueUnits.value)
-            if (overdueList.isEmpty()) return@launch
-            
-            val now = System.currentTimeMillis()
-            // Highest-priority first (same score the review queue uses) so TODAY, then day 1, get the Important topics,
-            // the longest overdue and those a review would strengthen most, instead of a blind round-robin.
-            val prioritized = DailyPlan.byPriority(overdueList, now)
-            val total = prioritized.size
             // The plan is built around what the user actually said they can do in a day. A fixed
             // window turned a 100-topic backlog into 34 a day for someone whose limit is 10 -- a
             // schedule they cannot execute, which teaches them the dates are not to be trusted.
@@ -159,17 +151,15 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
                 context.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
                     .getFloat("daily_review_limit", 50f)
             )
-            // What is left of today's limit keeps the most urgent of them due today; the rest start tomorrow.
-            val kept = OverdueRedistributor.keptToday(
-                total, capacity, reviewsDoneToday.value, dueTodayUnits.value.count { !DailyPlan.isFirstRating(it) },
+            // Most urgent first (the queue's own score), what is left of today's limit kept today, the rest spread from
+            // tomorrow, each recorded as a DEFERRAL: OverdueRedistributor.deferrals is the one definition.
+            val updated = OverdueRedistributor.deferrals(
+                overdue = overdueUnits.value,
+                dueTodayReviews = dueTodayUnits.value.count { !DailyPlan.isFirstRating(it) },
+                doneToday = reviewsDoneToday.value,
+                dailyCapacity = capacity,
+                now = System.currentTimeMillis(),
             )
-            val offsets = OverdueRedistributor.dayOffsets(total, capacity, kept)
-            val updated = prioritized.mapIndexedNotNull { index, unit ->
-                if (offsets[index] == 0) return@mapIndexedNotNull null // stays due today, untouched
-                val target = OverdueRedistributor.targetMillis(now, offsets[index])
-                // Recorded as a DEFERRAL (v5): the model's own due date stays in modelDueAt untouched.
-                unit.copy(nextReviewAt = target, deferredUntil = target, updatedAt = now)
-            }
             if (updated.isEmpty()) return@launch
             // One transaction: a crash mid-redistribution must not leave a half-applied plan.
             repository.updateUnitsAtomic(updated)
@@ -647,9 +637,12 @@ fun TodayScreen(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = when (strings.languageCode) {
-                                                "fa" -> "مباحثی که هنوز موعدشان نرسیده، از ضعیف‌ترین. پیش از امتحان مفید است؛ مرورِ زودتر از موعد، حافظه را کمتر از مرورِ به‌موقع تقویت می‌کند."
-                                                "de" -> "Noch nicht fällige Themen, die schwächsten zuerst. Nützlich vor einer Prüfung; eine frühe Wiederholung stärkt das Gedächtnis weniger als eine pünktliche."
-                                                else -> "Topics not due yet, weakest first. Useful before an exam; an early review strengthens memory less than one on time."
+                                                // A good use of ANY spare time, not only the last weeks: with a fixed daily budget,
+                                                // spare evenings spent here left more on exam day than a higher target did
+                                                // (tools/pilot/one_exam.py, docs/RESEARCH.md 2.8).
+                                                "fa" -> "مباحثی که هنوز موعدشان نرسیده، از ضعیف‌ترین: استفادهٔ خوبی از وقت اضافه، مخصوصاً در هفته‌های پیش از امتحان. مرورِ زودتر از موعد، حافظه را کمتر از مرورِ به‌موقع تقویت می‌کند."
+                                                "de" -> "Noch nicht fällige Themen, die schwächsten zuerst: gut für freie Zeit, vor allem in den Wochen vor einer Prüfung. Eine frühe Wiederholung stärkt das Gedächtnis weniger als eine pünktliche."
+                                                else -> "Topics not due yet, weakest first: a good use of spare time, above all in the weeks before an exam. An early review strengthens memory less than one on time."
                                             },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,

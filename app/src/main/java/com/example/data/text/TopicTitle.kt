@@ -32,6 +32,9 @@ object TopicTitle {
     private val ARABIC_MARKS = 'ً'..'ٟ'
     private val ARABIC_MARKS_EXTRA = 'ٰ'..'ٰ'
 
+    /** Compiled once: [normalize] runs for every topic's title and notes on each duplicate check and search index. */
+    private val WHITESPACE = Regex("\\s+")
+
     fun normalize(raw: String): String {
         // NFKC folds compatibility forms (presentation-form Arabic letters, full-width Latin) onto
         // their canonical equivalents before any of the manual mapping below.
@@ -61,7 +64,7 @@ object TopicTitle {
         // Collapse every run of whitespace to one space so "Acute  appendicitis" matches
         // "Acute appendicitis". Locale.ROOT: a Turkish locale would otherwise lowercase I to a
         // dotless ı and make two identical English titles stop matching on that device only.
-        return sb.toString().trim().replace(Regex("\\s+"), " ").lowercase(Locale.ROOT)
+        return sb.toString().trim().replace(WHITESPACE, " ").lowercase(Locale.ROOT)
     }
 
     /** True when two titles are the same material as far as duplicate detection is concerned. */

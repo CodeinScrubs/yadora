@@ -497,12 +497,23 @@ object BackupManager {
             parameterSets.forEach { db.memoryParameterSetDao().insert(it) }
             subjects.forEach { db.categoryDao().insertSubject(it) }
             systems.forEach { db.categoryDao().insertSystem(it) }
-            units.forEach { db.studyUnitDao().insertUnit(it) }
-            logs.forEach { db.reviewLogDao().insertLog(it) }
-            events.forEach { db.eventLogDao().insert(it) }
+            // In batches: a year of study is thousands of topics and tens of thousands of reviews and events, and one
+            // insert call per row made a restore take many seconds on a desktop, and far longer on a phone.
+            db.studyUnitDao().insertUnits(units)
+            db.reviewLogDao().insertLogs(logs)
+            db.eventLogDao().insertAll(events)
         }
         // The scheduler must see the restored weight sets before anything schedules again.
         runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }
+        // The event log was just replaced, so today's load and this phone's build are recorded again from the restored
+        // data when the app next starts (DailySnapshot, AppVersionLog). Their "already recorded" marks are device-local
+        // and would otherwise keep a phone restored onto from logging either until tomorrow, or its build at all.
+        runCatching {
+            com.example.notifications.NotificationScheduler.transientPrefs(context).edit {
+                remove(DailySnapshot.PREF_DAY)
+                remove(AppVersionLog.PREF_LAST_VERSION_CODE)
+            }
+        }
 
         // Restore the study setup too (v3+ backups; older files simply have no settings object).
         // Language/theme apply fully on the next app start; the caller already re-arms the reminder.

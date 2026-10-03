@@ -39,6 +39,10 @@ interface StudyUnitDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUnit(unit: StudyUnitEntity): Long
 
+    /** A whole library at once, for a restore: the same REPLACE as [insertUnit], one call instead of thousands. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUnits(units: List<StudyUnitEntity>)
+
     @Update
     suspend fun updateUnit(unit: StudyUnitEntity)
 

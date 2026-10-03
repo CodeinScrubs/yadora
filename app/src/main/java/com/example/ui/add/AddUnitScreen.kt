@@ -326,6 +326,14 @@ fun AddUnitScreen(
     onBack: () -> Unit,
     /** "Save and rate now" on a new topic: open its first rating straight away (the id just saved). */
     onRateNow: (Long) -> Unit = {},
+    /**
+     * "Save and review now" on an existing topic: the learner decides it needs a review, due or not (the owner,
+     * 2026-10-03: "sometimes I may need to review a topic even if the app has not asked for it"). The one-topic session
+     * the Library's long-press opens, reachable from the topic's own page.
+     */
+    onReviewNow: (Long) -> Unit = {},
+    /** False when this page was opened from a review in progress, whose card is this topic already. */
+    showReviewNow: Boolean = true,
 ) {
     val viewModel: AddUnitViewModel = viewModel(factory = AddUnitViewModelFactory(repository))
     
@@ -351,6 +359,8 @@ fun AddUnitScreen(
     var saving by remember { mutableStateOf(false) }
     // Set by "Save and rate now": after a new topic is saved, open its first rating instead of going back.
     var rateNowAfterSave by remember { mutableStateOf(false) }
+    // Set by "Save and review now": after an edit is saved, open this topic's review instead of going back.
+    var reviewNowAfterSave by remember { mutableStateOf(false) }
     var archivedDuplicate by remember { mutableStateOf<StudyUnitEntity?>(null) }
     var editingLog by remember { mutableStateOf<ReviewLogEntity?>(null) }
     var editingLogSaving by remember { mutableStateOf(false) }
@@ -400,18 +410,24 @@ fun AddUnitScreen(
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
     val fmtDate: (Long) -> String = { m -> com.example.ui.i18n.AppDate.date(useJalali, m, strings.languageCode == "fa") }
 
-    // One save path for both buttons: the top bar's Save, and "Save and rate now" for a new topic.
-    fun save(rateNow: Boolean) {
+    // One save path for every button: the top bar's Save, "Save and rate now" for a new topic, and "Save and review
+    // now" for an existing one. Saving first means a review never leaves an edit behind unsaved.
+    fun save(rateNow: Boolean, reviewNow: Boolean = false) {
         if (saving) return
         saving = true
         rateNowAfterSave = rateNow
+        reviewNowAfterSave = reviewNow
         // System and study type were removed as v1 bloat (columns kept, dormant).
         // The recall prompt was too, until it returned as an optional field.
         viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
             onSaved = { newId ->
                 com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                 com.example.widget.DueWidgetProvider.updateAll(reminderContext) // new topic changes today's count
-                if (rateNowAfterSave && newId != null) onRateNow(newId) else onBack()
+                when {
+                    rateNowAfterSave && newId != null -> onRateNow(newId)
+                    reviewNowAfterSave && unitId != null -> onReviewNow(unitId)
+                    else -> onBack()
+                }
             },
             onError = { saving = false },
             onDuplicate = {
@@ -880,6 +896,34 @@ fun AddUnitScreen(
                             "fa" -> "ذخیره و ثبت همین حالا"
                             "de" -> "Speichern und jetzt bewerten"
                             else -> "Save and rate now"
+                        },
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            // An EXISTING topic can be reviewed right now, due or not: a self-check before a test, a chapter gone over in
+            // class today. It opens the same one-topic session as the Library's long-press, so an early review is
+            // ordinary FSRS (recall predicted high, a small gain, a lapse is a lapse). The form is saved first, so nothing
+            // typed here is lost; an unrated topic gets its first rating.
+            val reviewable = viewModel.existingUnit?.takeIf { unitId != null && showReviewNow && !it.archived && it.deletedAt == null }
+            if (reviewable != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                OutlinedButton(
+                    onClick = { save(rateNow = false, reviewNow = true) },
+                    enabled = title.isNotBlank() && !saving,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                    shape = RoundedCornerShape(percent = 50),
+                ) {
+                    Text(
+                        if (reviewable.reviewCount == 0) when (strings.languageCode) {
+                            "fa" -> "ذخیره و ثبت همین حالا"
+                            "de" -> "Speichern und jetzt bewerten"
+                            else -> "Save and rate now"
+                        } else when (strings.languageCode) {
+                            "fa" -> "ذخیره و مرور همین حالا"
+                            "de" -> "Speichern und jetzt wiederholen"
+                            else -> "Save and review now"
                         },
                         fontWeight = FontWeight.Bold,
                     )
