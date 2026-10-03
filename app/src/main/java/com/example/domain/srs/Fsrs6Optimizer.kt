@@ -93,6 +93,13 @@ object Fsrs6Optimizer {
      * calibration distrusts. An outside audit (2026-09-30) showed it: with 60% of forgotten topics rated Hard, a set was
      * adopted at z = 2.66 that predicted the RATINGS better and the true recall worse, and it lengthened intervals by
      * about a fifth on average. `Fsrs6OptimizerTest` keeps that case.
+     *
+     * The baseline is the published defaults, not the defaults times this learner's calibration, so an adopted set can
+     * schedule longer than the calibrated intervals it replaces, never longer than the defaults (an outside audit,
+     * 2026-10-03: a calibration of x0.51 gave way to a set at x0.70). On purpose: one calibration number cannot bend
+     * the curve, so for a learner whose forgetting is steeper it over-shortens, often to its x0.5 floor, and the set that
+     * models the curve predicts better. Measured (`Fsrs6OptimizerGateTest`), a calibrated baseline would have refused
+     * 22 of 40 such sets the defaults' baseline adopts.
      */
     fun lengthening(histories: List<History>, w: DoubleArray, retention: Double): Double {
         if (histories.isEmpty()) return 1.0

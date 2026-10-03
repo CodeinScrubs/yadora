@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Yadora device smoke test.
 #
-# Installs an APK (upgrading in place; if the installed build is signed with a different key it
-# uninstalls first — that DELETES the app's data on that device), launches the app, and reports
+# Installs an APK (upgrading in place; if the installed build is signed with a different key it stops,
+# unless ALLOW_UNINSTALL=1, which uninstalls first and DELETES the app's data on that device), launches the app, and reports
 # crashes/ANRs, the reminders it armed, its notification channels and WorkManager jobs, plus a
 # screenshot. Unit tests cannot see any of this; it only exists on a device.
 #
 # Usage (Git Bash on Windows, from the repo root, after ./gradlew :app:assembleDebug):
 #   tools/device/smoke.sh <adb-serial> [apk]
+#   ALLOW_UNINSTALL=1 tools/device/smoke.sh <adb-serial> [apk]   # only on a test device whose data may go
 # `adb devices` lists serials; an emulator is usually emulator-5554. Output goes to build/device-smoke.
 set -u
 # Without this, Git Bash rewrites device paths such as /sdcard/x into Windows paths and adb then
@@ -32,9 +33,17 @@ echo "=== install ==="
 RESULT=$(a install -r "$APK" 2>&1 | tr -d '\r')
 echo "$RESULT" | tail -2
 if echo "$RESULT" | grep -qE "INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match"; then
-  echo "installed build has a different signing key -> uninstalling (app data on this device is lost)"
-  a uninstall "$PKG" | tr -d '\r'
-  a install "$APK" 2>&1 | tr -d '\r' | tail -2
+  # Uninstalling deletes every topic and review on the device, so it is never the default (an outside audit,
+  # 2026-10-03: the script would have done it to a pilot participant's phone without asking).
+  if [ "${ALLOW_UNINSTALL:-0}" = "1" ]; then
+    echo "installed build has a different signing key -> uninstalling because ALLOW_UNINSTALL=1 (app data on $SERIAL is lost)"
+    a uninstall "$PKG" | tr -d '\r'
+    a install "$APK" 2>&1 | tr -d '\r' | tail -2
+  else
+    echo "installed build has a different signing key: NOT uninstalling, which would delete the app's data on $SERIAL."
+    echo "Install a build signed with the same key, or rerun with ALLOW_UNINSTALL=1 on a test device."
+    exit 3
+  fi
 fi
 a shell dumpsys package "$PKG" | tr -d '\r' | grep -E "versionCode|versionName" | head -2
 

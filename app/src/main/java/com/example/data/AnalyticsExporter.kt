@@ -38,8 +38,9 @@ object AnalyticsExporter {
         put("retrievabilityAtReview", "The memory model's predicted recall probability at the moment of the review, on the log's own " +
             "model (schedulerVersion) and weight set (parameterSetId; 0 = published FSRS-6 defaults), BEFORE the per-user " +
             "calibration. Pool predictions only within one (schedulerVersion, parameterSetId). A rating correction replays " +
-            "the topic's history on the set it is on now and rewrites this value on its earlier rows: a row reviewed before " +
-            "its set's activatedAt (memoryParameterSets) was recomputed, not predicted, and the app's calibration leaves it out.")
+            "the topic's history on the set it is on now and rewrites this value on its other rows: a row reviewed before " +
+            "its set's activatedAt (memoryParameterSets), or a later row of a topic whose rating was corrected (a RATING_CORRECTED " +
+            "event made after it), was recomputed, not predicted, and the app's calibration leaves it out.")
         put("calibrationScaleAtReview", "The per-user multiplier applied to the memory interval when this review was scheduled " +
             "(1 = none). Calibrated recall = (1 + ((p^(1/decay)) - 1) / scale)^decay with decay = -w20 of the log's weight set.")
         put("intervals", "nextIntervalDays is the MEMORY interval actually scheduled (after calibration, caps and +-5% fuzz). The topic " +

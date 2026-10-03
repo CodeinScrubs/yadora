@@ -125,10 +125,10 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 | id | question | threshold | if LOOK |
 |---|---|---|---|
 | D1 | Did every phone schedule exactly what the rules say? | 0 replay mismatches, 0 self-check issues | BUG. Find the phone, the build and the log in `report.md` §2. A time-zone change is the one benign cause. |
-| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300; past 5 points it is LOOK only if the topic-clustered 95% interval of the gap excludes 0, otherwise WAIT (amended 2026-10-03) | The per-user calibration is not keeping up. Check D4 before touching it. |
+| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300; past 5 points it is LOOK only if the topic-clustered 95% interval of the gap excludes 0, otherwise WAIT (amended 2026-10-03). Judged for the published defaults pooled and for each learner's personal set on its own: a set's id is local to one phone (2026-10-03) | The per-user calibration is not keeping up. Check D4 before touching it. |
 | D3 | First review after a Hard / Medium / Easy first rating: close to predicted? | −7 to +5 points, n ≥ 60 per rating | Compare "implied S0" with the default. Simulate a first-study prior for topics, or a different cap, before changing either. |
 | D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
-| D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
+| D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar), with the first-rating grades in order and intervals no longer than the defaults' (the app's two other conditions, added 2026-10-03) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
 | D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
 | D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each; at 5+ points it is LOOK only if the 95% interval excludes 0, otherwise WAIT (amended 2026-10-03) | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
 | D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
@@ -145,8 +145,12 @@ Why these thresholds:
   without one is a reminder the phone never delivered. Days with reminders switched off in Settings are left
   out. Exact alarms come within seconds, even in Doze; 10 minutes leaves room for a busy phone, and an inexact
   alarm (no exact-alarm permission) can come up to about an hour late, which D11 should flag.
-- D5 uses exactly the gate the app applies to the personal model, so the pilot cannot adopt weights the app
-  itself would reject. Two limits, stated before the data exists (2026-09-28): the split is in TIME within the
+- D5 applies the app's bar and its two safety conditions (grades in order, never longer than the defaults), so
+  the pilot cannot propose weights the app would refuse for those reasons. The procedure differs: the pilot refits
+  five weights (w1–w3, w8, w20) on everyone's reviews with one time split at 75%; the app fits all 21 for one learner
+  and judges them over four forward folds. Until 2026-10-03 the pooled fit was judged on z alone, and an outside audit
+  got a "better" set with S0(Hard) at 12.5 days over S0(Good) at 0.14. Two limits, stated before the data exists
+  (2026-09-28): the split is in TIME within the
   same participants, so a pass shows the refit predicts these learners' later reviews, not a new student's;
   and reviews of one topic or one person are not independent, so z ≥ 2.33 is a nominal 1% bar, not a real
   one. A LOOK on D5 is therefore not enough for a default that new users get: first hold out whole

@@ -190,8 +190,8 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
     private val parameterSets = repository.observeParameterSets()
         .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
 
-    val calibrationStats = kotlinx.coroutines.flow.combine(allLogs, parameterSets) { logs, sets ->
-        calibrationStatsOf(logs, activeSetOf(sets))
+    val calibrationStats = kotlinx.coroutines.flow.combine(allLogs, parameterSets, repository.observeCorrectionEvents()) { logs, sets, corrections ->
+        calibrationStatsOf(logs, activeSetOf(sets), com.example.data.RecomputedPredictions.ids(logs, corrections))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /** The memory model card: the weight set in use, the last fit attempt, and the evidence so far. */
@@ -221,7 +221,8 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
     
     val strings = com.example.ui.i18n.LocalStrings.current
     
-    var selectedTab by remember { mutableStateOf(0) }
+    // Saveable: a rotation used to drop the learner back on Overview (an outside audit, 2026-10-03).
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0) }
     val isFarsiLanguage = strings.languageCode == "fa"
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
     val tabTitles = if (isFarsiLanguage) listOf("نمای کلی", "تقویم مرور") else if (strings.languageCode == "de") listOf("Überblick", "Kalenderplan") else listOf("Overview", "Calendar Plan")
@@ -627,7 +628,7 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                     }
                     
                     val reviewCount = dueInDay.size
-                    var isExpanded by remember { mutableStateOf(i == 0) }
+                    var isExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(i == 0) }
                     // An over-limit day is a calm caution (warm terracotta), never an alarm-red error.
                     val over = com.example.ui.theme.overdueTone()
 

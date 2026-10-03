@@ -235,7 +235,12 @@ object BackupManager {
         reader.beginObject()
         while (reader.hasNext()) {
             when (reader.nextName()) {
-                "backupVersion" -> fileVersion = (reader.readValue() as? Number)?.toInt() ?: 1
+                // A version that is present must be a whole number. Text such as "10" used to read as 1, which slipped a
+                // file claiming a NEWER format past the refusal below (an outside audit, 2026-10-03).
+                "backupVersion" -> fileVersion = (reader.readValue() as? Number)
+                    ?.takeIf { it.toDouble().let { v -> v.isFinite() && v == Math.floor(v) && v in 1.0..1_000_000.0 } }
+                    ?.toInt()
+                    ?: throw IllegalArgumentException("backupVersion is not a whole number")
                 "subjects" -> reader.forEachRecord { _, o ->
                     subjects += SubjectEntity(
                         id = o.getLong("id"), name = o.getString("name"),

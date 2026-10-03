@@ -276,8 +276,10 @@ one paragraph, then answer within it.
    assumptions taken from the literature are fine.
 3. **The exam date is cosmetic.** It must not influence intervals, order, targets or hints.
 4. **Personalization never lengthens intervals.** Calibration and personal weights may shorten intervals but not
-   lengthen them, until an objective signal separates slow forgetting from generous rating. Question A3 asks what
-   that signal could be.
+   lengthen them past what the published defaults give, until an objective signal separates slow forgetting from
+   generous rating. Question A3 asks what that signal could be. (An adopted personal set may schedule longer than the
+   calibrated intervals it replaces: one calibration number over-shortens for a learner whose curve is steeper, and
+   comparing with the calibrated intervals would refuse most such sets.)
 5. **Topics stay whole.** No splitting topics into cards, no learning steps, no special handling of
    repeatedly forgotten topics ("leeches"), and no load balancing that makes one topic's interval depend on other
    topics.

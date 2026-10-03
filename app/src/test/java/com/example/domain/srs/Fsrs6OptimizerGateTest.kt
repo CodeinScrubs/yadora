@@ -16,7 +16,7 @@ class Fsrs6OptimizerGateTest {
     private fun grade(v: Int) = Grade.entries.first { it.value == v }
 
     /** Topics reviewed on the DEFAULT model's schedule, 30% early to 60% late, recall drawn from [truth]. */
-    private fun simulate(truth: DoubleArray, topics: Int, seed: Int): List<Fsrs6Optimizer.History> {
+    private fun simulate(truth: DoubleArray, topics: Int, seed: Int, maxReviews: Int = 14): List<Fsrs6Optimizer.History> {
         val rng = kotlin.random.Random(seed)
         val truthP = Fsrs6Parameters(weights = truth)
         val appP = Fsrs6Parameters()
@@ -30,7 +30,7 @@ class Fsrs6OptimizerGateTest {
             val deltas = mutableListOf(0.0)
             val times = mutableListOf(start * day)
             var today = start
-            while (grades.size < 14) {
+            while (grades.size < maxReviews) {
                 val planned = Fsrs6.intervalDays(appState.stability, 0.9, appP).coerceIn(1.0, 365.0)
                 val gap = maxOf(1, Math.round(planned * (0.7 + rng.nextDouble() * 0.9)).toInt())
                 today += gap
@@ -130,5 +130,74 @@ class Fsrs6OptimizerGateTest {
         val (adopted, zs) = adoptions(strong, 700, 1..10)
         println("GATE: strong departure adopted $adopted of 10 (z $zs)")
         assertTrue("adopted $adopted of 10 (z $zs)", adopted >= 8)
+    }
+
+    /**
+     * Never-lengthen compares a candidate with the published defaults, not with the defaults times the learner's
+     * calibration (`Fsrs6Optimizer.lengthening`). An outside audit (2026-10-03) asked for the calibrated baseline: a
+     * calibration of x0.51 gave way to a set at x0.70, so intervals grew at adoption. Measured here on a learner who
+     * forgets faster AND more steeply than the defaults, from young libraries (4 reviews a topic) to mature ones (14),
+     * with the scale the app's own calibration would compute from these reviews: the calibration sits at or near its
+     * x0.5 floor (one number cannot bend the curve, so it over-shortens), the sets that predict better shorten the
+     * defaults to about x0.7, and the calibrated baseline would refuse 22 of the 40 that the defaults' baseline adopts,
+     * leaving those learners on intervals shorter than their own fitted model says they need.
+     */
+    @Test
+    fun `a calibrated baseline would refuse most personal sets of a learner who forgets more steeply`() {
+        val steeper = Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also {
+            for (i in 0..3) it[i] *= 0.4
+            it[8] = 1.3
+            it[20] = 0.35
+        }
+        val defaults = Fsrs6Parameters()
+        fun lastState(h: Fsrs6Optimizer.History, p: Fsrs6Parameters): MemoryState {
+            var s = Fsrs6.initialState(grade(h.grades[0]), p)
+            for (i in 1 until h.size) s = Fsrs6.nextState(s, h.elapsedDays[i], grade(h.grades[i]), p)
+            return s
+        }
+        fun interval(s: MemoryState, p: Fsrs6Parameters, scale: Double) =
+            (Fsrs6.intervalDays(s.stability, 0.9, p) * scale).coerceIn(MedScheduler.MIN_INTERVAL_DAYS, MedScheduler.MAX_INTERVAL_DAYS)
+        /** The app's calibration from these reviews: the defaults' predictions on the last 600 evidence reviews. */
+        fun appScale(histories: List<Fsrs6Optimizer.History>): Double {
+            val rows = ArrayList<Triple<Long, Double, Boolean>>()
+            for (h in histories) {
+                var s = Fsrs6.initialState(grade(h.grades[0]), defaults)
+                for (i in 1 until h.size) {
+                    val e = h.elapsedDays[i]
+                    if (RecallCalibration.isEvidence(e, interval(s, defaults, 1.0))) {
+                        rows += Triple(h.reviewedAt[i], Fsrs6.retrievability(e, s.stability, defaults), h.grades[i] > 1)
+                    }
+                    s = Fsrs6.nextState(s, e, grade(h.grades[i]), defaults)
+                }
+            }
+            val last = rows.sortedBy { it.first }.takeLast(RecallCalibration.WINDOW)
+            return RecallCalibration.scale(last.map { it.second }.toDoubleArray(), last.map { it.third }.toBooleanArray(), defaults)
+        }
+
+        var worlds = 0
+        var adopted = 0
+        var refusedWhenCalibrated = 0
+        val scales = ArrayList<Double>()
+        for (maxReviews in listOf(14, 10, 8, 6, 4)) for (topics in listOf(700, 1200)) for (seed in 11..14) {
+            val histories = simulate(steeper, topics, seed, maxReviews)
+            val k = appScale(histories).also { scales += it }
+            val report = Fsrs6Optimizer.fitAndValidate(histories, Fsrs6Parameters.DEFAULT_WEIGHTS)
+            worlds++
+            val w = report.weights ?: continue
+            adopted++
+            val fitted = Fsrs6Parameters(weights = w)
+            val vsCalibrated = kotlin.math.exp(histories.sumOf {
+                kotlin.math.ln(interval(lastState(it, fitted), fitted, 1.0) / interval(lastState(it, defaults), defaults, k))
+            } / histories.size)
+            if (vsCalibrated > 1.0) refusedWhenCalibrated++
+        }
+        scales.sort()
+        println(
+            "GATE: steeper forgetter adopted $adopted of $worlds against the defaults; a calibrated baseline would refuse " +
+                "$refusedWhenCalibrated of them (app scale median ${"%.2f".format(java.util.Locale.ROOT, scales[scales.size / 2])}, " +
+                "min ${"%.2f".format(java.util.Locale.ROOT, scales.first())}, max ${"%.2f".format(java.util.Locale.ROOT, scales.last())})"
+        )
+        assertTrue("the defaults' baseline adopts the set that predicts better: $adopted of $worlds", adopted >= 36)
+        assertTrue("the calibrated baseline would refuse many of them: $refusedWhenCalibrated", refusedWhenCalibrated >= 10)
     }
 }

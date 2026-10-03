@@ -284,6 +284,79 @@ class AuditFindingsTest {
         assertEquals(setId, plainProjected.parameterSetId)
     }
 
+    /**
+     * A rating correction replays its topic and rewrites the stored prediction of every later review. Those numbers
+     * were computed knowing what came after, yet the app's calibration and the Progress card still counted them (an
+     * outside audit, 2026-10-03: 0.808 -> 0.753 and 0.901 -> 0.854 stayed in the evidence). They are left out now, as
+     * `analyze.py` leaves them out; the corrected review itself and every other topic's reviews still count, and the
+     * card counts exactly what the scheduler counts.
+     */
+    @Test
+    fun `predictions a rating correction recomputed are not calibration evidence`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val ids = (0 until 5).map { k -> topic("Topic $k", now - 200 * day) }
+        for (id in ids) for (d in listOf(200, 190, 160, 100)) rate(id, now - d * day, MemoryRating.Good)
+        val set = MedScheduler.activeParameterSet
+        val before = repo.calibrationEvidence(set).map { it.id }.toSet()
+
+        val logs = db.reviewLogDao().getLogsForUnitOnce(ids[0])
+        val corrected = logs[1] // the first recall
+        repo.editReviewRating(ids[0], corrected.id, MemoryRating.Hard, UnderstandingRating.Clear)
+        val later = logs.filter { it.id > corrected.id }.map { it.id }.toSet()
+        val rewritten = db.reviewLogDao().getLogsForUnitOnce(ids[0]).filter { it.id in later }
+        assertTrue(
+            "the correction really rewrote the later predictions",
+            rewritten.all { r -> r.retrievabilityAtReview != logs.first { it.id == r.id }.retrievabilityAtReview },
+        )
+        val wereEvidence = before intersect later
+        assertTrue("both later reviews were evidence before the correction", wereEvidence == later)
+
+        val raw = db.reviewLogDao().getRecentRecallLogsOnce(
+            MedScheduler.CURRENT_MODEL.id, set.id, set.activatedAt, com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
+            com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION, com.example.domain.srs.RecallCalibration.WINDOW,
+        ).map { it.id }.toSet()
+        assertTrue("the query alone still returns them", raw.containsAll(later))
+        val evidence = repo.calibrationEvidence(set).map { it.id }.toSet()
+        assertEquals("only the recomputed predictions leave", before - later, evidence)
+        assertTrue("the corrected review itself stays", corrected.id in evidence)
+
+        val all = db.reviewLogDao().getAllLogsOnce().sortedWith(compareBy({ it.reviewedAt }, { it.id }))
+        val card = com.example.ui.progress.calibrationStatsOf(
+            all, set, com.example.data.RecomputedPredictions.ids(all, db.eventLogDao().getCorrectionEvents()),
+        )!!
+        assertEquals("the Progress card counts the same reviews", evidence.size, card.n)
+        assertEquals("without the rule it counted more", evidence.size + later.size, com.example.ui.progress.calibrationStatsOf(all, set)!!.n)
+    }
+
+    /**
+     * A personal set adopted before the fit kept the first-rating grades in order (2026-10-02), or restored from a file
+     * that holds one, could stay ACTIVE: a topic first rated Hard would come back later than one rated Medium (an outside
+     * audit, 2026-10-03). Loading the model now retires it, once and with a record, and the defaults schedule; the set
+     * stays readable, so a topic still on it replays under its own weights and crosses at its next review.
+     */
+    @Test
+    fun `an active personal set with its grades out of order is retired when the model is loaded`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val inverted = Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { it[1] = 3.0; it[2] = 2.0 } // S0(Hard) above S0(Good)
+        assertTrue(Fsrs6Optimizer.withinBounds(inverted) && !Fsrs6Optimizer.keepsGradeOrder(inverted))
+
+        val badId = activateSet(inverted, now - 2 * day) // activateSet loads the model
+        assertEquals("the defaults schedule", MedScheduler.DEFAULT_PARAMETER_SET.id, MedScheduler.activeParameterSet.id)
+        assertTrue("the set stays readable for replay", MedScheduler.knownParameterSets.containsKey(badId))
+        val row = db.memoryParameterSetDao().getAll().single { it.id == badId }
+        assertEquals(MemoryParameterSetEntity.RETIRED, row.status)
+        assertTrue(row.retiredAt != null)
+        val retired = db.eventLogDao().getAll().filter { it.type == "PERSONAL_MODEL_RETIRED" }
+        assertEquals(1, retired.size)
+        assertTrue(retired.single().detail!!, retired.single().detail!!.startsWith("set=$badId reason=grade order"))
+
+        repo.refreshMemoryModel()
+        assertEquals("retired once", 1, db.eventLogDao().getAll().count { it.type == "PERSONAL_MODEL_RETIRED" })
+
+        val ordered = activateSet(Fsrs6Parameters.DEFAULT_WEIGHTS.copyOf().also { it[20] = 0.3 }, now)
+        assertEquals("a set in grade order is used", ordered, MedScheduler.activeParameterSet.id)
+    }
+
     /** The personal fit leaves merged topics out, as the pilot analysis does. */
     @Test
     fun `merged topics are left out of the personal fit`() = runBlocking {

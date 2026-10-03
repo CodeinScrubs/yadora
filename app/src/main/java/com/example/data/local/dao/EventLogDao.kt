@@ -30,4 +30,12 @@ interface EventLogDao {
     /** Every merge: the survivor in unitId, the absorbed copies' ids comma-separated in detail. */
     @Query("SELECT * FROM event_logs WHERE type = 'MERGE'")
     suspend fun getMergeEvents(): List<EventLogEntity>
+
+    /** Every rating correction (com.example.data.RecomputedPredictions reads which predictions each one recomputed). */
+    @Query("SELECT * FROM event_logs WHERE type = 'RATING_CORRECTED'")
+    suspend fun getCorrectionEvents(): List<EventLogEntity>
+
+    /** [getCorrectionEvents] as a Flow, for the Progress screen's calibration card. */
+    @Query("SELECT * FROM event_logs WHERE type = 'RATING_CORRECTED'")
+    fun observeCorrectionEvents(): kotlinx.coroutines.flow.Flow<List<EventLogEntity>>
 }
