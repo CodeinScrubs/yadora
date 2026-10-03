@@ -225,6 +225,10 @@ class MedReviewRepository(
 
     // --- the personal memory model (DB v9) ---
 
+    /** Every rating correction, for the Progress calibration card (which predictions they recomputed). */
+    fun observeCorrectionEvents(): Flow<List<com.example.data.local.entity.EventLogEntity>> =
+        database.eventLogDao().observeCorrectionEvents()
+
     /** Every fit attempt and adopted weight set, oldest first, for the Progress and Settings screens. */
     fun observeParameterSets(): Flow<List<com.example.data.local.entity.MemoryParameterSetEntity>> =
         database.memoryParameterSetDao().observeAll()
@@ -233,10 +237,30 @@ class MedReviewRepository(
      * Load the weight sets into the scheduler: the ACTIVE one schedules new reviews, and every other
      * non-rejected set stays readable so a row or log still on it replays under its own weights. Called
      * right before anything schedules, the same places the calibration is refreshed. A stored vector that
-     * does not decode inside the reference bounds is ignored, which leaves the published defaults active.
+     * does not decode inside the reference bounds is ignored, which leaves the published defaults active, and
+     * an active set whose first-rating grades are out of order is retired (PERSONAL_MODEL_RETIRED).
      */
     suspend fun refreshMemoryModel() {
-        val rows = database.memoryParameterSetDao().getAll()
+        val dao = database.memoryParameterSetDao()
+        var rows = dao.getAll()
+        // A set adopted before 2026-10-02, when the fit began keeping the first-rating grades in order, or restored from
+        // such a file, can bring a topic rated Hard back later than one rated Medium. It is retired here, once and with a
+        // record, instead of scheduling (an outside audit, 2026-10-03); it stays readable for replay, like every retired set.
+        rows.lastOrNull { it.status == com.example.data.local.entity.MemoryParameterSetEntity.ACTIVE }?.let { row ->
+            val w = com.example.domain.srs.Fsrs6Optimizer.decode(row.weights)
+            if (w != null && !com.example.domain.srs.Fsrs6Optimizer.keepsGradeOrder(w)) {
+                database.withTransaction {
+                    dao.retireActive(System.currentTimeMillis())
+                    database.eventLogDao().insert(
+                        com.example.data.local.entity.EventLogEntity(
+                            type = "PERSONAL_MODEL_RETIRED",
+                            detail = "set=${row.id} reason=grade order (initial stabilities ${w.take(4).joinToString(",") { "%.3f".format(java.util.Locale.ROOT, it) }})",
+                        )
+                    )
+                }
+                rows = dao.getAll()
+            }
+        }
         val known = HashMap<Long, DoubleArray>()
         for (row in rows) {
             if (row.status == com.example.data.local.entity.MemoryParameterSetEntity.REJECTED) continue
@@ -664,22 +688,40 @@ class MedReviewRepository(
      * and at the start of every review session into `MedScheduler.calibrationScale`.
      */
     suspend fun recallCalibrationScale(): Double {
-        // Pooled within ONE weight set, and read on that set's own curve: predictions made by different
-        // weights are predictions of different models.
         val set = MedScheduler.activeParameterSet
-        val logs = reviewLogDao.getRecentRecallLogsOnce(
-            MedScheduler.CURRENT_MODEL.id,
-            set.id,
-            set.activatedAt,
-            com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
-            com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION,
-            com.example.domain.srs.RecallCalibration.WINDOW,
-        ).filter { it.retrievabilityAtReview in 0.0..1.0 } // the query already excludes the -1 sentinel; belt and braces
+        val logs = calibrationEvidence(set)
         return com.example.domain.srs.RecallCalibration.scale(
             predicted = logs.map { it.retrievabilityAtReview }.toDoubleArray(),
             recalled = logs.map { it.memoryRating != MemoryRating.Forgot.name }.toBooleanArray(),
             p = com.example.domain.srs.Fsrs6Parameters(weights = set.weights),
         )
+    }
+
+    /**
+     * The reviews the calibration of [set] learns from: pooled within ONE weight set (predictions made by different
+     * weights are predictions of different models), passing [com.example.domain.srs.RecallCalibration.isEvidence], from
+     * when the set began scheduling, and without the predictions a rating correction recomputed
+     * ([com.example.data.RecomputedPredictions], since 2026-10-03). Newest first, the newest
+     * [com.example.domain.srs.RecallCalibration.WINDOW] of them: the recomputed rows are left out BEFORE the window is
+     * taken, as the Progress card takes it (`calibrationStatsOf`), so the two count the same reviews.
+     */
+    internal suspend fun calibrationEvidence(set: MedScheduler.ParameterSet): List<ReviewLogEntity> {
+        val corrections = database.eventLogDao().getCorrectionEvents()
+        // Every prediction a correction recomputed, read from the corrected topics' own logs (corrections are rare).
+        val recomputed = if (corrections.isEmpty()) emptySet() else com.example.data.RecomputedPredictions.ids(
+            corrections.mapNotNull { it.unitId }.distinct().flatMap { reviewLogDao.getLogsForUnitOnce(it) },
+            corrections,
+        )
+        val window = com.example.domain.srs.RecallCalibration.WINDOW
+        return reviewLogDao.getRecentRecallLogsOnce(
+            MedScheduler.CURRENT_MODEL.id,
+            set.id,
+            set.activatedAt,
+            com.example.domain.srs.RecallCalibration.MIN_ELAPSED_DAYS,
+            com.example.domain.srs.RecallCalibration.EARLY_REVIEW_FRACTION,
+            window + recomputed.size, // at most that many of them are left out below
+        ).filter { it.retrievabilityAtReview in 0.0..1.0 && it.id !in recomputed } // the query already excludes the -1 sentinel
+            .take(window)
     }
 
     /**

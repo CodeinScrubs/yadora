@@ -18,7 +18,9 @@ data class EventLogEntity(
     val at: Long = System.currentTimeMillis(),
     // STUDY_ACTION | PROCRASTINATE | PROCRASTINATE_ALL | REDISTRIBUTE | SNOOZE | MERGE | NOTIF_SHOWN |
     // PROJECTION_FAILED | MISSED_REMINDER_REPORT | PERSONAL_MODEL | PERSONAL_MODEL_FAILED | PERSONAL_MODEL_OFF |
-    // REMINDER_FIRED (every reminder alarm, ReminderTelemetry) | REMINDERS_ON | REMINDERS_OFF (the Settings switch)
+    // PERSONAL_MODEL_DISCARDED | PERSONAL_MODEL_RETIRED (an active set with its grades out of order, at refresh) |
+    // REMINDER_FIRED (every reminder alarm, ReminderTelemetry) | REMINDERS_ON | REMINDERS_OFF (the Settings switch) |
+    // APP_OPENED (from a reminder, the alarm or the widget) | RATING_CORRECTED (com.example.data.RecomputedPredictions)
     val type: String,
     val unitId: Long? = null,
     val detail: String? = null,

@@ -367,6 +367,30 @@ class BackupRoundTripTest {
     }
 
     /**
+     * A version written as text read as version 1, so a file claiming a NEWER format, `"backupVersion": "10"`, passed
+     * the refusal meant for it (an outside audit, 2026-10-03). A version that is present must be a whole number; a file
+     * without one is still read as version 1, as the earliest builds wrote it.
+     */
+    @Test
+    fun `a backup version that is not a whole number is refused and the library is untouched`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = (context as MedReviewApplication).database
+        val (unitId, json) = oneTopicLibrary(context)
+        for (version in listOf<Any>("10", "${BackupManager.BACKUP_VERSION}", 9.5, org.json.JSONObject.NULL, 0, BackupManager.BACKUP_VERSION + 1)) {
+            val bad = org.json.JSONObject(json).put("backupVersion", version).toString()
+            assertTrue("backupVersion $version must be refused", runCatching { BackupManager.restoreFromJson(context, bad) }.isFailure)
+            assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
+            assertEquals(1, db.reviewLogDao().getLogsForUnitOnce(unitId).size)
+        }
+        // org.json would print 9.0 as 9, so the text is edited directly (the backup is compact JSON).
+        val wholeDouble = json.replace("\"backupVersion\":${BackupManager.BACKUP_VERSION},", "\"backupVersion\":${BackupManager.BACKUP_VERSION}.0,")
+        assertTrue("the edit must have applied", wholeDouble != json)
+        assertEquals("a whole number written as a double is still a version", 1, BackupManager.restoreFromJson(context, wholeDouble))
+        val noVersion = org.json.JSONObject(json).apply { remove("backupVersion") }.toString()
+        assertEquals("a file without a version is read as version 1, as before", 1, BackupManager.restoreFromJson(context, noVersion))
+    }
+
+    /**
      * Every backup Yadora has written carries its review history. A file whose topics were reviewed but whose
      * history section is missing, or empty, is damaged: restoring it erased the history while the topics still
      * claimed their reviews (an outside audit reproduced the missing section, 2026-09-28).

@@ -385,8 +385,9 @@ fun AddUnitScreen(
         }
     }
     
-    var showStudiedAtPicker by remember { mutableStateOf(false) }
-    var showNextReviewAtPicker by remember { mutableStateOf(false) }
+    // Saveable: a rotation used to close an open date picker (an outside audit, 2026-10-03); the date itself was kept.
+    var showStudiedAtPicker by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showNextReviewAtPicker by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     
     val strings = com.example.ui.i18n.LocalStrings.current
     val titleRequiredHint = when (strings.languageCode) {

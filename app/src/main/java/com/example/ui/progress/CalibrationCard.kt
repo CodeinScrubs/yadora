@@ -28,10 +28,13 @@ import com.example.domain.srs.RecallCalibration
 internal fun calibrationStatsOf(
     logs: List<ReviewLogEntity>,
     set: MedScheduler.ParameterSet = MedScheduler.DEFAULT_PARAMETER_SET,
+    /** Logs whose prediction a rating correction recomputed ([com.example.data.RecomputedPredictions]), left out as the scheduler leaves them out. */
+    recomputed: Set<Long> = emptySet(),
 ): ProgressViewModel.CalibrationStats? {
     val evidence = logs
         .filter {
-            it.logType == "RECALL" &&
+            it.id !in recomputed &&
+                it.logType == "RECALL" &&
                 it.schedulerVersion == MedScheduler.CURRENT_MODEL.id &&
                 it.parameterSetId == set.id &&
                 it.reviewedAt >= set.activatedAt &&

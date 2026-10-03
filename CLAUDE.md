@@ -163,7 +163,8 @@ package form reports nothing and changes nothing. Windows Python prints cp1252, 
 
 Both checks are scripted — run them (Git Bash, repo root) instead of rebuilding them by hand:
 `tools/device/smoke.sh <serial> [apk]` installs, launches, and reports crashes/ANRs, armed reminders
-(exact vs inexact), channels and jobs; `tools/device/test_reminder.sh <serial>` fires Settings → "Send a
+(exact vs inexact), channels and jobs (on a signing-key mismatch it stops instead of uninstalling, which would delete
+the app's data, unless `ALLOW_UNINSTALL=1`); `tools/device/test_reminder.sh <serial>` fires Settings → "Send a
 test reminder" through the real UI and prints the notification Android actually posted. Run both on a
 real phone before every release.
 
@@ -510,7 +511,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   fraction to 0.8 either: an on-time review of a 3.99-day interval happens 3 whole days later
   (0.75), so on-time reviews would drop out while late repairs still passed. The Progress card is
   computed from these same rows (`calibrationStatsOf`) and compares the DEFAULT model's stored
-  predictions with outcomes; the corrected predictions agree with them by construction.
+  predictions with outcomes; the corrected predictions agree with them by construction. Both leave out the predictions
+  a rating correction recomputed (every later review of the corrected topic that existed by then, read from its
+  RATING_CORRECTED event: `data/RecomputedPredictions`, 2026-10-03), as `analyze.py` does; a correction made before that
+  event existed cannot be seen.
 - **The memory model is fitted to the learner — a PERSONAL WEIGHT SET — only when their own later
   reviews prove it predicts better** (DB v9, `domain/srs/Fsrs6Optimizer`, `memory_parameter_sets`,
   `data/PersonalModelWorker`). Once a day (battery not low, Settings switch on) the repository rebuilds
@@ -544,7 +548,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   strong departure 9 of 10, a faster forgetter's set accepted (it shortens to 0.70), and the generous rater an outside
   audit built (true memory the defaults', 60% of lapses called Hard) refused although it predicted the RATINGS better
   (z = 2.66): it would have lengthened intervals by 14% while predicting true recall worse. Progress says when a set
-  that predicted better was refused, and the event log records `lengthening=`. Model identity is now (model, weight set):
+  that predicted better was refused, and the event log records `lengthening=`. The comparison is with the published
+  defaults, not with the defaults times this learner's calibration, on purpose (an outside audit, 2026-10-03, asked for
+  the calibrated baseline after a calibration of x0.51 gave way to a set at x0.70; it was built, measured and reverted
+  the same day): one calibration number cannot bend the curve, so for a learner who forgets more steeply it
+  over-shortens, often to its x0.5 floor, and a calibrated baseline would refuse 22 of 40 such learners' sets that
+  predict better (`Fsrs6OptimizerGateTest`). Either way no learner is scheduled longer than the defaults. An ACTIVE set
+  whose first-rating grades are out of order (adopted before 2026-10-02, or restored from such a file) is retired when
+  the model is loaded, with a PERSONAL_MODEL_RETIRED event; it stays readable for replay. Model identity is now (model, weight set):
   `study_units.parameterSetId` and `review_logs.parameterSetId`, 0 = the published defaults. Every
   FSRS-5→6 rule applies to sets: adoption writes no topic; a topic crosses by `projectOntoCurrentModel`
   (replay onto the active set) at its next display or commit; `editReviewRating` replays a topic on the
@@ -837,7 +848,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   one at a time, and read one at a time straight into entities: ~15 MB to write, ~9 MB to restore. The
   output is compact JSON with the same fields. Every older build's backup still restores: pretty-printed,
   whole doubles as integers, with or without a byte-order mark (`BackupStreamingTest` pins it). Restore
-  validates the WHOLE file before it writes the safety copy or touches the database. Settings runs the
+  validates the WHOLE file before it writes the safety copy or touches the database. A `backupVersion` that is present
+  must be a whole number (text such as "10" used to read as version 1 and slip past the newer-version refusal); a file
+  without one still reads as version 1. Settings runs the
   write and the restore NonCancellable, so leaving the screen can never leave a truncated backup the
   user believes is complete; a write that fails part-way deletes the file it was writing (the picked
   document, or the half-written share file), and the restore's reminder re-arm and widget refresh run
@@ -1201,9 +1214,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
     the wrong date). FIXED 2026-10-03 without a schema change: histories are walked in saved order (log id).
     The repair deadline is dropped when it does not beat the memory interval BEFORE fuzz, so in a 5% band a topic can
     come back up to 5% later than its repair date would have; changing it is a replayed rule, for the next POLICY
-    bump. Within one weight set a correction's replayed predictions still count as the APP's calibration evidence
-    (known, schema change); since 2026-10-03 every correction is logged (RATING_CORRECTED, with the answer it
-    replaced) and `analyze.py` leaves the predictions it recomputed out. `experiments.py`'s equal review count is not equal time (labelled since 2026-09-28; about 0.7% in
+    bump. Within one weight set a correction's replayed predictions counted as the APP's calibration evidence: FIXED
+    2026-10-03 without a schema change. Every correction is logged (RATING_CORRECTED, with the answer it replaced), and
+    the app and `analyze.py` both leave the predictions it recomputed out; the original values are not kept. `experiments.py`'s equal review count is not equal time (labelled since 2026-09-28; about 0.7% in
     the audit's case). In `simulate.py` the other twin cannot spend time it has no topic for (each topic once a
     day), so in a small library it can end with less time (1.6% in the audit's 30-day case); in the published worlds
     that can only happen in the first days, while the library is a handful of topics.
@@ -1384,6 +1397,49 @@ These were decided deliberately. Re-suggesting them wastes a session:
     - an ordinal likelihood, inverse-propensity weights and topic decomposition (tentative: pilot data first);
     - anytime-valid e-values for the gate (the defaults' learner never comes near 2.33, highest z 0.84 in 40 refits,
       and never-lengthen bounds what a false adoption could cost).
+- **A tenth outside report, 2026-10-03: Codex's production audit (at 8bbffd0), its review of the researchers' answers (an
+  88-row claim ledger), an engineering plan (ENG-01–09) and an independent mathematical review (C01–C10).** Every finding
+  was checked against the current code and the reproducible ones re-run; each fix has a test that fails without it,
+  except the rotation and `smoke.sh` changes.
+  - **Fixed:**
+    - R3 / ENG-02 / C01: within one weight set the app's calibration and the Progress card still counted the predictions
+      a rating correction recomputed (its case: 0.808 → 0.753 and 0.901 → 0.854). They are left out now (the calibration
+      entry; `AuditFindingsTest`, `RecomputedPredictionsTest`). Keeping the original values beside the replayed ones is
+      the declined DB v11.
+    - MATH-03: a personal set with its grades out of order stayed ACTIVE if it was adopted before 2026-10-02 or restored.
+      It is retired when the model is loaded.
+    - BACKUP-01: `"backupVersion": "10"` read as version 1 (`BackupRoundTripTest`).
+    - DATA-01: `analyze.py` kept a participant's newest export and said it held the whole history, so a topic purged
+      between two exports vanished without a word. The loss is counted and reported, not merged back: a corrected log, a
+      reused id or deleted data must not return.
+    - DATA-02: one malformed export stopped the whole batch. It is set aside with its reason.
+    - DATA-03: the pooled refit (D5) was judged on z alone. It now also needs the app's two other conditions (grades in
+      order, never longer than the defaults), computed as the app computes them, and PILOT.md no longer calls it the
+      app's gate.
+    - C05 / ENG-05: two learners' personal sets with the same local id formed one calibration group. Each is its own
+      group, D2 judges every group with 300 reviews, and the per-user scale is reported on the set in use as well.
+    - DEV-01: `smoke.sh` uninstalled the app (deleting its data) on a signing-key mismatch. Now only with
+      `ALLOW_UNINSTALL=1`.
+    - UI-01: a rotation reset Progress to Overview, closed an open Calendar Plan day and closed an open date picker (the
+      chosen date was kept, as the report itself noted). `rememberSaveable`.
+  - **True, kept on purpose:**
+    - ALG-01 / ENG-03 / C02: an adopted set can schedule longer than the calibrated intervals it replaces (its case: one
+      topic 1.26 → 1.91 days), never longer than the defaults. The stricter baseline would refuse 22 of 40 sets that
+      predict better (the personal-set entry).
+    - MATH-02 / ENG-04 / C03: the repair deadline is dropped before fuzz. Known; for the next policy bump.
+    - B1, MATH-05 / ENG-06: an equal review count is not equal time in `experiments.py`, and `simulate.py`'s other twin
+      can end with unspent time. Known and labelled (the 2026-09-30 to 10-02 entry).
+    - C04 / ENG-08: the fit reads the first 64 steps of each topic, py-fsrs's procedure. A topic reviewed 64 times is
+      far outside Yadora's use; the soak's topics have about 10 reviews each.
+    - C06 / ENG-07: the gate's real error rate under repeated looks is not established (the personal-set entry says
+      so). Never-lengthen bounds what a false adoption can cost.
+  - **Already settled, or the owner's:** C07 (time spent, recall-first: declined 2026-10-03); C08 (load forecasts,
+    actions for unresolved understanding: product direction); C09 / ENG-09 (value over a horizon: the exam date stays
+    cosmetic, and any queue change goes to shadow first); C10 (FSRS-7, fractional time: offline on the pilot's exports,
+    later).
+  - **Stale or not true:** MATH-01 / ENG-01 (replay by wall-clock order) was fixed in PR #17, as its own later check
+    agrees; the instrumentation "Process crashed" was its harness's build-variant mismatch, not a product defect;
+    "retention 70–99%" (the slider is 0.85–0.97); "the gate's z is inflated by clustering" (design effect 0.97).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

@@ -81,6 +81,11 @@ class Export:
     exported_at: int
     tz: dt.tzinfo
     tz_name: str
+    # What this participant's OLDER exports held that this one does not: logs and topics gone in between (a topic
+    # deleted for good after its 30 days in the trash, a restore, a reset). The analysis reads the newest file only.
+    older_files: Tuple[str, ...] = ()
+    missing_logs: int = 0
+    missing_topics: int = 0
 
 
 def expand(paths: Sequence[str]) -> List[str]:
@@ -107,8 +112,37 @@ def zone_of(d: dict) -> Tuple[dt.tzinfo, str]:
     return dt.timezone.utc, "UTC (no zone in file)"
 
 
+def _whole(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def export_problem(d: dict) -> Optional[str]:
+    """Why a parsed export cannot be analysed, or None. One malformed file used to stop the whole batch with a
+    TypeError (an outside audit, 2026-10-03: exportVersion "12" as text, reviewLogs or studyUnits null); now it is
+    set aside with this reason and the other participants are analysed."""
+    if "exportVersion" in d and not _whole(d["exportVersion"]):
+        return f"exportVersion is {d['exportVersion']!r}, not a whole number"
+    for key in ("reviewLogs", "studyUnits"):
+        if not isinstance(d.get(key), list) or not all(isinstance(x, dict) for x in d[key]):
+            return f"{key} is not a list of records"
+    for key in ("eventLogs", "memoryParameterSets"):
+        if d.get(key) is not None and (not isinstance(d[key], list) or not all(isinstance(x, dict) for x in d[key])):
+            return f"{key} is not a list of records"
+    if d.get("participantId") is not None and not isinstance(d["participantId"], str):
+        return "participantId is not text"
+    if "exportedAt" in d and not _whole(d["exportedAt"]):
+        return "exportedAt is not a whole number"
+    for u in d["studyUnits"]:
+        if not _whole(u.get("id")):
+            return "a topic has no whole-number id"
+    for log in d["reviewLogs"]:
+        if not all(_whole(log.get(k)) for k in ("id", "studyUnitId", "reviewedAt")) or not isinstance(log.get("memoryRating"), str):
+            return "a review log lacks a whole-number id, topic or time, or a rating"
+    return None
+
+
 def load_exports(paths: Sequence[str], warn) -> List[Export]:
-    newest: Dict[str, Export] = {}
+    by_participant: Dict[str, List[Export]] = defaultdict(list)
     for path in expand(paths):
         try:
             # utf-8-sig: a file opened and saved in Windows Notepad gains a byte-order mark, which json.load refuses.
@@ -124,20 +158,42 @@ def load_exports(paths: Sequence[str], warn) -> List[Export]:
             else:
                 warn(f"{path}: not a Yadora research export; skipped")
             continue
+        problem = export_problem(d)
+        if problem:
+            warn(f"{path}: {problem}; skipped, and the other files are analysed without it")
+            continue
         version = d.get("exportVersion", 0)
         if version < MIN_EXPORT_VERSION:
             warn(f"{path}: export version {version} has no time zone; day counts may be off by one")
         pid = d.get("participantId") or ("file:" + os.path.splitext(os.path.basename(path))[0])
         tz, tz_name = zone_of(d)
-        e = Export(path, d, pid, int(d.get("exportedAt", 0)), tz, tz_name)
-        if pid in newest:
-            older, keep = sorted([newest[pid], e], key=lambda x: x.exported_at)
-            warn(f"{pid}: two exports ({os.path.basename(older.path)}, {os.path.basename(keep.path)}); "
-                 f"using the newer, which holds the whole history")
-            newest[pid] = keep
-        else:
-            newest[pid] = e
-    return sorted(newest.values(), key=lambda e: e.participant)
+        by_participant[pid].append(Export(path, d, pid, int(d.get("exportedAt", 0)), tz, tz_name))
+    out = []
+    for pid, files in by_participant.items():
+        files.sort(key=lambda x: x.exported_at)
+        keep, older = files[-1], files[:-1]
+        if older:
+            # Since 2026-10-03 the newer file is no longer assumed to hold everything (an outside audit): a topic
+            # deleted for good, a restore or a reset between two exports takes logs with it, and reading only the
+            # newest would quietly analyse the topics that survived. The loss is counted and reported; the files are
+            # not merged, because a corrected log, an id reused after a reset or deleted data must not come back.
+            kept_logs = {int(l["id"]) for l in keep.data["reviewLogs"]}
+            kept_units = {int(u["id"]) for u in keep.data["studyUnits"]}
+            gone_logs = {int(l["id"]) for e in older for l in e.data["reviewLogs"]} - kept_logs
+            gone_units = {int(u["id"]) for e in older for u in e.data["studyUnits"]} - kept_units
+            keep.older_files = tuple(os.path.basename(e.path) for e in older)
+            keep.missing_logs, keep.missing_topics = len(gone_logs), len(gone_units)
+            names = ", ".join(keep.older_files)
+            if gone_logs or gone_units:
+                warn(f"{pid}: {len(files)} exports; using the newest ({os.path.basename(keep.path)}). It lacks "
+                     f"{len(gone_logs)} review logs and {len(gone_units)} topics that the older ({names}) had: deleted "
+                     f"for good, a restore or a reset in between. Those topics are not analysed; if the learner deleted "
+                     f"hard topics, the rest look better than the whole")
+            else:
+                warn(f"{pid}: {len(files)} exports; using the newest ({os.path.basename(keep.path)}), which still holds "
+                     f"every log and topic of the older ({names})")
+        out.append(keep)
+    return sorted(out, key=lambda e: e.participant)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -865,6 +921,29 @@ def predictions(hist, weights) -> Tuple[List[Tuple[float, bool]], List[Tuple[flo
     return train, test, who
 
 
+def pooled_lengthening(hist, weights) -> float:
+    """The app's never-lengthen check (Fsrs6Optimizer.lengthening) for a pooled set: every topic replayed to its last
+    state under the set and under the published defaults, the next interval at the target the learner had, inside the
+    scheduler's 1-365 day bounds; the geometric mean of the ratios. Above 1 the set would schedule these learners'
+    topics later than the defaults. As in the app, the comparison is with the defaults, not with the defaults times a
+    learner's calibration (Fsrs6Optimizer.lengthening says why), and the first-study cap is not applied."""
+    fitted, defaults = ym.Fsrs6(weights), ym.Fsrs6()
+    logs_sum, n = 0.0, 0
+    for _, _, logs, unit, tz, _ in hist:
+        a, b = replay_unit(logs, unit, tuple(weights), tz), replay_unit(logs, unit, ym.DEFAULT_WEIGHTS, tz)
+        if not a:
+            continue
+        target = float(logs[-1].get("desiredRetentionAtReview") or 0.9)
+        target = target if 0.7 <= target <= 0.99 else 0.9
+
+        def nxt(m, state):
+            return min(max(m.interval_days(state.stability, target), ym.MIN_INTERVAL_DAYS), ym.MAX_INTERVAL_DAYS)
+
+        logs_sum += math.log(nxt(fitted, a[-1]["after"]) / nxt(defaults, b[-1]["after"]))
+        n += 1
+    return math.exp(logs_sum / n) if n else 1.0
+
+
 def nelder_mead(f, x0, step=0.25, iters=160):
     n = len(x0)
     pts = [list(x0)] + [[x0[j] + (step if j == i else 0.0) for j in range(n)] for i in range(n)]
@@ -933,13 +1012,19 @@ def pooled_fit(exports: List[Export], min_train=300) -> dict:
     md = statistics.fmean(diffs)
     sd = statistics.stdev(diffs) if len(diffs) > 1 else 0.0
     z = md / (sd / math.sqrt(len(diffs))) if sd > 0 else 0.0
+    # The app adopts a set only if it ALSO keeps the first-rating grades in order and does not lengthen intervals
+    # against the defaults (Fsrs6Optimizer.keepsGradeOrder, .lengthening). This fit used to be judged on z alone, and
+    # an outside audit (2026-10-03) got "better" from a set with S0(Hard) 12.5 days over S0(Good) 0.14.
+    order_ok = fitted[0] <= fitted[1] <= fitted[2] <= fitted[3]
+    longer = pooled_lengthening(hist, fitted)
     result.update(
         fitted=True,
         weights=list(fitted),
         changed={name: (base[i], fitted[i]) for name, i in zip(FIT_NAMES, FIT_INDICES)},
         test_log_loss_default=ym.log_loss(test0), test_log_loss_fitted=ym.log_loss(test1),
         test_auc_default=ym.auc(test0), test_auc_fitted=ym.auc(test1),
-        z=z, better=z >= 2.33,
+        z=z, grade_order_ok=order_ok, lengthening=longer,
+        better=z >= 2.33 and order_ok and longer <= 1.0,
     )
     return result
 
@@ -1060,6 +1145,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             reminder_health_problems="; ".join(rd["health_problems"]),
             rating_corrections=sum(len(v) for v in corrections(d).values()),
             opened_from_reminder=rd["opened"], reviewed_after_reminder=rd["reviewed_same_day"],
+            older_exports=len(e.older_files), logs_missing_from_newest=e.missing_logs, topics_missing_from_newest=e.missing_topics,
         )
         summary["participants"][e.participant] = info
         inv.append(info)
@@ -1085,6 +1171,11 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
           f"{i['overdue_at_export']} ({i['overdue_7d_at_export']})", i["consistency_issues"]]
          for pid, i in summary["participants"].items()],
     )
+    for pid, i in summary["participants"].items():
+        if i["logs_missing_from_newest"] or i["topics_missing_from_newest"]:
+            rep.p(f"- {pid}: the newest export lacks {i['logs_missing_from_newest']} review logs and "
+                  f"{i['topics_missing_from_newest']} topics that an older one had (deleted for good, a restore or a "
+                  "reset). Everything below covers the topics that remain.")
 
     recalls = [r for r in all_rows if r.is_recall and r.scheduler_version == "FSRS-6"]
     # As the app's calibration: a prediction counts only if it was made when the review happened. A rating
@@ -1175,11 +1266,15 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
               "was not made at the review.")
     groups = defaultdict(list)
     for r in recalls_pred:
-        groups[(r.scheduler_version, r.parameter_set)].append(r)
-    for (model, sid), rs in sorted(groups.items()):
+        # A personal set's id is local to one phone: two learners' set 1 are different weights. Since 2026-10-03 each
+        # personal set is its own group (an outside audit found two learners pooled under one "set 1"); the published
+        # defaults are the same weights everywhere and stay pooled.
+        groups[(r.scheduler_version, r.parameter_set, "" if r.parameter_set == 0 else r.participant)].append(r)
+    for (model, sid, owner), rs in sorted(groups.items()):
         c = calib_block(rs)
         cc = calib_block(rs, "calibrated")
-        rep.p(f"**{model}, weight set {sid}** ({'published defaults' if sid == 0 else 'a personal set'}): "
+        whose = "published defaults" if sid == 0 else f"the personal set of {owner}"
+        rep.p(f"**{model}, weight set {sid}** ({whose}): "
               f"{c['n']} reviews, reported recall {fmt_p(c['observed'])} (95% CI {fmt_p(c['observed_ci'][0])}–"
               f"{fmt_p(c['observed_ci'][1])}), mean predicted {fmt_p(c['predicted'])} raw / {fmt_p(cc.get('predicted'))} "
               f"after the per-user scale. Log loss {fmt(c['log_loss'])}, RMSE(bins) {fmt(c['rmse_bins'])}, AUC {fmt(c['auc'])}.")
@@ -1199,7 +1294,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                   f"cluster ({cl['clusters']} topics; design effect {fmt(cl['design_effect'], 2)}: 1 means the reviews "
                   "behave as independent, 2 means the review count overstates the evidence twofold). The intervals above "
                   "treat every review as independent.")
-        summary.setdefault("calibration", {})[f"{model}/{sid}"] = dict(raw=c, calibrated=cc)
+        summary.setdefault("calibration", {})[f"{model}/{sid}" + (f"@{owner}" if owner else "")] = dict(raw=c, calibrated=cc)
     bins = [(0, .5), (.5, .7), (.7, .8), (.8, .85), (.85, .9), (.9, .95), (.95, 1.0001)]
     rows_b = []
     for lo, hi in bins:
@@ -1242,31 +1337,46 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     # so a per-subject calibration may one day beat a per-learner one. This is where the pilot would show it.
     summary["by_subject"] = by("subject", lambda r: r.subject or "(no subject)", recalls_pred)
 
-    # per-participant scale, as the app computes it
+    # per-participant scale, as the app computes it: on the published defaults (what D4 compares), and on the personal
+    # set when one schedules the learner now (its own evidence since it began, on its own curve). It used to read the
+    # defaults only and call that the app's figure (an outside audit, 2026-10-03).
     rows_k = []
     m0 = ym.Fsrs6()
     spread = []
-    for pid in summary["participants"]:
-        ev = [r for r in recalls_pred if r.participant == pid and r.parameter_set == 0 and r.elapsed_days is not None
-              and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
-        ev = ev[-ym.CAL_WINDOW:]
-        if ev:
-            est = moment_scale_ci([r.predicted for r in ev], [r.success for r in ev], m0)
+    for e in exports:
+        pid = e.participant
+        active = int((e.data.get("policy") or {}).get("activeParameterSetId", 0) or 0)
+        sets, starts = weight_sets(e.data), set_activations(e.data)
+        for sid in sorted({0, active}):
+            if sid not in sets:
+                continue
+            model = m0 if sid == 0 else ym.Fsrs6(sets[sid])
+            ev = [r for r in recalls_pred if r.participant == pid and r.parameter_set == sid and r.elapsed_days is not None
+                  and r.at >= starts.get(sid, 0) and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
+            ev = ev[-ym.CAL_WINDOW:]
+            if not ev:
+                continue
+            est = moment_scale_ci([r.predicted for r in ev], [r.success for r in ev], model)
             raw = est["scale"]
-            shr = ym.calibration_scale([r.predicted for r in ev], [r.success for r in ev], m0)
-            rows_k.append([pid, len(ev), fmt(raw, 2), f"{fmt(est['ci'][0], 2)}–{fmt(est['ci'][1], 2)}" if est["ci"] else "–",
-                           fmt(shr, 2)])
-            summary["participants"][pid]["scale_raw"] = raw
-            summary["participants"][pid]["scale_raw_ci"] = est["ci"]
-            summary["participants"][pid]["scale_app"] = shr
-            if est["se_log"] and 0.25 < raw < 4.0:
-                spread.append((math.log(raw), est["se_log"], len(ev)))
-    rep.p("Per-user interval scale (RecallCalibration; 1 = the defaults fit this learner; above 1 = remembers longer "
+            shr = ym.calibration_scale([r.predicted for r in ev], [r.success for r in ev], model)
+            label = "defaults" if sid == 0 else f"personal set {sid}" + (" (in use)" if sid == active else "")
+            rows_k.append([pid, label, len(ev), fmt(raw, 2),
+                           f"{fmt(est['ci'][0], 2)}–{fmt(est['ci'][1], 2)}" if est["ci"] else "–", fmt(shr, 2)])
+            if sid == 0:
+                summary["participants"][pid]["scale_raw"] = raw
+                summary["participants"][pid]["scale_raw_ci"] = est["ci"]
+                summary["participants"][pid]["scale_app"] = shr
+                if est["se_log"] and 0.25 < raw < 4.0:
+                    spread.append((math.log(raw), est["se_log"], len(ev)))
+            else:
+                summary["participants"][pid]["scale_active_set"] = dict(set=sid, raw=raw, ci=est["ci"], app=shr, n=len(ev))
+    rep.p("Per-user interval scale (RecallCalibration; 1 = the weights fit this learner; above 1 = remembers longer "
           "than predicted). 'raw' is the moment estimate on the evidence rows, 'app' what the app applies after shrinkage "
           "(never above 1 since 2026-09-28: generous ratings look exactly like slower forgetting, so only 'raw' shows "
-          "a slower forgetter). Near 90% predicted recall one review says little about the scale, so expect wide "
-          "intervals below a few hundred evidence reviews:")
-    rep.table(["participant", "evidence reviews", "raw scale", "95% CI", "app scale"], rows_k)
+          "a slower forgetter). The defaults' row is what D4 compares; a personal set's row is what the app uses while it "
+          "schedules. Near 90% predicted recall one review says little about the scale, so expect wide intervals below a "
+          "few hundred evidence reviews:")
+    rep.table(["participant", "weights", "evidence reviews", "raw scale", "95% CI", "app scale"], rows_k)
     summary["scale_spread"] = None
     if len(spread) >= 3:
         between = statistics.variance([s[0] for s in spread])
@@ -1427,10 +1537,14 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         rep.table(["weight", "default", "fitted"], [[k, fmt(a, 4), fmt(b, 4)] for k, (a, b) in pf["changed"].items()])
         rep.p(f"Held-out log loss: default {fmt(pf['test_log_loss_default'], 4)}, fitted {fmt(pf['test_log_loss_fitted'], 4)}; "
               f"AUC {fmt(pf['test_auc_default'], 3)} → {fmt(pf['test_auc_fitted'], 3)}; paired z = {fmt(pf['z'], 2)} "
-              f"({'beats the defaults at the app’s own 1% bar' if pf['better'] else 'not better than the defaults at the app’s 1% bar'}).")
+              f"({'beats the defaults at the app’s own 1% bar' if pf['z'] >= 2.33 else 'not better than the defaults at the app’s 1% bar'}). "
+              f"First-rating grades in order: {'yes' if pf['grade_order_ok'] else '**no**'}; next intervals against the "
+              f"defaults: ×{fmt(pf['lengthening'], 3)} (the app refuses a set above 1). "
+              + ("It meets every condition the app sets." if pf["better"] else "It does NOT meet every condition the app sets."))
         with open(os.path.join(out_dir, "fitted_weights.json"), "w", encoding="utf-8") as f:
             json.dump(dict(weights=pf["weights"], note="Pooled pilot refit of w1,w2,w3,w8,w20; the rest are the FSRS-6 defaults.",
-                           held_out_z=pf["z"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"]), f, indent=2)
+                           held_out_z=pf["z"], grade_order_ok=pf["grade_order_ok"], lengthening=pf["lengthening"],
+                           meets_app_conditions=pf["better"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"]), f, indent=2)
     else:
         rep.p(f"Not fitted: {pf.get('reason')}. ({pf.get('train_reviews', 0)} training / {pf.get('test_reviews', 0)} held-out reviews.)")
     rep.p("The app fits a full 21-weight personal set on the phone itself once a learner has 640+ reviews, and only "
@@ -1472,20 +1586,26 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         f"{integ['mismatched']} mismatches, {integ['consistency_issues']} self-check issues",
         "BUG" if integ["mismatched"] or integ["consistency_issues"] else "OK")
 
-    cal = [v for k, v in (summary.get("calibration") or {}).items() if k.endswith("/0")]
-    if cal and cal[0]["calibrated"].get("n", 0) >= 300:
-        c = cal[0]["calibrated"]
+    # Every group with enough reviews is judged: the published defaults pooled, and each learner's personal set on its
+    # own. D2 used to read the defaults only, so a personal set 25 points off was never flagged (an outside audit,
+    # 2026-10-03). Past 5 points a group is LOOK only when its topic-clustered 95% interval excludes 0 (amended
+    # 2026-10-03, before any pilot data), otherwise WAIT.
+    judged, notes = [], []
+    for key, v in sorted((summary.get("calibration") or {}).items()):
+        c = v["calibrated"]
+        if c.get("n", 0) < 300:
+            continue
         gap = c["observed"] - c["predicted"]
-        # Amended 2026-10-03, before any pilot data: a gap past 5 points must also have a topic-clustered 95% interval
-        # that excludes 0, so reviews that move together within a topic cannot pass for evidence (PILOT.md).
         ci_gap = (c.get("clustered") or {}).get("gap_ci")
         sure = ci_gap is not None and (ci_gap[0] > 0 or ci_gap[1] < 0)
-        add("D2", "Does reported recall match the (calibrated) prediction within 5 points?",
-            f"reported {fmt_p(c['observed'])} vs predicted {fmt_p(c['predicted'])} (n={c['n']}"
-            + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else ")"),
-            "OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT"))
+        judged.append("OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT"))
+        notes.append(f"{key}: reported {fmt_p(c['observed'])} vs predicted {fmt_p(c['predicted'])} (n={c['n']}"
+                     + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else ")"))
+    q2 = "Does reported recall match the (calibrated) prediction within 5 points?"
+    if judged:
+        add("D2", q2, "; ".join(notes), "LOOK" if "LOOK" in judged else ("WAIT" if "WAIT" in judged else "OK"))
     else:
-        add("D2", "Does reported recall match the (calibrated) prediction within 5 points?", "fewer than 300 reviews", "WAIT")
+        add("D2", q2, "no weight set with 300 reviews", "WAIT")
 
     for g in ("Hard", "Medium", "Easy"):
         fr = (summary.get("first_review") or {}).get(g)
@@ -1511,10 +1631,12 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
 
     pf = summary.get("pooled_fit") or {}
     if pf.get("fitted"):
-        add("D5", "Does a pooled refit predict held-out reviews better (z ≥ 2.33)?", f"z = {pf['z']:.2f}",
-            "LOOK" if pf["better"] else "OK")
+        add("D5", "Does a pooled refit predict held-out reviews better (z ≥ 2.33), with the app's conditions?",
+            f"z = {pf['z']:.2f}; grades in order: {'yes' if pf['grade_order_ok'] else 'no'}; "
+            f"lengthening ×{pf['lengthening']:.3f}", "LOOK" if pf["better"] else "OK")
     else:
-        add("D5", "Does a pooled refit predict held-out reviews better (z ≥ 2.33)?", pf.get("reason", "not run"), "WAIT")
+        add("D5", "Does a pooled refit predict held-out reviews better (z ≥ 2.33), with the app's conditions?",
+            pf.get("reason", "not run"), "WAIT")
 
     qs = summary.get("question_scores") or {}
     if qs.get("n", 0) >= 50 and qs.get("spearman") is not None:

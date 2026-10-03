@@ -125,7 +125,7 @@ def test_several_participants_and_duplicates():
     older["reviewLogs"] = older["reviewLogs"][:10]
     summary, warnings, _ = run([older, a, b])
     assert set(summary["participants"]) == {a["participantId"], "YD-TEST-TWO2"}
-    assert any("two exports" in w for w in warnings), warnings
+    assert any("exports; using the newest" in w for w in warnings), warnings
     # The newer export of the first participant was kept (all its logs), so twice the logs overall.
     assert summary["integrity"]["checked"] == 2 * len(a["reviewLogs"])
     print("two participants pooled; an older duplicate export is set aside with a warning")
@@ -144,7 +144,8 @@ def test_rows_a_correction_recomputed_are_not_calibration_evidence():
     summary, _, files = run([d])
     assert summary["integrity"]["mismatched"] == 0, summary["integrity"]
     after = sum(1 for l in recalls if l["reviewedAt"] >= activated and 0 <= l["retrievabilityAtReview"] <= 1)
-    assert summary["calibration"]["FSRS-6/7"]["raw"]["n"] == after, (summary["calibration"]["FSRS-6/7"]["raw"]["n"], after)
+    key = "FSRS-6/7@" + d["participantId"]  # a personal set is one learner's (its id is local to the phone)
+    assert summary["calibration"][key]["raw"]["n"] == after, (summary["calibration"][key]["raw"]["n"], after)
     assert "left out" in files["report.md"]
     print(f"recall rows that predate their weight set are left out of its calibration ({after} of {len(recalls)} kept)")
 
@@ -404,6 +405,132 @@ def test_the_summary_prints_on_a_console_that_cannot_encode_it():
     print("the summary prints even where stdout is cp1252 (a redirected Windows console)")
 
 
+def test_a_malformed_export_is_set_aside_and_the_others_are_analysed():
+    # An outside audit (2026-10-03): one file with its version as text, or a null review list, stopped the whole batch
+    # with a TypeError. Each is now set aside with a reason, and the other participants are analysed.
+    good = fixture()
+    bad = []
+    for i, (key, value) in enumerate((("exportVersion", "12"), ("reviewLogs", None), ("studyUnits", [1, 2]),
+                                       ("participantId", 5), ("exportedAt", "yesterday"))):
+        d = copy.deepcopy(good)
+        d["participantId"] = f"YD-TEST-BAD{i}"
+        d[key] = value
+        bad.append(d)
+    summary, warnings, _ = run([good] + bad)
+    assert set(summary["participants"]) == {good["participantId"]}, summary["participants"].keys()
+    assert sum("skipped, and the other files are analysed without it" in w for w in warnings) == len(bad), warnings
+    assert summary["integrity"]["checked"] == len(good["reviewLogs"])
+    print(f"{len(bad)} malformed exports set aside with a reason; the good one analysed")
+
+
+def test_history_missing_from_the_newest_export_is_reported():
+    # The newest export is analysed, but it is no longer assumed to hold everything an older one held (an outside
+    # audit, 2026-10-03): a topic deleted for good between week 2 and week 8 takes its logs with it.
+    older = fixture()
+    newer = copy.deepcopy(older)
+    newer["exportedAt"] += 40 * 86_400_000
+    gone = 8  # a topic with two reviews; its events stay behind, as they do when a topic is purged
+    lost = [l for l in newer["reviewLogs"] if l["studyUnitId"] == gone]
+    newer["reviewLogs"] = [l for l in newer["reviewLogs"] if l["studyUnitId"] != gone]
+    newer["studyUnits"] = [u for u in newer["studyUnits"] if u["id"] != gone]
+    summary, warnings, files = run([newer, older])
+    info = summary["participants"][older["participantId"]]
+    assert info["older_exports"] == 1 and info["logs_missing_from_newest"] == len(lost) == 2, info
+    assert info["topics_missing_from_newest"] == 1, info
+    assert any(f"lacks {len(lost)} review logs and 1 topics" in w for w in warnings), warnings
+    assert "the newest export lacks 2 review logs and 1 topics" in files["report.md"]
+    assert summary["integrity"]["checked"] == len(newer["reviewLogs"]) and summary["integrity"]["mismatched"] == 0
+    # Nothing lost: said so, and nothing reported missing.
+    same = copy.deepcopy(older)
+    same["exportedAt"] += 86_400_000
+    summary, warnings, _ = run([older, same])
+    assert summary["participants"][older["participantId"]]["logs_missing_from_newest"] == 0
+    assert any("still holds every log and topic" in w for w in warnings), warnings
+    print("history missing from the newest export is counted and reported; a complete newer export says so")
+
+
+def test_the_pooled_refit_must_meet_the_app_s_conditions():
+    # The pooled refit used to be judged on z alone. The app also refuses a set whose first-rating grades are out of
+    # order, or that would schedule longer than the published defaults (Fsrs6Optimizer.keepsGradeOrder, .lengthening).
+    copies = []
+    for pid in ("YD-TEST-POOL1", "YD-TEST-POOL2", "YD-TEST-POOL3"):
+        c = fixture()
+        c["participantId"] = pid
+        copies.append(c)
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for i, d in enumerate(copies):
+            paths.append(os.path.join(tmp, f"e{i}.json"))
+            with open(paths[-1], "w", encoding="utf-8") as f:
+                json.dump(d, f)
+        exports = analyze.load_exports(paths, lambda w: None)
+    hist = [(p, u, l, un, tz, 1 << 62) for p, u, l, un, tz in analyze.histories(exports)]
+    base = list(analyze.ym.DEFAULT_WEIGHTS)
+    assert analyze.pooled_lengthening(hist, base) == 1.0
+    less, more = list(base), list(base)
+    less[8] -= 0.5
+    more[8] += 0.5
+    assert analyze.pooled_lengthening(hist, less) < 1.0 < analyze.pooled_lengthening(hist, more)
+
+    def refit_to(weights):
+        # Stand in for the optimiser: the "fit" lands on these weights, and the rest of pooled_fit judges them.
+        x = [math.log(weights[i]) for i in analyze.FIT_INDICES]
+        saved = analyze.nelder_mead
+        analyze.nelder_mead = lambda f, x0, **kw: (x, f(x))
+        try:
+            return analyze.pooled_fit(exports)
+        finally:
+            analyze.nelder_mead = saved
+
+    inverted = list(base)
+    inverted[1], inverted[2] = 12.5, 0.14  # the audit's set: S0(Hard) 12.5 days over S0(Good) 0.14
+    pf = refit_to(inverted)
+    assert pf["fitted"] and not pf["grade_order_ok"] and not pf["better"], {k: pf[k] for k in ("z", "grade_order_ok", "better")}
+    pf = refit_to(more)
+    assert pf["fitted"] and pf["grade_order_ok"] and pf["lengthening"] > 1.0 and not pf["better"], pf["lengthening"]
+    d5 = next(x for x in analyze.decide(dict(integrity=dict(mismatched=0, consistency_issues=0), participants={}, adherence={},
+                                             understanding={}, reminders={}, first_review={}, question_scores={},
+                                             pooled_fit=pf), []) if x["id"] == "D5")
+    assert d5["verdict"] == "OK" and "lengthening" in d5["result"], d5
+    print(f"the pooled refit meets the app's conditions: inverted grades and a set that lengthens (x{pf['lengthening']:.2f}) are refused")
+
+
+def test_each_learner_s_personal_set_is_its_own_calibration_group():
+    # A personal set's id is local to one phone: two learners' "set 7" are different weights and were pooled as one
+    # (an outside audit, 2026-10-03). Each is its own group now, judged by D2 on its own, and the app's scale on the
+    # set in use is reported beside the defaults'.
+    pair = []
+    for pid in ("YD-TEST-SETA", "YD-TEST-SETB"):
+        d = fixture()
+        d["participantId"] = pid
+        recalls = sorted((l for l in d["reviewLogs"] if l["logType"] == "RECALL"), key=lambda l: (l["reviewedAt"], l["id"]))
+        activated = recalls[len(recalls) // 3]["reviewedAt"]
+        d["memoryParameterSets"] = [{"id": 7, "createdAt": activated, "status": "ACTIVE", "weights": list(analyze.ym.DEFAULT_WEIGHTS),
+                                     "activatedAt": activated, "retiredAt": None}]
+        d["policy"]["activeParameterSetId"] = 7
+        for log in d["reviewLogs"]:
+            log["parameterSetId"] = 7
+        pair.append(d)
+    summary, _, files = run(pair)
+    assert {"FSRS-6/7@YD-TEST-SETA", "FSRS-6/7@YD-TEST-SETB"} <= set(summary["calibration"]), summary["calibration"].keys()
+    assert "the personal set of YD-TEST-SETA" in files["report.md"]
+    for pid in ("YD-TEST-SETA", "YD-TEST-SETB"):
+        k = summary["participants"][pid].get("scale_active_set")
+        assert k and k["set"] == 7 and k["n"] > 0, k
+
+    def d2(calibration):
+        s = dict(integrity=dict(mismatched=0, consistency_issues=0), participants={}, adherence={}, understanding={},
+                 reminders={}, first_review={}, question_scores={}, pooled_fit={}, calibration=calibration)
+        return next(x for x in analyze.decide(s, []) if x["id"] == "D2")
+
+    good = dict(raw={}, calibrated=dict(n=400, observed=0.91, predicted=0.90, clustered=dict(gap_ci=(-0.02, 0.04))))
+    off = dict(raw={}, calibrated=dict(n=350, observed=0.65, predicted=0.90, clustered=dict(gap_ci=(-0.33, -0.17))))
+    assert d2({"FSRS-6/0": good})["verdict"] == "OK"
+    verdict = d2({"FSRS-6/0": good, "FSRS-6/1@YD-TEST-SETA": off})
+    assert verdict["verdict"] == "LOOK" and "YD-TEST-SETA" in verdict["result"], verdict
+    print("each learner's personal set is its own calibration group; D2 flags one 25 points off")
+
+
 if __name__ == "__main__":
     test_real_export_replays_exactly()
     test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
@@ -423,4 +550,8 @@ if __name__ == "__main__":
     test_a_file_saved_with_a_byte_order_mark_still_loads()
     test_fitted_weights_saved_with_a_byte_order_mark_still_load_in_the_simulation()
     test_the_summary_prints_on_a_console_that_cannot_encode_it()
+    test_a_malformed_export_is_set_aside_and_the_others_are_analysed()
+    test_history_missing_from_the_newest_export_is_reported()
+    test_the_pooled_refit_must_meet_the_app_s_conditions()
+    test_each_learner_s_personal_set_is_its_own_calibration_group()
     print("all checks passed")
