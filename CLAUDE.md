@@ -143,6 +143,11 @@ Doze); the seed's export (v13) replayed 125 of 125 logs through `analyze.py` wit
 reminder table. Contrary to the report, the last card of Today and the Library clears the + button (96 dp of
 padding) and Enter in the Library search closes the keyboard. Gotcha: `cmd alarm set-time <ms>` works on the Play
 Store emulator image without root, after `settings put global auto_time 0`.
+Later the same day, on a second temporary emulator, with saved-order replay and the staged backup: choosing a folder
+wrote the first automatic backup as `yadora_partial_…` (seen mid-write) and renamed it to `yadora_backup_…` once
+complete (Android's own storage provider renames; the file parsed as backup v9 with all 43 topics and 125 logs),
+"Back up now" left one file for the day and no staged file, and a tap on a test reminder logged APP_OPENED
+`from=notification`.
 
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
