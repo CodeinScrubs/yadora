@@ -1382,7 +1382,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     - an A/B test of a new rating wording inside the pilot (5–20 learners cannot test it);
     - per-topic interval caps (the aggregate never-lengthen rule is the owner's);
     - an ordinal likelihood, inverse-propensity weights and topic decomposition (tentative: pilot data first);
-    - anytime-valid e-values for the gate (the null z sits below 0, and never-lengthen bounds a false adoption).
+    - anytime-valid e-values for the gate (the defaults' learner never comes near 2.33, highest z 0.84 in 40 refits,
+      and never-lengthen bounds what a false adoption could cost).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
