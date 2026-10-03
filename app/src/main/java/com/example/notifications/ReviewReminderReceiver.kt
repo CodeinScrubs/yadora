@@ -20,6 +20,8 @@ import java.util.Calendar
 class ReviewReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Read first: how late the alarm came is measured from the moment it reached the app (ReminderTelemetry).
+        val firedAt = System.currentTimeMillis()
         // OFF means OFF: an alarm armed before the user disabled reminders can still fire once —
         // swallow it here (and disarm) instead of showing a reminder the user opted out of.
         // ACTION_TEST is exempt: the user explicitly tapped "send a test reminder".
@@ -46,6 +48,8 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                     } catch (t: Throwable) {
                         android.util.Log.w("Yadora", "test reminder failed", t)
                     } finally {
+                        // Logged too (slot=test), so a test reminder also shows the delivery log works on this phone.
+                        ReminderTelemetry.log(appContext, intent, firedAt, outcome = "test")
                         pending.finish()
                     }
                 }.start()
@@ -125,26 +129,36 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 val appContext = context.applicationContext
                 Thread {
                     try {
+                        var outcome = "error"
+                        var due: Int? = null
                         try {
                             if (NotificationScheduler.shownJustBefore(appContext)) {
                                 // The reminder that is already showing, posted moments ago by another path (a
                                 // clock set forward fires the catch-up and this alarm together): keep the chain,
                                 // do not post and alert a second time.
+                                outcome = "just_shown"
                                 NotificationScheduler.scheduleDailyReminder(appContext)
-                            } else if (dueCountToday(appContext) > 0) {
-                                val source = if (intent.action == NotificationScheduler.ACTION_SNOOZE_FIRE) "snooze" else "alarm"
-                                val posted = NotificationScheduler.showReviewNotification(appContext, source = source)
-                                if (posted) {
-                                    // Still due: keep nagging through the day (re-arm the next ~3h nudge).
-                                    NotificationScheduler.scheduleDailyReminder(appContext)
+                            } else {
+                                val count = dueCountToday(appContext)
+                                due = count
+                                if (count > 0) {
+                                    val source = if (intent.action == NotificationScheduler.ACTION_SNOOZE_FIRE) "snooze" else "alarm"
+                                    val posted = NotificationScheduler.showReviewNotification(appContext, source = source)
+                                    if (posted) {
+                                        // Still due: keep nagging through the day (re-arm the next ~3h nudge).
+                                        outcome = "posted"
+                                        NotificationScheduler.scheduleDailyReminder(appContext)
+                                    } else {
+                                        // Due count changed between the count and the richer fetch, or the OS
+                                        // cannot post. Do not manufacture a zero-due reminder or duplicate chain.
+                                        outcome = "not_posted"
+                                        NotificationScheduler.scheduleNextDayReminder(appContext)
+                                    }
                                 } else {
-                                    // Due count changed between the count and the richer fetch, or the OS
-                                    // cannot post. Do not manufacture a zero-due reminder or duplicate chain.
+                                    // Caught up: stop waking every ~3h; arm only tomorrow's reminders.
+                                    outcome = "nothing_due"
                                     NotificationScheduler.scheduleNextDayReminder(appContext)
                                 }
-                            } else {
-                                // Caught up: stop waking every ~3h; arm only tomorrow's reminders.
-                                NotificationScheduler.scheduleNextDayReminder(appContext)
                             }
                         } catch (t: Throwable) {
                             // The chain is self-perpetuating: each fire arms the next. If ANYTHING above
@@ -152,6 +166,8 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                             // a broken chain means silent days until the next boot or app open.
                             runCatching { NotificationScheduler.scheduleDailyReminder(appContext) }
                         }
+                        // After the re-arm, so the bookkeeping can never cost the chain its next alarm.
+                        ReminderTelemetry.log(appContext, intent, firedAt, outcome, due)
                     } catch (t: Throwable) {
                         // Best-effort background work: an exception here would reach the thread's uncaught
                         // handler, which chains to the app's global handler and takes the whole app down —

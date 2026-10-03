@@ -59,7 +59,8 @@ step exists for exactly that: granting there re-armed both as exact (`window=0`,
 `exactAllowReason=permission`), and the step itself was checked in English and Persian, light and dark.
 `BootReceiver` re-arms both after a reboot; `connectedDebugAndroidTest` runs. Still unverified: Doze
 delivery over real days and Samsung battery management over days (the full-screen alarm was checked on the
-Samsung on 2026-10-02, below).
+Samsung on 2026-10-02, below). Since 2026-10-03 the pilot measures exactly that on every participant's phone (entry
+"Reminder delivery is measured on every pilot phone", docs/PILOT.md D11).
 
 Verified 2026-09-27 (build 1.1 / 4). On the Samsung: with the day's limit done and one review held back, the
 20:00 alarm fired, posted nothing, logged no NOTIF_SHOWN and re-armed only tomorrow's two slots. On the emulator
@@ -127,6 +128,21 @@ status bar. Fixed and re-checked on the emulator (entry "Colours follow the APP'
 phone lists their own Download folder: put test files in the auto-backup test folder it opens on
 (`Download/YadoraAutoTest`, any name that is not `yadora_backup_*`), scan them with
 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://...`, and delete them afterwards.
+
+Verified 2026-10-03 on an emulator (Android 16, a temporary AVD on F:; the Samsung was not connected). An outside report
+saw three copies of MainActivity in Yadora's task on the Samsung. Its own `am start -n` commands made them (each adds
+one; reproduced), but a real path exists: a task STARTED by a reminder, the widget or the ringer has that intent at its
+root, and every later tap on the app icon stacked another copy (1, 2, 3, 4; Back walked through them). With
+`launchMode="singleTop"` it stays one copy, and one Back leaves the app. Every screen also counted the status and
+navigation bars twice, since at least 2026-09-27 (entry "Screens with text fields"): a status bar's height of empty
+space above every title, and the + button and the keyboard's edge a navigation bar too high. Re-checked after the fix:
+Today, Library, Progress, Settings, Add with the keyboard on its last field, Review with the keyboard on the question
+score. Reminder delivery logging: a test reminder, the real 10:00 slot and the 20:00 slot in forced deep Doze
+(`dumpsys deviceidle force-idle`, screen off) each logged REMINDER_FIRED with `late_s=0 exact=1` (and `idle=1` in
+Doze); the seed's export (v13) replayed 125 of 125 logs through `analyze.py` with 0 self-check issues and printed the
+reminder table. Contrary to the report, the last card of Today and the Library clears the + button (96 dp of
+padding) and Enter in the Library search closes the keyboard. Gotcha: `cmd alarm set-time <ms>` works on the Play
+Store emulator image without root, after `settings put global auto_time 0`.
 
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
@@ -248,7 +264,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Screens with text fields take the keyboard's height** (`.consumeWindowInsets(padding).imePadding()` on the
   Review, Add/Edit and Settings content, 2026-09-26). The activity is edge-to-edge, so the keyboard covers the
   window instead of resizing it, and without this a focused field near the bottom (a question score, the notes)
-  sat under the keyboard. Consume the Scaffold padding first, or the navigation bar is counted twice.
+  sat under the keyboard. Consume the Scaffold padding first, or the navigation bar is counted twice. The same rule one
+  level up (2026-10-03): `MedReviewApp`'s Scaffold pads the NavHost for the system bars AND consumes them. Every screen
+  has its own Scaffold and top bar, and without the consume each counted both bars again: a status bar's height of
+  empty space above every title since at least 2026-09-27, the + button and the keyboard's edge a navigation bar high.
 - **First rating happens on the REVIEW screen, not the Add screen.** The Add
   screen intentionally has no confidence/difficulty section. A topic is due on
   its study date; the first rating there is review #0, and the schedule counts from the moment of that
@@ -813,6 +832,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
   proxies (notes length, has source, title length) and a `fieldGuide` that explains the file to whoever
   reads it cold. Settings → "Share research data" sends it through a FileProvider limited to
   `cache/exports/`.
+- **Reminder delivery is measured on every pilot phone** (export v13, `notifications/ReminderTelemetry`,
+  2026-10-03). Every reminder alarm carries the time it was armed for, its slot and whether it was armed exact
+  (`NotificationScheduler.EXTRA_SCHEDULED_AT`, `EXTRA_SLOT`, `EXTRA_EXACT`; FLAG_UPDATE_CURRENT replaces them at every
+  re-arm, and cancelling needs none). When it fires, the receiver logs REMINDER_FIRED (slot, scheduled, late_s, exact,
+  Doze, battery saver, standby bucket, outcome, due count) AFTER the next alarm is armed, swallowing every error; the
+  Settings switch logs REMINDERS_ON/OFF; the export adds `reminderHealth` (the Reminder Health checks plus battery
+  optimization, background restriction and the standby bucket). Every day with reminders on has at least one fire, even
+  with nothing due, so `analyze.py` reports per phone the days without one, fires more than 10 minutes late, fires in
+  Doze and safety-net catches, and docs/PILOT.md D11 judges them (95% of days, 95% on time, 14+ days of data). Before
+  this, a reminder that never came left no trace: NOTIF_SHOWN is written only when something is posted.
 - **The pilot toolkit is part of the scheduling contract.** `tools/pilot/yadora_model.py` transcribes
   every rule that decides an interval, and `analyze.py` replays each exported review and demands the
   stored elapsed days, prediction and interval come out EXACTLY (fuzz included). A mismatch in a
@@ -1156,6 +1185,59 @@ These were decided deliberately. Re-suggesting them wastes a session:
     randomised score nudge, a "still shaky" chip, renaming the retention slider, D2b (item-level shortfall) and the
     other parts of the "path to 90" plan, whose numbers came from its author's own simulated world; subject rename and
     delete; a hint that long-press opens review-now.
+- **An eighth outside report, 2026-10-03: a device pass on the Samsung, "three bugs", three rounds of "research" and a
+  12-item developer handover** (another assistant). Every claim was checked against the code, the reproducible ones on
+  an emulator.
+  - **Fixed:** duplicate main screens (a real path, though not the reported one: see the 2026-10-03 device paragraph;
+    `singleTop`, not the proposed `singleTask`, which would also close a file picker or share sheet left open);
+    "فصل ۱" and "فصل 1" counted as different in the search and the duplicate warning (`TopicTitle.normalize` folds
+    Persian and Arabic-Indic digits); the repository's unused `deleteLogById` wrapper (removed; Undo calls the DAO
+    inside its transaction); `simulate.py --weights` refusing a file saved with a byte-order mark. Found while
+    checking: the doubled system bars (entry "Screens with text fields") and reminders the pilot could not see (entry
+    "Reminder delivery is measured on every pilot phone").
+  - **Not true:**
+    - that the phone held the owner's real study data. It held the test seed restored on 2026-10-02, so the
+      "91% predicted, 89% observed, x0.94" it praised is a simulated learner's (the same seed's export reads
+      x0.94 in `analyze.py`). Nor was the build an "official release": it was an R8 build signed with the SDK debug key.
+    - that each review log stores its time zone, stability and difficulty. It has 26 fields and none of these: the
+      per-log zone is the known schema change, and S and D come from replay. Its methods were not "testing, rereading,
+      teaching yourself, video" but Questions, Reading, Lecture and Other.
+    - 12 decision rules D1–D12 (there were ten; D11 was added the same day), a fatigue analysis in `analyze.py`, and a
+      "zero privacy leak" (the file is sensitive, not anonymous: subject names, device model).
+    - paths `data/export/AnalyticsExporter.kt`, `data/local/ReviewLogEntity.kt` and `domain/srs/DayBounds.kt`.
+    - the + button covering the last card, and Enter doing nothing in the Library search (both checked on the
+      emulator).
+    - ZWNJ or RLM marks breaking a Persian score: the field keeps digits only, and its own "before" code showed the filter.
+    - `simulate.py` and `experiments.py` crashing on a cp1252 console: they print only "±", which cp1252 has.
+    - "no clamp" in `modelElapsedDays`: it clamps at 0, as its own quote of the code shows.
+    - `setExactAndAllowWhileIdle` crashing without the permission: it is checked first, and the exception is caught.
+  - **Real, kept:**
+    - midnight is the day boundary: a topic rated Forgot at 23:58 is due from 00:00. The 4 AM boundary is settled out.
+    - the same-day Hard drop (the 6.3.1 pin). The report blamed w15, the recall branch's Hard penalty, which never
+      lowers stability. The same-day branch uses w17–w19 and cuts S = 100 to 45, more than the 40% it claimed.
+    - "OK" in German.
+    - in landscape, the keyboard covers the new-subject dialog's colours and buttons while typing; its ✓ brings them
+      back. The proposed `imePadding` inside the dialog would not help, because the dialog window pans.
+  - **Not adopted:**
+    - a LINEX calibration that lifts the never-lengthen cap as reviews accumulate. It learns from the same
+      self-ratings, so it cannot tell a slow forgetter from a generous rater, and its own Kotlin draft clamps at 1.
+    - a horizon-aware Whittle/CARA queue index. It reads the exam date, which feeds nothing, and "γ = ln 10 targets
+      exactly the worst tenth" is not a theorem: that bound needs the parameter optimised per case.
+    - a CVaR boost for the weakest tenth, method multipliers, interleaving, a fatigue model and a dwell-time
+      "unreliable" flag (in-app seconds measure nothing).
+    - a prerequisite graph: its own third round showed one person's data cannot fit it.
+    - a retention target derived from the load: intervals would depend on library size, the rejected load balancing.
+    - continuous importance weights and "value per minute" with study time estimated from note length. A review
+      happens mostly outside the app, and neither was simulated against the validated queue order.
+    - a Room v11 time-zone column: the known per-log record, not needed for a pilot in one zone (`analyze.py` flags
+      a zone change). One of its two drafts declared the column NOT NULL for a nullable field, which Room's schema
+      check rejects at startup, and dropped `SystemEntity` from `@Database`.
+    - a WorkManager copy of every inexact alarm: in Doze it runs later than the alarm, and it is a second path to a
+      duplicate reminder.
+    - a Today banner for revoked exact alarms: its draft never re-checked after the learner came back from settings.
+    - "Bestätigen" for "OK", and `isError` borders on the score fields: the reason already shows under them.
+  - Two assistants agreeing is not independent evidence when one orchestrator wrote both prompts. Several of the
+    citations are real papers; none supports these formulas or constants.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

@@ -79,4 +79,15 @@ class TopicTitleTest {
         assertTrue("Latin case", found("heart FAILURE", "Acute Heart Failure"))
         assertFalse("a different word is still not found", found("قلب", "آنمی فقر آهن"))
     }
+
+    /** A Persian keyboard types Persian digits; the title may hold Latin ones, or the reverse (2026-10-03). */
+    @Test
+    fun `persian and arabic digits are the same numbers as latin ones`() {
+        fun found(query: String, title: String) = TopicTitle.searchKey(title).contains(TopicTitle.searchKey(query))
+        assertTrue("Persian digits in the query", found("فصل ۱۲", "فصل 12 قلب"))
+        assertTrue("Arabic-Indic digits in the query", found("فصل ١٢", "فصل 12 قلب"))
+        assertTrue("Latin digits in the query", found("chapter 7", "Chapter ۷"))
+        assertTrue("and a duplicate is one topic", TopicTitle.sameTopic("فصل ۳ کلیه", "فصل 3 کلیه"))
+        assertFalse("a different number is a different topic", TopicTitle.sameTopic("فصل ۳", "فصل 4"))
+    }
 }

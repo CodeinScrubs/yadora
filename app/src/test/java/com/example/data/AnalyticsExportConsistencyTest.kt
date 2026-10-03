@@ -90,13 +90,13 @@ class AnalyticsExportConsistencyTest {
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
 
-        assertEquals("export version", 12, json.getInt("exportVersion"))
+        assertEquals("export version", 13, json.getInt("exportVersion"))
         // v12: pooled pilot exports must be told apart without names, and the id must be stable.
         val participant = json.getString("participantId")
         assertTrue("pseudonymous participant id: $participant", ResearchId.isWellFormed(participant))
         assertEquals("the same id on every export", participant, JSONObject(AnalyticsExporter.buildJson(app)).getString("participantId"))
         val guide = json.getJSONObject("fieldGuide")
-        for (key in listOf("recallOutcome", "firstStudy", "retrievabilityAtReview", "reviewMethods", "sessionKind", "times")) {
+        for (key in listOf("recallOutcome", "firstStudy", "retrievabilityAtReview", "reviewMethods", "sessionKind", "times", "eventLogs", "reminderFired", "reminderHealth")) {
             assertTrue("the file explains $key", guide.getString(key).isNotBlank())
         }
         assertTrue("the fit attempts are exported", json.has("memoryParameterSets"))
@@ -241,7 +241,7 @@ class AnalyticsExportConsistencyTest {
             Regex("""yadora_research_YD-[A-Z0-9]{4}-[A-Z0-9]{4}_\d{4}-\d{2}-\d{2}\.json""").matches(second.name),
         )
         assertEquals("same name both times on one day", first.name, second.name)
-        assertEquals("a complete export", 12, JSONObject(second.readText()).getInt("exportVersion"))
+        assertEquals("a complete export", 13, JSONObject(second.readText()).getInt("exportVersion"))
         assertEquals("in cache/exports/, the one folder file_paths.xml serves", dir.canonicalFile, second.parentFile!!.canonicalFile)
         // FileProvider matches a file to its root with a hard-coded '/' separator, as on every Android device
         // and on CI. On a Windows host the JVM's paths use '\', so no file can ever match there and the call

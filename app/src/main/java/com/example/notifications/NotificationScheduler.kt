@@ -46,6 +46,13 @@ object NotificationScheduler {
     const val ACTION_NOT_TODAY = "com.example.notifications.ACTION_NOT_TODAY"
     const val ACTION_DISMISS = "com.example.notifications.ACTION_DISMISS"
 
+    /** The time an alarm was armed for, so the fire can log how late it came ([ReminderTelemetry]). */
+    const val EXTRA_SCHEDULED_AT = "com.example.notifications.EXTRA_SCHEDULED_AT"
+    /** Which alarm fired: primary (the set time and its ~3h repeats), secondary, snooze or test. */
+    const val EXTRA_SLOT = "com.example.notifications.EXTRA_SLOT"
+    /** Whether it was armed as an exact alarm (an inexact one may come up to about an hour late by design). */
+    const val EXTRA_EXACT = "com.example.notifications.EXTRA_EXACT"
+
     private const val REQ_DAILY = 1001
     private const val REQ_OPEN = 1004
     private const val REQ_TEST = 1005
@@ -403,25 +410,46 @@ object NotificationScheduler {
 
     private fun armAlarm(context: Context, triggerAtMillis: Long, requestCode: Int, action: String) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val pi = firePendingIntent(context, requestCode, action)
+        val exact = canScheduleExact(context)
         try {
-            if (canScheduleExact(context)) {
-                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+            if (exact) {
+                am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, firePendingIntent(context, requestCode, action, triggerAtMillis, exact = true))
             } else {
                 // Exact-alarm permission not granted: still fire, just within a looser window.
-                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, firePendingIntent(context, requestCode, action, triggerAtMillis, exact = false))
             }
         } catch (e: SecurityException) {
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, firePendingIntent(context, requestCode, action, triggerAtMillis, exact = false))
         }
     }
 
-    private fun firePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
-        val intent = Intent(context, ReviewReminderReceiver::class.java).apply { this.action = action }
+    /**
+     * The alarm's broadcast. Its identity is the request code and action only, so cancelling needs no extras; when
+     * arming, [armedFor] and [exact] ride along (FLAG_UPDATE_CURRENT replaces them on every re-arm), so the fire can
+     * log how late it came ([ReminderTelemetry]).
+     */
+    private fun firePendingIntent(context: Context, requestCode: Int, action: String, armedFor: Long? = null, exact: Boolean = true): PendingIntent {
+        val intent = Intent(context, ReviewReminderReceiver::class.java).apply {
+            this.action = action
+            if (armedFor != null) {
+                putExtra(EXTRA_SCHEDULED_AT, armedFor)
+                putExtra(EXTRA_SLOT, slotName(requestCode))
+                putExtra(EXTRA_EXACT, exact)
+            }
+        }
         return PendingIntent.getBroadcast(
             context, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+    }
+
+    /** The name a fire is logged under: the set time and its repeats are "primary". */
+    internal fun slotName(requestCode: Int): String = when (requestCode) {
+        REQ_DAILY -> "primary"
+        REQ_DAILY_2 -> "secondary"
+        REQ_SNOOZE_FIRE -> "snooze"
+        REQ_TEST -> "test"
+        else -> "other"
     }
 
     /**

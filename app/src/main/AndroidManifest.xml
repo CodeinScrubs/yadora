@@ -23,9 +23,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
+        <!-- singleTop: a task STARTED by a reminder, the widget or the ringer has their intent at its root, and Android
+             puts a new copy on top for every later tap on the app icon (an intent that differs from the root's). On an
+             emulator four taps stacked four copies, and Back walked through stale screens (2026-10-03). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

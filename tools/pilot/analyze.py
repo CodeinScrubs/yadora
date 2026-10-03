@@ -24,7 +24,8 @@ What it checks, in the order the report gives it:
      (yadora_model.py, itself checked against py-fsrs). Elapsed days, the predicted recall and the scheduled
      interval must come out EXACTLY as the phone stored them. Any mismatch is a bug, not a statistic.
   2. Adherence: are reviews done near their dates, how big is the backlog, are first ratings given on the
-     study day. A scheduling problem and a usage problem look alike in the numbers; this separates them.
+     study day. A scheduling problem and a usage problem look alike in the numbers; this separates them. And
+     the reminders: did each phone deliver one every day, on time (export v13+, REMINDER_FIRED events)?
   3. Calibration: does the model's predicted recall match what learners report? Pooled, per participant,
      per review number, per first rating, per elapsed time, per method; for each weight set also the Brier
      score, observed over expected, calibration-in-the-large and the calibration slope, with 95% intervals.
@@ -244,6 +245,104 @@ def merged_units(d: dict) -> set:
                 if part.strip().lstrip("-").isdigit():
                     out.add(int(part))
     return out
+
+
+LATE_REMINDER_S = 600  # a reminder more than 10 minutes after its time is late (D11)
+D11_MIN_DAYS = 14  # days of reminder data a phone needs before D11 judges it
+# reminderHealth values that stop or delay reminders, as the export reads them
+HEALTH_PROBLEMS = (
+    ("notificationsAllowed", False, "notifications blocked"),
+    ("reminderChannelOn", False, "reminder channel off"),
+    ("exactAlarmsAllowed", False, "exact alarms not allowed"),
+    ("batteryOptimizationIgnored", False, "battery optimization on"),
+    ("backgroundRestricted", True, "background restricted"),
+    ("powerSaveMode", True, "battery saver on"),
+)
+
+
+def parse_detail(text) -> Dict[str, str]:
+    """An event's detail as key=value pairs (NOTIF_SHOWN, REMINDER_FIRED)."""
+    return dict(part.split("=", 1) for part in str(text or "").split() if "=" in part)
+
+
+def as_int(v) -> Optional[int]:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def reminder_delivery(d: dict, tz, exported_at: int) -> dict:
+    """Did this phone's reminders come, and on time? Read from the REMINDER_FIRED events (export v13+): one per
+    reminder alarm that reached the app, test reminders left out. Every day has at least one (the set time, the second
+    slot or a snooze, even when nothing is due), so a day inside the observed span with reminders on and no fire at all
+    is a reminder the phone never delivered. A NOTIF_SHOWN from the safety worker or the boot catch-up is a reminder
+    that came only through a safety net. reminderHealth says what the phone allowed when the file was exported."""
+    events = d.get("eventLogs") or []
+    fires = []
+    for e in events:
+        if e.get("type") != "REMINDER_FIRED":
+            continue
+        kv = parse_detail(e.get("detail"))
+        if kv.get("slot") == "test":
+            continue
+        fires.append(dict(at=int(e.get("at") or 0), late_s=as_int(kv.get("late_s")), exact=kv.get("exact"),
+                          idle=kv.get("idle"), outcome=kv.get("outcome", "?")))
+    shown = Counter(parse_detail(e.get("detail")).get("source", "?") for e in events if e.get("type") == "NOTIF_SHOWN")
+    health = d.get("reminderHealth") or {}
+    problems = [label for key, bad, label in HEALTH_PROBLEMS if health.get(key) is bad]
+    bucket = health.get("standbyBucket")
+    if isinstance(bucket, int) and bucket >= 40:
+        problems.append(f"standby bucket {bucket} (rare or restricted)")
+    out = dict(fires=len(fires), days=0, missed_days=[], late=0, known=0, median_late_s=None, p90_late_s=None,
+               max_late_s=None, inexact=0, in_doze=0, outcomes={}, health_problems=problems,
+               safety_net=shown.get("safety_worker", 0) + shown.get("boot_catchup", 0), shown_by_source=dict(shown))
+    if not fires:
+        return out
+    first_at = min(f["at"] for f in fires)
+    off_days = set()
+
+    def mark_off(a_ms: int, b_ms: int):
+        day, end = local_day(a_ms, tz), local_day(b_ms, tz)
+        while day <= end:
+            off_days.add(day)
+            day += dt.timedelta(days=1)
+
+    # Days with reminders switched off are the learner's choice, not missed reminders.
+    off_since = None
+    for at, kind in sorted((int(e.get("at") or 0), e.get("type")) for e in events
+                           if e.get("type") in ("REMINDERS_ON", "REMINDERS_OFF")):
+        if kind == "REMINDERS_OFF" and off_since is None:
+            off_since = at
+        elif kind == "REMINDERS_ON":
+            mark_off(off_since if off_since is not None else first_at, at)
+            off_since = None
+    if off_since is not None:
+        mark_off(off_since, exported_at)
+    fire_days = {local_day(f["at"], tz) for f in fires}
+    day, export_day = local_day(first_at, tz), local_day(exported_at, tz)
+    observed = []
+    while day < export_day:  # the export day itself is not over yet
+        if day not in off_days:
+            observed.append(day)
+        day += dt.timedelta(days=1)
+    lates = sorted(f["late_s"] for f in fires if f["late_s"] is not None)
+    out.update(
+        days=len(observed), missed_days=[x.isoformat() for x in observed if x not in fire_days],
+        late=sum(1 for x in lates if x > LATE_REMINDER_S), known=len(lates),
+        median_late_s=statistics.median(lates) if lates else None,
+        p90_late_s=lates[min(len(lates) - 1, math.ceil(0.9 * len(lates)) - 1)] if lates else None,
+        max_late_s=lates[-1] if lates else None,
+        inexact=sum(1 for f in fires if f["exact"] == "0"), in_doze=sum(1 for f in fires if f["idle"] == "1"),
+        outcomes=dict(Counter(f["outcome"] for f in fires)),
+    )
+    return out
+
+
+def fmt_seconds(x) -> str:
+    if x is None:
+        return "–"
+    return f"{x:.0f} s" if abs(x) < 120 else f"{x / 60:.0f} min"
 
 
 def replay_unit(logs: List[dict], unit: dict, weights: Tuple[float, ...], tz) -> List[dict]:
@@ -826,6 +925,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         overdue = [u for u in active_units if int(u.get("nextReviewAt", 0)) < export_day.timestamp() * 1000]
         overdue7 = [u for u in overdue if int(u["nextReviewAt"]) < export_day.timestamp() * 1000 - 7 * DAY_MS]
         events = Counter(ev.get("type") for ev in d.get("eventLogs") or [])
+        rd = reminder_delivery(d, e.tz, e.exported_at)
+        summary.setdefault("reminders", {})[e.participant] = rd
         info = dict(
             file=os.path.basename(e.path), export_version=d.get("exportVersion"), app=f"{d.get('appVersionName')} ({d.get('appVersionCode')})",
             device=f"{(d.get('device') or {}).get('manufacturer', '?')} {(d.get('device') or {}).get('model', '?')} / SDK {(d.get('device') or {}).get('sdkInt', '?')}",
@@ -839,6 +940,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             events=dict(events), crash_log=bool(d.get("lastCrashLog")),
             active_parameter_set=(d.get("policy") or {}).get("activeParameterSetId", 0),
             personal_model_attempts=len(d.get("memoryParameterSets") or []),
+            reminder_days=rd["days"], days_without_reminder=len(rd["missed_days"]), reminder_fires=rd["fires"],
+            late_reminders=rd["late"], safety_net_reminders=rd["safety_net"],
+            reminder_health_problems="; ".join(rd["health_problems"]),
         )
         summary["participants"][e.participant] = info
         inv.append(info)
@@ -924,6 +1028,26 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                "snoozes", "notifications shown", "missed-reminder reports"], per)
     summary["adherence"] = dict(lateness={k: lat.get(k, 0) for k in order}, first_rating_same_day=same_day,
                                 first_ratings=len(first), session_kinds=dict(kinds))
+
+    rem = summary.get("reminders") or {}
+    if any(r["fires"] for r in rem.values()):
+        rep.p("**Reminders: did each phone deliver them, on time?** Every reminder alarm that reached the app is logged "
+              "(REMINDER_FIRED), test reminders apart, and every day with reminders on has at least one, even when nothing "
+              f"is due. A day without one is a reminder the phone never delivered; late means more than "
+              f"{LATE_REMINDER_S // 60} minutes after its time. Safety-net reminders came from the 6-hourly worker or the "
+              "boot catch-up instead of the alarm. Health is what the phone allowed at export.")
+        rep.table(["participant", "days", "days without a reminder", "alarms", "late", "lateness median / 90th / max",
+                   "inexact", "in Doze", "safety net", "health at export"],
+                  [[pid, r["days"], (f"{len(r['missed_days'])}: " + ", ".join(r["missed_days"][:6])
+                                     + (" …" if len(r["missed_days"]) > 6 else "")) if r["missed_days"] else "0",
+                    r["fires"], r["late"], " / ".join(fmt_seconds(r[k]) for k in ("median_late_s", "p90_late_s", "max_late_s")),
+                    r["inexact"], r["in_doze"], r["safety_net"], "; ".join(r["health_problems"]) or "OK"]
+                   for pid, r in rem.items()])
+    elif all((e.data.get("exportVersion") or 0) < 13 for e in exports):
+        rep.p("**Reminders:** no delivery data. Reminder alarms are logged from export version 13; these files predate it.")
+    else:
+        rep.p("**Reminders:** no delivery data. No reminder alarm fired on these phones before the export: reminders "
+              "off, or exported before the first one.")
 
     # ---- calibration -----------------------------------------------------------------------------------
     rep.h("4. Calibration: does predicted recall match reported recall?")
@@ -1243,6 +1367,21 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         add("D10", "Are fewer than 40% of successful reviews answered Partial/Confused?", fmt_p(un), "OK" if un < 0.4 else "LOOK")
     else:
         add("D10", "Are fewer than 40% of successful reviews answered Partial/Confused?", "fewer than 100 reviews", "WAIT")
+
+    q11 = (f"Did every phone deliver a reminder on at least 95% of days, and at least 95% within "
+           f"{LATE_REMINDER_S // 60} minutes of their time?")
+    judged = {pid: r for pid, r in (summary.get("reminders") or {}).items() if r["days"] >= D11_MIN_DAYS}
+    if judged:
+        failing = []
+        for pid, r in judged.items():
+            covered = 1 - len(r["missed_days"]) / r["days"]
+            on_time = 1 - r["late"] / r["known"] if r["known"] else 1.0
+            if covered < 0.95 or on_time < 0.95:
+                failing.append(f"{pid}: {fmt_p(covered)} of days, {fmt_p(on_time)} on time")
+        add("D11", q11, "; ".join(failing) if failing else f"all {len(judged)} phones with {D11_MIN_DAYS}+ days",
+            "LOOK" if failing else "OK")
+    else:
+        add("D11", q11, f"no phone with {D11_MIN_DAYS} days of reminder data (export v13+)", "WAIT")
     return out
 
 
@@ -1274,7 +1413,9 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
     with open(os.path.join(out_dir, "participants.csv"), "w", newline="", encoding="utf-8-sig") as f:
         keys = ["participant", "file", "app", "device", "time_zone", "language", "retention", "daily_limit", "reminders",
                 "topics", "active_topics", "logs", "first_studies", "recalls", "span_days", "active_days",
-                "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_app"]
+                "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_app",
+                "reminder_days", "days_without_reminder", "reminder_fires", "late_reminders", "safety_net_reminders",
+                "reminder_health_problems"]
         w = csv.writer(f)
         w.writerow(keys)
         for pid, i in summary["participants"].items():
