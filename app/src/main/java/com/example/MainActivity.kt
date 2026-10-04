@@ -38,6 +38,14 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  override fun onResume() {
+    super.onResume()
+    // A trip with the app in the background changes the time zone without a new onCreate: record it on coming back,
+    // before any review is made there (TimeZoneLog; a prefs read when nothing changed).
+    val app = application as MedReviewApplication
+    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { com.example.data.TimeZoneLog.recordIfChanged(app) }
+  }
+
   override fun onNewIntent(intent: android.content.Intent) {
     super.onNewIntent(intent)
     logOpen(intent)
@@ -56,11 +64,12 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge()
     val app = application as MedReviewApplication
     if (savedInstanceState == null) logOpen(intent)
-    // For the analysis: the first run of a new build, and the day's load if the safety worker has not written it yet
-    // today (AppVersionLog, DailySnapshot). Both are best effort and never throw.
+    // For the analysis: the first run of a new build, a changed time zone, and the day's load if the safety worker has
+    // not written it yet today (AppVersionLog, TimeZoneLog, DailySnapshot). All best effort; none throws.
     lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
       com.example.data.AppVersionLog.recordIfChanged(app)
-      com.example.data.DailySnapshot.recordOnce(app)
+      com.example.data.TimeZoneLog.recordIfChanged(app)
+      com.example.data.DailySnapshot.recordOnce(app, source = com.example.data.DailySnapshot.SOURCE_APP)
     }
     runCatching { com.example.notifications.AlarmRingActivity.dismissActive() } // opening the app silences a ringing alarm
     com.example.widget.DueWidgetProvider.updateAll(this) // keep the home-screen count fresh on open

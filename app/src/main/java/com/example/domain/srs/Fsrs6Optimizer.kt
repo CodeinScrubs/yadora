@@ -153,13 +153,15 @@ object Fsrs6Optimizer {
     }
 
     /** A review log as the optimizer needs it, in chronological order (reviewedAt, then id). */
-    data class Event(val reviewedAt: Long, val memoryRating: String, val logType: String)
+    /** [storedElapsedDays]: the day count the review was scheduled with when a replay may reuse it (MedScheduler.storedModelDays). */
+    data class Event(val reviewedAt: Long, val memoryRating: String, val logType: String, val storedElapsedDays: Double? = null)
 
     /**
      * A topic's history reconstructed EXACTLY as `MedReviewRepository.projectWithHistory` rebuilds its
      * state: the first log with a valid rating seeds; a LATER first-study row is a re-encoding exposure
      * that earns nothing but re-anchors the clock; a row with an unreadable rating is skipped without
-     * moving the clock; time between steps is whole days the way the live model counts it.
+     * moving the clock; time between steps is whole days the way the live model counts it: the count each review was
+     * scheduled with when it is stored, never one counted again in today's time zone.
      */
     fun historyOf(events: List<Event>, elapsedDays: (from: Long, to: Long) -> Double): History? {
         val grades = ArrayList<Int>(events.size)
@@ -172,7 +174,7 @@ object Fsrs6Optimizer {
                 continue
             }
             val g = gradeOf(e.memoryRating) ?: continue
-            deltas.add(if (grades.isEmpty()) 0.0 else MedScheduler.completedModelDays(elapsedDays(prevTime, e.reviewedAt)))
+            deltas.add(if (grades.isEmpty()) 0.0 else MedScheduler.completedModelDays(e.storedElapsedDays ?: elapsedDays(prevTime, e.reviewedAt)))
             grades.add(g)
             times.add(e.reviewedAt)
             prevTime = e.reviewedAt

@@ -31,8 +31,17 @@ object DailySnapshot {
 
     private val lock = Mutex()
 
-    /** The event's detail, space-separated key=value pairs like REMINDER_FIRED's (pure, so it is testable). */
-    fun detail(active: List<StudyUnitEntity>, now: Long, reviewsDoneToday: Int, dailyLimit: Int): String {
+    /** Who wrote the day's snapshot: the app opening, or the 6-hourly safety worker. */
+    const val SOURCE_APP = "app"
+    const val SOURCE_WORKER = "worker"
+
+    /**
+     * The event's detail, space-separated key=value pairs like REMINDER_FIRED's (pure, so it is testable). [source] says
+     * who wrote it: the time of day it is taken varies with it, and a snapshot taken after some of the day's reviews
+     * counts fewer overdue topics (`done` says how many came first), so an analysis must compare like with like
+     * (another outside audit, 2026-10-04; tools/pilot/analyze.py `daily_load`).
+     */
+    fun detail(active: List<StudyUnitEntity>, now: Long, reviewsDoneToday: Int, dailyLimit: Int, source: String = SOURCE_APP): String {
         val start = DayBounds.startOf(now)
         val end = DayBounds.endOf(now)
         val due = active.filter { it.nextReviewAt <= end }
@@ -51,11 +60,12 @@ object DailySnapshot {
             "done=$reviewsDoneToday",
             "deferred=${active.count { it.deferredUntil != null }}",
             "limit=$dailyLimit",
+            "source=$source",
         ).joinToString(" ")
     }
 
     /** Today's snapshot, unless one was written already today. Never throws. */
-    suspend fun recordOnce(context: Context, now: Long = System.currentTimeMillis()) {
+    suspend fun recordOnce(context: Context, now: Long = System.currentTimeMillis(), source: String = SOURCE_APP) {
         runCatching {
             val app = context.applicationContext as? MedReviewApplication ?: return
             val today = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
@@ -67,7 +77,7 @@ object DailySnapshot {
                 )
                 val active = app.database.studyUnitDao().getAllActiveOnce()
                 val done = app.database.reviewLogDao().countReviewsBetween(DayBounds.startOf(now), DayBounds.endOf(now))
-                app.database.eventLogDao().insert(EventLogEntity(type = EVENT, at = now, detail = detail(active, now, done, limit)))
+                app.database.eventLogDao().insert(EventLogEntity(type = EVENT, at = now, detail = detail(active, now, done, limit, source)))
                 prefs.edit { putLong(PREF_DAY, today) }
             }
         }.onFailure { android.util.Log.w("Yadora", "daily snapshot failed", it) }

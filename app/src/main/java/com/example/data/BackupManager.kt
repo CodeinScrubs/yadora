@@ -505,13 +505,14 @@ object BackupManager {
         }
         // The scheduler must see the restored weight sets before anything schedules again.
         runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }
-        // The event log was just replaced, so today's load and this phone's build are recorded again from the restored
-        // data when the app next starts (DailySnapshot, AppVersionLog). Their "already recorded" marks are device-local
+        // The event log was just replaced, so today's load, this phone's build and its time zone are recorded again from
+        // the restored data when the app next starts (DailySnapshot, AppVersionLog, TimeZoneLog). Their "already recorded" marks are device-local
         // and would otherwise keep a phone restored onto from logging either until tomorrow, or its build at all.
         runCatching {
             com.example.notifications.NotificationScheduler.transientPrefs(context).edit {
                 remove(DailySnapshot.PREF_DAY)
                 remove(AppVersionLog.PREF_LAST_VERSION_CODE)
+                remove(TimeZoneLog.PREF_LAST_ZONE)
             }
         }
 

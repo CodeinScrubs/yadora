@@ -490,6 +490,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                                 Text("$formatted:00 $amPm")
                                             }
                                         }, onClick = {
+                                            com.example.data.SettingsChangeLog.record(
+                                                context, com.example.data.SettingsChangeLog.REMINDER_TIME,
+                                                com.example.data.SettingsChangeLog.reminderTimeValue(reminderHour, reminderMinute),
+                                                com.example.data.SettingsChangeLog.reminderTimeValue(h, reminderMinute),
+                                            )
                                             reminderHour = h
                                             sharedPrefs.edit { putInt("reminder_hour", h) }
                                             NotificationScheduler.scheduleDailyReminder(context)
@@ -505,6 +510,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 DropdownMenu(expanded = expandedMinute, onDismissRequest = { expandedMinute = false }) {
                                     (0..55 step 5).forEach { m ->
                                         DropdownMenuItem(text = { Text(m.toString().padStart(2, '0').let { if (language == "fa") com.example.ui.i18n.PersianDate.faDigits(it) else it }) }, onClick = {
+                                            com.example.data.SettingsChangeLog.record(
+                                                context, com.example.data.SettingsChangeLog.REMINDER_TIME,
+                                                com.example.data.SettingsChangeLog.reminderTimeValue(reminderHour, reminderMinute),
+                                                com.example.data.SettingsChangeLog.reminderTimeValue(reminderHour, m),
+                                            )
                                             reminderMinute = m
                                             sharedPrefs.edit { putInt("reminder_minute", m) }
                                             NotificationScheduler.scheduleDailyReminder(context)
@@ -1006,8 +1016,14 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     // 130 stops arrive as 69.99999 and 129.99998, which truncation turned into 69 and 129.
                     onValueChange = { value -> limit = Math.round(value).toFloat() },
                     onValueChangeFinished = {
-                        // Persist once when the drag settles, not on every pixel frame.
+                        // Persist once when the drag settles, not on every pixel frame, and log the change once with the
+                        // value it replaced (SettingsChangeLog): what the plan offered depends on it.
+                        val before = sharedPrefs.getFloat("daily_review_limit", 50f)
                         sharedPrefs.edit { putFloat("daily_review_limit", limit) }
+                        com.example.data.SettingsChangeLog.record(
+                            context, com.example.data.SettingsChangeLog.DAILY_LIMIT,
+                            com.example.data.SettingsChangeLog.limitValue(before), com.example.data.SettingsChangeLog.limitValue(limit),
+                        )
                     },
                     valueRange = 10f..200f,
                     steps = 18,
@@ -1173,7 +1189,12 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         MedScheduler.userRetention = retention.toDouble()
                     },
                     onValueChangeFinished = {
+                        val before = sharedPrefs.getFloat("desired_retention", 0.90f)
                         sharedPrefs.edit { putFloat("desired_retention", retention) }
+                        com.example.data.SettingsChangeLog.record(
+                            context, com.example.data.SettingsChangeLog.RETENTION,
+                            com.example.data.SettingsChangeLog.retentionValue(before), com.example.data.SettingsChangeLog.retentionValue(retention),
+                        )
                     },
                     // 0.97 is the ceiling the Important bump already uses; past it the workload roughly
                     // doubles again for a point of recall, which no longer buys readiness.

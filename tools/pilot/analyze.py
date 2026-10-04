@@ -46,6 +46,7 @@ Read CLAUDE.md's "Settled decisions" before acting on anything here: several obv
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import datetime as dt
 import glob
@@ -277,6 +278,65 @@ def calendar_days(a_ms: int, b_ms: int, tz) -> float:
     return float(max((local_day(b_ms, tz) - local_day(a_ms, tz)).days, 0))
 
 
+def tz_from(name: Optional[str], offset: Optional[str], fallback):
+    """A zone from a TIME_ZONE event: its id, else its fixed offset ("+03:30"), else [fallback]."""
+    if name and ZoneInfo is not None:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    if offset and ":" in offset:
+        try:
+            sign = -1 if offset.startswith("-") else 1
+            h, m = offset.lstrip("+-").split(":")
+            return dt.timezone(sign * dt.timedelta(hours=int(h), minutes=int(m)))
+        except ValueError:
+            pass
+    return fallback
+
+
+def zone_history(d: dict, export_tz) -> List[Tuple[int, object, str, Optional[str]]]:
+    """TIME_ZONE events (export v15+), oldest first: (from when, zone, its id, the id it replaced). The phone records
+    its zone whenever it differs from the last one seen: when the app comes to the front, and in its 6-hourly worker."""
+    out = []
+    for e in sorted((e for e in d.get("eventLogs") or [] if e.get("type") == "TIME_ZONE"), key=lambda e: int(e.get("at") or 0)):
+        kv = parse_detail(e.get("detail"))
+        out.append((int(e.get("at") or 0), tz_from(kv.get("zone"), kv.get("offset"), export_tz), kv.get("zone") or "?",
+                    kv.get("previous")))
+    return out
+
+
+def zone_lookup(d: dict, export_tz):
+    """The zone the phone was in at a moment, for counting a review's days the way the phone counted them: the latest
+    TIME_ZONE record before it; before the first record, the zone that record replaced if it names one, else its own.
+    Without records (exports before v15), the export's zone throughout, as before."""
+    hist = zone_history(d, export_tz)
+    if not hist:
+        return lambda ms: export_tz
+    times = [h[0] for h in hist]
+    first_prev = hist[0][3]
+    before_first = tz_from(first_prev, None, hist[0][1]) if first_prev and first_prev != "none" else hist[0][1]
+
+    def at(ms: int):
+        i = bisect.bisect_right(times, ms) - 1
+        return hist[i][1] if i >= 0 else before_first
+    return at
+
+
+def stored_days(log: dict) -> Optional[float]:
+    """MedScheduler.storedModelDays: the day count an FSRS-6 recall was scheduled with. The app's replays reuse it
+    instead of counting again in today's zone (since 2026-10-04), and so does this replay's chain; the count is still
+    checked on its own against the zone the phone was in (check_row)."""
+    try:
+        v = float(log.get("elapsedDays"))
+    except (TypeError, ValueError):
+        return None
+    if (log.get("schedulerVersion") == "FSRS-6" and log.get("logType") == "RECALL" and math.isfinite(v) and v >= 0
+            and v == math.floor(v)):
+        return v
+    return None
+
+
 def weight_sets(d: dict) -> Dict[int, Tuple[float, ...]]:
     sets = {0: ym.DEFAULT_WEIGHTS}
     for s in d.get("memoryParameterSets") or []:
@@ -302,16 +362,26 @@ def history_order(log: dict) -> Tuple[int, int]:
     return int(log.get("id", 0)), int(log["reviewedAt"])
 
 
-def corrections(d: dict) -> Dict[int, List[Tuple[int, int]]]:
-    """RATING_CORRECTED events (export v14+) per topic: (corrected log id, when). A correction replays the topic, so
-    the stored prediction of every later log reviewed before it was recomputed then, not made at the review."""
-    out: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+def corrections(d: dict) -> Dict[int, List[Tuple[int, int, Optional[int]]]]:
+    """RATING_CORRECTED events (export v14+) per topic: (corrected log id, when, the topic's last log id when it
+    replayed). A correction replays the topic, so the stored prediction of every later log that existed then was
+    recomputed, not made at the review. Since 2026-10-04 the event records that last id (`upto`), so saved order
+    decides; an older event falls back to the clock, which misses the rewritten logs when it was set back between the
+    reviews and the correction (an outside audit, 2026-10-04). The app applies the same rule (RecomputedPredictions)."""
+    out: Dict[int, List[Tuple[int, int, Optional[int]]]] = defaultdict(list)
     for e in d.get("eventLogs") or []:
         if e.get("type") == "RATING_CORRECTED" and e.get("unitId") is not None:
-            log_id = as_int(parse_detail(e.get("detail")).get("log"))
+            kv = parse_detail(e.get("detail"))
+            log_id = as_int(kv.get("log"))
             if log_id is not None:
-                out[int(e["unitId"])].append((log_id, int(e.get("at") or 0)))
+                out[int(e["unitId"])].append((log_id, int(e.get("at") or 0), as_int(kv.get("upto"))))
     return out
+
+
+def recomputed_by(log: dict, fixes: List[Tuple[int, int, Optional[int]]]) -> bool:
+    """Did one of these corrections recompute this log's stored prediction? See `corrections`."""
+    lid, at = int(log["id"]), int(log["reviewedAt"])
+    return any(lid > cid and (lid <= upto if upto is not None else at < cat) for cid, cat, upto in fixes)
 
 
 def merged_units(d: dict) -> set:
@@ -440,45 +510,82 @@ def reminder_funnel(d: dict, tz) -> dict:
 
 def daily_load(d: dict, tz) -> dict:
     """Was the plan keeping up? Read from the DAILY_SNAPSHOT events (export v15+): at most one per local day, written when
-    the app first opened that day or by the 6-hourly safety worker, so mostly before the day's reviews (done says how many
-    came first). Counts only. The review logs alone cannot rebuild this: the notification's "Not today" defers every due
-    topic without naming them, and "Spread out" records only how many it moved. Two snapshots on one day (two writers
-    at once) keep the first."""
+    the app first opened that day or by the 6-hourly safety worker (`source`, since 2026-10-04). Counts only. The review
+    logs alone cannot rebuild this: the notification's "Not today" defers every due topic without naming them, and
+    "Spread out" records only how many it moved. Two snapshots on one day (two writers at once) keep the first.
+
+    The time of day a snapshot is taken varies with who writes it, and one taken after some of the day's reviews counts
+    fewer overdue topics (`done` says how many came first). An outside audit (2026-10-04) built a phone that started every
+    day 30 reviews behind and finished them all: sampled at night for a month and in the morning the next, the trend
+    read +22.5 a month where there was none. So the trend is drawn through the snapshots taken before any review that
+    day when there are at least TREND_MIN_DAYS of them, and through all of them otherwise, with the basis reported. A
+    count a snapshot does not carry is left out, never read as 0; a day without a snapshot is missing, not a day off."""
     snaps: Dict[dt.date, dict] = {}
     for e in sorted((e for e in d.get("eventLogs") or [] if e.get("type") == "DAILY_SNAPSHOT"),
                     key=lambda e: int(e.get("at") or 0)):
         at = int(e.get("at") or 0)
-        counts = {k: as_int(v) for k, v in parse_detail(e.get("detail")).items()}
-        counts["at"] = at
+        kv = parse_detail(e.get("detail"))
+        counts = {k: as_int(v) for k, v in kv.items() if k != "source"}
+        counts.update(at=at, source=kv.get("source"), hour=dt.datetime.fromtimestamp(at / 1000, tz).hour)
         snaps.setdefault(local_day(at, tz), counts)
     out = dict(days=len(snaps), span_days=0, days_without=0)
     if not snaps:
         return out
     days = sorted(snaps)
 
-    def series(key):
-        return [snaps[x].get(key) or 0 for x in days]
+    def series(key, among=None):
+        return [v for v in (snaps[x].get(key) for x in (among or days)) if v is not None]
+
+    def stat(fn, xs):
+        return fn(xs) if xs else None
 
     due, overdue, held, oldest = series("due"), series("overdue"), series("held"), series("oldest_overdue_days")
+    before_reviews = [x for x in days if snaps[x].get("done") == 0]
+    basis_days = before_reviews if len(before_reviews) >= TREND_MIN_DAYS else days
     # The backlog's trend: a least-squares line through the overdue counts against the calendar day, per 30 days.
-    xs = [(x - days[0]).days for x in days]
-    mx, my = statistics.fmean(xs), statistics.fmean(overdue)
-    sxx = sum((x - mx) ** 2 for x in xs)
-    slope = sum((x - mx) * (y - my) for x, y in zip(xs, overdue)) / sxx if sxx else None
+    pts = [((x - days[0]).days, snaps[x]["overdue"]) for x in basis_days if snaps[x].get("overdue") is not None]
+    slope = None
+    if len(pts) >= 2:
+        mx, my = statistics.fmean(p[0] for p in pts), statistics.fmean(p[1] for p in pts)
+        sxx = sum((p[0] - mx) ** 2 for p in pts)
+        slope = sum((p[0] - mx) * (p[1] - my) for p in pts) / sxx if sxx else None
+    basis_overdue = [p[1] for p in pts]
     last = snaps[days[-1]]
     span = (days[-1] - days[0]).days + 1
+    sources = Counter(snaps[x].get("source") or "not recorded" for x in days)
     out.update(
         days=len(days), first_day=days[0].isoformat(), last_day=days[-1].isoformat(), span_days=span,
         days_without=span - len(days),
-        due_median=statistics.median(due), due_max=max(due),
-        overdue_median=statistics.median(overdue), overdue_max=max(overdue),
-        days_with_backlog=sum(1 for x in overdue if x > 0), oldest_overdue_max=max(oldest),
-        days_held=sum(1 for x in held if x > 0), held_max=max(held),
-        overdue_first30=mean(overdue[:30]), overdue_last30=mean(overdue[-30:]),
+        due_median=stat(statistics.median, due), due_max=stat(max, due),
+        overdue_median=stat(statistics.median, overdue), overdue_max=stat(max, overdue),
+        days_with_backlog=sum(1 for x in overdue if x > 0), oldest_overdue_max=stat(max, oldest),
+        days_held=sum(1 for x in held if x > 0), held_max=stat(max, held),
+        overdue_first30=mean(basis_overdue[:30]), overdue_last30=mean(basis_overdue[-30:]),
         overdue_trend_per_30d=None if slope is None else 30 * slope,
+        trend_basis="before any review that day" if basis_days is before_reviews else "all snapshots, mixed times of day",
+        trend_days=len(pts), before_reviews_days=len(before_reviews),
+        median_hour=stat(statistics.median, [snaps[x]["hour"] for x in days]), sources=dict(sources),
         limits=sorted({s["limit"] for s in snaps.values() if s.get("limit") is not None}),
         active_last=last.get("active"), deferred_last=last.get("deferred"),
     )
+    return out
+
+
+D3_QUESTION = ("First review after a {g} first rating: not more than 7 points below prediction, and not more than 5 "
+               "above it with over 95% recalled?")
+TREND_MIN_DAYS = 14  # snapshots taken before any review that day, before the trend is drawn through them alone
+
+
+def settings_timeline(d: dict, tz) -> List[dict]:
+    """SETTINGS_CHANGED events (export v15+), oldest first: when the learner changed the daily limit, the retention
+    target or the reminder time, and from what to what. A day's snapshot carries the limit, and every review its
+    target, but not when either changed."""
+    out = []
+    for e in sorted((e for e in d.get("eventLogs") or [] if e.get("type") == "SETTINGS_CHANGED"),
+                    key=lambda e: int(e.get("at") or 0)):
+        kv = parse_detail(e.get("detail"))
+        out.append(dict(day=local_day(int(e.get("at") or 0), tz).isoformat(), key=kv.get("key"), old=kv.get("old"),
+                        new=kv.get("new")))
     return out
 
 
@@ -500,13 +607,20 @@ def fmt_seconds(x) -> str:
     return f"{x:.0f} s" if abs(x) < 120 else f"{x / 60:.0f} min"
 
 
-def replay_unit(logs: List[dict], unit: dict, weights: Tuple[float, ...], tz) -> List[dict]:
+def replay_unit(logs: List[dict], unit: dict, weights: Tuple[float, ...], tz, merged: bool = False) -> List[dict]:
     """The canonical reconstruction, under one weight set: the first log seeds, a later FIRST_STUDY log is a
     re-encoding exposure (moves the clock, not the state), every other log is a graded recall.
 
-    Returns per log: state before/after, elapsed days, predicted recall, graded count before, and the memory
-    interval the rules give (before fuzz) plus whether it is a first study.
+    [tz] is a zone, or a function from a time to the zone the phone was in then (zone_lookup). A recall's days are
+    counted in that zone (`counted`), as the phone counted them; the chain itself follows the day count the review
+    was scheduled with when it is stored (`stored_days`), as the app's own replays do, so one day miscounted is
+    reported on its own row instead of moving every later one. A merged topic is always counted again: its stored
+    counts run from its copies' own reviews.
+
+    Returns per log: state before/after, elapsed days, the recount, predicted recall, graded count before, and the
+    memory interval the rules give (before fuzz) plus whether it is a first study.
     """
+    zone = tz if callable(tz) else (lambda ms: tz)
     m = ym.Fsrs6(weights)
     out = []
     state = None
@@ -518,19 +632,24 @@ def replay_unit(logs: List[dict], unit: dict, weights: Tuple[float, ...], tz) ->
         grade = ym.GRADE_OF.get(rating, ym.GOOD)
         if state is None:
             new = m.initial_state(grade)
-            elapsed = calendar_days(int(unit.get("studiedAt", t)), t, tz)
-            out.append(dict(before=None, after=new, elapsed=elapsed, predicted=None, graded_before=0, first=True, exposure=False))
+            elapsed = calendar_days(int(unit.get("studiedAt", t)), t, zone(t))
+            out.append(dict(before=None, after=new, elapsed=elapsed, counted=elapsed, predicted=None, graded_before=0,
+                            first=True, exposure=False))
             state, last, graded = new, t, 1
             continue
         if log.get("logType") == "FIRST_STUDY":
-            out.append(dict(before=state, after=state, elapsed=calendar_days(last, t, tz), predicted=None,
+            counted = calendar_days(last, t, zone(t))
+            out.append(dict(before=state, after=state, elapsed=counted, counted=counted, predicted=None,
                             graded_before=graded, first=False, exposure=True))
             last = t
             continue
-        elapsed = calendar_days(last, t, tz)
+        counted = calendar_days(last, t, zone(t))
+        stored = None if merged else stored_days(log)
+        elapsed = counted if stored is None else stored
         r = m.retrievability(math.floor(elapsed), state.stability)
         new = m.next_state(state, math.floor(elapsed), grade)
-        out.append(dict(before=state, after=new, elapsed=elapsed, predicted=r, graded_before=graded, first=False, exposure=False))
+        out.append(dict(before=state, after=new, elapsed=elapsed, counted=counted, predicted=r, graded_before=graded,
+                        first=False, exposure=False))
         state, last, graded = new, t, graded + 1
     return out
 
@@ -565,6 +684,9 @@ def effective_due_dates(logs: List[dict]) -> List[Optional[int]]:
             if und != "NotAsked" or rating == "Forgot":
                 repair = ym.remediation_days(rating, und if und != "NotAsked" else "Partial",
                                              streak if backs_off(prev.get("schedulerPolicyVersion", "")) else 0)
+            # The app keeps a deadline that beats the memory interval as finally scheduled (YADORA-7, the stored
+            # nextIntervalDays); rows stamped YADORA-6 or older were compared before the ±5% fuzz, so inside that band
+            # this reads a repair date the app had dropped (lateness only; nothing here is checked for exactness).
             if repair is not None and (rating == "Forgot" or repair < memory_days):
                 due = min(due, prev_at + int(repair * DAY_MS))
             out[i] = due
@@ -580,6 +702,7 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
     activated = set_activations(d)
     merged = merged_units(d)
     fixed = corrections(d)
+    zone_at = zone_lookup(d, e.tz)
     by_unit: Dict[int, List[dict]] = defaultdict(list)
     for log in d["reviewLogs"]:
         by_unit[int(log["studyUnitId"])].append(log)
@@ -591,7 +714,7 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
         replays = {}
         for sid in {int(l.get("parameterSetId", 0)) for l in logs}:
             if sid in sets:
-                replays[sid] = replay_unit(logs, unit, sets[sid], e.tz)
+                replays[sid] = replay_unit(logs, unit, sets[sid], zone_at, merged=uid in merged)
         first_grade = None
         lapses = 0
         effective_due = effective_due_dates(logs)
@@ -639,8 +762,7 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
                 lapses_before=lapses,
                 merged=uid in merged,
                 decay=-(sets.get(sid) or ym.DEFAULT_WEIGHTS)[20],
-                recomputed=int(log["reviewedAt"]) < activated.get(sid, 0) or any(
-                    int(log["id"]) > cid and int(log["reviewedAt"]) < cat for cid, cat in fixed.get(uid, [])),
+                recomputed=int(log["reviewedAt"]) < activated.get(sid, 0) or recomputed_by(log, fixed.get(uid, [])),
             )
             if rp:
                 row.stability_before = rp["before"].stability if rp["before"] else None
@@ -659,8 +781,8 @@ def check_row(row: Row, log: dict, rp: Optional[dict], weights) -> None:
     if row.scheduler_version != "FSRS-6" or row.merged or rp is None or weights is None or rp["exposure"]:
         return
     m = ym.Fsrs6(weights)
-    if row.stored_elapsed >= 0 and abs(rp["elapsed"] - row.stored_elapsed) > 1e-9 and not rp["first"]:
-        row.mismatch.append(f"elapsed {row.stored_elapsed:g} stored vs {rp['elapsed']:g} replayed")
+    if row.stored_elapsed >= 0 and abs(rp["counted"] - row.stored_elapsed) > 1e-9 and not rp["first"]:
+        row.mismatch.append(f"elapsed {row.stored_elapsed:g} stored vs {rp['counted']:g} counted")
     if row.is_recall and row.predicted is not None and rp["predicted"] is not None:
         if abs(rp["predicted"] - row.predicted) > 1e-6 * max(1.0, row.predicted):
             row.mismatch.append(f"predicted recall {row.predicted:.6f} stored vs {rp['predicted']:.6f} replayed")
@@ -917,6 +1039,7 @@ def histories(exports: List[Export]) -> List[Tuple[str, int, List[dict], dict, o
     for e in exports:
         units = {int(u["id"]): u for u in e.data["studyUnits"]}
         merged = merged_units(e.data)
+        zone_at = zone_lookup(e.data, e.tz)
         by_unit = defaultdict(list)
         for log in e.data["reviewLogs"]:
             by_unit[int(log["studyUnitId"])].append(log)
@@ -924,7 +1047,7 @@ def histories(exports: List[Export]) -> List[Tuple[str, int, List[dict], dict, o
             if uid in merged:
                 continue
             logs.sort(key=history_order)
-            out.append((e.participant, uid, logs, units.get(uid, {}), e.tz))
+            out.append((e.participant, uid, logs, units.get(uid, {}), zone_at))
     return out
 
 
@@ -1189,6 +1312,10 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         summary.setdefault("load", {})[e.participant] = ld
         versions = app_versions(d, e.tz)
         summary.setdefault("app_versions", {})[e.participant] = versions
+        zones = [dict(day=local_day(at, e.tz).isoformat(), zone=zid) for at, _, zid, _ in zone_history(d, e.tz)]
+        summary.setdefault("time_zones", {})[e.participant] = zones
+        changes = settings_timeline(d, e.tz)
+        summary.setdefault("settings_changes", {})[e.participant] = changes
         info = dict(
             file=os.path.basename(e.path), export_version=d.get("exportVersion"), app=f"{d.get('appVersionName')} ({d.get('appVersionCode')})",
             device=f"{(d.get('device') or {}).get('manufacturer', '?')} {(d.get('device') or {}).get('model', '?')} / SDK {(d.get('device') or {}).get('sdkInt', '?')}",
@@ -1211,6 +1338,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             snapshot_days=ld["days"], median_overdue=ld.get("overdue_median"), max_overdue=ld.get("overdue_max"),
             days_held_back=ld.get("days_held"), overdue_trend_per_30d=ld.get("overdue_trend_per_30d"),
             app_builds="; ".join(f"{v['code']} ({v['name']}) from {v['day']}" for v in versions),
+            time_zones="; ".join(f"{z['zone']} from {z['day']}" for z in zones),
+            settings_changes="; ".join(f"{c['day']} {c['key']} {c['old']}→{c['new']}" for c in changes),
         )
         summary["participants"][e.participant] = info
         inv.append(info)
@@ -1244,6 +1373,11 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         if i["app_builds"]:
             rep.p(f"- {pid}: builds on this phone, first run: {i['app_builds']}. A change in the numbers that starts on "
                   "one of these days may come from the update, not from the learner.")
+        if len(summary["time_zones"][pid]) > 1:
+            rep.p(f"- {pid}: time zones on this phone: {i['time_zones']}. A review's days are counted in the zone the "
+                  "phone was in when it was made, as the phone counted them.")
+        if i["settings_changes"]:
+            rep.p(f"- {pid}: settings changed: {i['settings_changes']}.")
 
     recalls = [r for r in all_rows if r.is_recall and r.scheduler_version == "FSRS-6"]
     # As the app's calibration: a prediction counts only if it was made when the review happened. A rating
@@ -1328,19 +1462,25 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
 
     load = summary.get("load") or {}
     if any(l["days"] for l in load.values()):
-        rep.p("**Daily load: was the plan keeping up?** One snapshot a day (DAILY_SNAPSHOT), mostly taken before the "
-              "day's reviews: what was due (first ratings included), how much of it was overdue (due before that day) and "
-              "for how long, and on how many days the daily limit held reviews back. A backlog that grows month after "
-              "month is a plan the learner cannot keep, whatever its intervals; one that comes and goes is irregular study "
-              "the plan absorbs. Days without a snapshot are days the phone ran neither the app nor its 6-hourly worker.")
-        rep.table(["participant", "days with a snapshot (of span)", "due median / max", "overdue median / max",
-                   "days with a backlog", "oldest overdue (days)", "days held back (most held)",
-                   "mean overdue, first 30 → last 30 days", "trend per 30 days", "daily limit"],
-                  [[pid, f"{l['days']} ({l['span_days']})", f"{fmt(l['due_median'], 0)} / {l['due_max']}",
+        rep.p("**Daily load: was the plan keeping up?** One snapshot a day (DAILY_SNAPSHOT), taken when the app first "
+              "opened that day or by its 6-hourly worker: what was due (first ratings included), how much of it was "
+              "overdue (due before that day) and for how long, and on how many days the daily limit held reviews back. A "
+              "snapshot taken after some of the day's reviews counts fewer overdue topics, so the trend is drawn through the "
+              f"snapshots taken before any review that day when there are {TREND_MIN_DAYS} or more, and the table says "
+              "which. A backlog that grows month after month is the first thing to ask the learner about (more new "
+              "material than time, fewer study days, a limit set low); a count alone does not say which. Days without "
+              "a snapshot are days the phone ran neither the app nor its 6-hourly worker: missing data, not days off.")
+        rep.table(["participant", "days with a snapshot (of span)", "taken (median hour; by)", "due median / max",
+                   "overdue median / max", "days with a backlog", "oldest overdue (days)", "days held back (most held)",
+                   "mean overdue, first 30 → last 30", "trend per 30 days (drawn through)", "daily limit"],
+                  [[pid, f"{l['days']} ({l['span_days']})",
+                    f"{fmt(l['median_hour'], 0)}:00; " + ", ".join(f"{k} {v}" for k, v in sorted(l["sources"].items())),
+                    f"{fmt(l['due_median'], 0)} / {l['due_max']}",
                     f"{fmt(l['overdue_median'], 0)} / {l['overdue_max']}", l["days_with_backlog"], l["oldest_overdue_max"],
                     f"{l['days_held']} ({l['held_max']})",
                     f"{fmt(l['overdue_first30'], 1)} → {fmt(l['overdue_last30'], 1)}",
-                    fmt(l["overdue_trend_per_30d"], 1), ", ".join(str(x) for x in l["limits"]) or "–"]
+                    f"{fmt(l['overdue_trend_per_30d'], 1)} ({l['trend_days']} days: {l['trend_basis']})",
+                    ", ".join(str(x) for x in l["limits"]) or "–"]
                    for pid, l in load.items() if l["days"]])
     elif all((e.data.get("exportVersion") or 0) < 15 for e in exports):
         rep.p("**Daily load:** no snapshots. The day's load is logged from export version 15; these files predate it.")
@@ -1701,12 +1841,14 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         fr = (summary.get("first_review") or {}).get(g)
         if fr and fr["n"] >= 60:
             gap = fr["observed"] - fr["predicted"]
+            # Too late: more than 7 points below. Too early only when it was also nearly certain: more than 5 points above
+            # AND over 95% recalled, a first review that early being close to wasted (the rule since 2026-09-24, written
+            # out in full on 2026-10-04 after an outside audit found the question and PILOT.md gave only the band).
             verdict = "LOOK" if gap < -0.07 or (gap > 0.05 and fr["observed"] > 0.95) else "OK"
-            add(f"D3-{g}", f"First review after a {g} first rating: within −7/+5 points of prediction?",
+            add(f"D3-{g}", D3_QUESTION.format(g=g),
                 f"reported {fmt_p(fr['observed'])} vs predicted {fmt_p(fr['predicted'])} (n={fr['n']})", verdict)
         else:
-            add(f"D3-{g}", f"First review after a {g} first rating: within −7/+5 points of prediction?",
-                f"{fr['n'] if fr else 0} reviews (needs 60)", "WAIT")
+            add(f"D3-{g}", D3_QUESTION.format(g=g), f"{fr['n'] if fr else 0} reviews (needs 60)", "WAIT")
 
     scales = [p.get("scale_raw") for p in summary["participants"].values() if p.get("scale_raw")]
     if len(scales) >= 3:
@@ -1826,7 +1968,8 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
                 "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_raw_ci", "scale_app",
                 "reminder_days", "days_without_reminder", "reminder_fires", "late_reminders", "safety_net_reminders",
                 "reminder_health_problems", "opened_from_reminder", "reviewed_after_reminder", "rating_corrections",
-                "snapshot_days", "median_overdue", "max_overdue", "days_held_back", "overdue_trend_per_30d", "app_builds"]
+                "snapshot_days", "median_overdue", "max_overdue", "days_held_back", "overdue_trend_per_30d", "app_builds",
+                "time_zones", "settings_changes"]
         w = csv.writer(f)
         w.writerow(keys)
         for pid, i in summary["participants"].items():

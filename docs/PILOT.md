@@ -106,9 +106,12 @@ Standard library only. `pilot_report/` gets:
     once enough learners exist;
   - memory ratings against bands of the question score, the only objective view of generous rating;
   - per phone, the daily load (export v15: one DAILY_SNAPSHOT a day with what was due, how much was overdue and for
-    how long, and what the daily limit held back), the backlog's trend per 30 days, and the first day each build ran
-    there (APP_VERSION). Descriptive; no rule reads them. A backlog that grows for months is a plan the learner cannot
-    keep, and the first thing to look at before reading their calibration;
+    how long, and what the daily limit held back), the backlog's trend per 30 days, drawn through the snapshots taken
+    before any review that day when there are 14 of them (one taken after the day's reviews counts fewer overdue, and
+    mixing the two made a steady backlog look like a growing one in an outside audit's test), the first day each build
+    ran there (APP_VERSION), the phone's time zones (TIME_ZONE) and every change of the daily limit, the retention
+    target or the reminder time (SETTINGS_CHANGED). Descriptive; no rule reads them. A backlog that grows for months
+    is the first thing to ask the learner about before reading their calibration;
 - `summary.json`: the same numbers, machine-readable;
 - `reviews.csv`, `topics.csv`, `participants.csv`: tidy tables, UTF-8, open in Excel.
 
@@ -130,7 +133,7 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 |---|---|---|---|
 | D1 | Did every phone schedule exactly what the rules say? | 0 replay mismatches, 0 self-check issues | BUG. Find the phone, the build and the log in `report.md` §2. A time-zone change is the one benign cause. |
 | D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300; past 5 points it is LOOK only if the topic-clustered 95% interval of the gap excludes 0, otherwise WAIT (amended 2026-10-03). Judged for the published defaults pooled and for each learner's personal set on its own: a set's id is local to one phone (2026-10-03) | The per-user calibration is not keeping up. Check D4 before touching it. |
-| D3 | First review after a Hard / Medium / Easy first rating: close to predicted? | −7 to +5 points, n ≥ 60 per rating | Compare "implied S0" with the default. Simulate a first-study prior for topics, or a different cap, before changing either. |
+| D3 | First review after a Hard / Medium / Easy first rating: close to predicted? | n ≥ 60 per rating; LOOK when more than 7 points below, or more than 5 points above AND over 95% recalled | Compare "implied S0" with the default. Simulate a first-study prior for topics, or a different cap, before changing either. |
 | D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
 | D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar), with the first-rating grades in order and intervals no longer than the defaults' (the app's two other conditions, added 2026-10-03) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
 | D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
@@ -144,6 +147,10 @@ Why these thresholds:
 
 - D2 and D3 allow ~5–7 points, because two months of self-reported recall on whole topics cannot resolve
   finer than that.
+- D3's upper side (the rule since 2026-09-24; the table gave only "−7 to +5" until an outside audit, 2026-10-04, found
+  an OK at +8.3 points): recall above the prediction at the first review is not a problem in itself, since the 5-day
+  first-study cap brings that review early on purpose. It is LOOK only when the first review was also nearly certain
+  (over 95% recalled), so early that it was close to wasted. Below the prediction, 7 points is enough.
 - D11 (added 2026-10-03, before any data): every reminder alarm that reaches the app is logged, and every day
   with reminders on has at least one (the set time or the second slot fires even when nothing is due), so a day
   without one is a reminder the phone never delivered. Days with reminders switched off in Settings are left

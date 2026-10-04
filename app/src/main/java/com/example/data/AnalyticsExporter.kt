@@ -63,16 +63,26 @@ object AnalyticsExporter {
             "(the Settings switch), APP_OPENED (from=notification, alarm or widget: a tap that opened the app), " +
             "RATING_CORRECTED (log=<id> memory=<before>><after> understanding=<before>><after>: the log itself holds the " +
             "corrected answer, and every later log of that topic was recomputed), DAILY_SNAPSHOT (dailySnapshot below), " +
-            "APP_VERSION (code=<new> name=<name> previous=<old code>, 0 = a fresh install or the first build that records it; " +
-            "written when a new build first opens or its 6-hourly worker first runs, so a change in the logs can be dated to " +
-            "an update) and the PERSONAL_MODEL family.")
+            "APP_VERSION (code=<new> name=<name> previous=<old code> installed=<epoch ms>, 0 = a fresh install or the first " +
+            "build that records it; written when a new build, or a reinstall of the same version code, first opens or its " +
+            "6-hourly worker first runs, so a change in the logs can be dated to an update), TIME_ZONE (zone=<id> " +
+            "offset=<+hh:mm> previous=<id or none>: the zone the phone counts its days in, recorded whenever it differs " +
+            "from the last one seen; a review's elapsedDays are local calendar days in the zone it was made in), " +
+            "SETTINGS_CHANGED (key=daily_review_limit|desired_retention|reminder_time old=<v> new=<v>: when the learner " +
+            "changed a setting the plan depends on) and the PERSONAL_MODEL family. RATING_CORRECTED also carries " +
+            "upto=<id>: the topic's last log when the correction replayed it; the logs after log=<id> up to it were " +
+            "recomputed (an event without upto: the later logs reviewed before it).")
+        put("reviewDurationMs", "How long the review screen showed the topic before the rating, capped at 30 minutes. NOT " +
+            "the time the review took: a review is done by any method, mostly outside the app (a question bank, a book).")
         put("dailySnapshot", "DAILY_SNAPSHOT: at most one per local day, written when the app first opens that day or by the " +
             "6-hourly safety worker, whichever comes first (its time says which part of the day; a day without one is a day " +
             "the phone ran neither). Counts only, no content. detail: active (topics not archived or deleted), rated (with a " +
             "first rating), due (effective date by the end of that day, first ratings included), overdue (due before that " +
             "day), oldest_overdue_days, first (first ratings waiting), offered (that day's plan under the daily limit), held " +
             "(reviews the limit held for a later day), done (reviews already done that day when it was written), deferred " +
-            "(topics whose current date came from 'Not today' or 'Spread out'), limit (the daily limit).")
+            "(topics whose current date came from 'Not today' or 'Spread out'), limit (the daily limit), source (app: the app " +
+            "opening; worker: the 6-hourly worker). One taken after some of the day's reviews counts fewer overdue topics: " +
+            "compare snapshots with done=0 for a trend.")
         put("historyOrder", "Walk a topic's reviewLogs by id, the order they were saved, not by reviewedAt: a phone clock set " +
             "back between two reviews gives the later one the earlier time. The app replays in id order, and elapsedDays is " +
             "never negative.")
@@ -180,9 +190,11 @@ object AnalyticsExporter {
         // the widget) and RATING_CORRECTED (the answer a correction replaced), so a reminder can be followed to the review
         // it led to, and a corrected rating told from an original one.
         // v15: the day's load (DAILY_SNAPSHOT: what was due, how much was overdue and for how long, what the daily limit
-        // held back, once a day) and APP_VERSION (the first run of each build). Study is irregular, and whether a year of
-        // it is keeping up is the first thing an analysis must see; the logs alone cannot rebuild it, because the
-        // notification's "Not today" defers every due topic without naming them.
+        // held back, once a day, and who wrote it) and APP_VERSION (the first run of each build). Study is irregular, and
+        // whether a year of it is keeping up is the first thing an analysis must see; the logs alone cannot rebuild it,
+        // because the notification's "Not today" defers every due topic without naming them. Also TIME_ZONE (the zone
+        // the phone counts its days in), SETTINGS_CHANGED (the daily limit, the target, the reminder time) and the
+        // `upto` bound on RATING_CORRECTED (which predictions a correction recomputed, by saved order not the clock).
         root.put("exportVersion", 15)
         root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())

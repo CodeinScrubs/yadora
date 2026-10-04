@@ -275,8 +275,8 @@ def summarize(path: str):
         best = max(rs, key=lambda r: r["score"])
         print(f"\n### {n} topics, {budget:g} review-units a day (first study {c_new:g}), learner k={k}; "
               f"reviews may take at most {cap:.0%} of the day before new topics")
-        print("| policy | exam score (all topics) | coverage | recall of the studied | weakest tenth | topics at 90%+ "
-              "| reviews a day | syllabus done on day |")
+        print("| policy | exam score (all topics) | coverage | recall of the studied | weakest tenth of the studied "
+              "| topics at 90%+ | reviews a day | syllabus done on day |")
         print("|---|---|---|---|---|---|---|---|")
         for r in rs:
             mark = " (best)" if r is best else ""

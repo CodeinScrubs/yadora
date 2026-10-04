@@ -38,7 +38,7 @@ D_MIN, D_MAX = 1.0, 10.0
 AGAIN, HARD, GOOD, EASY = 1, 2, 3, 4
 GRADE_OF = {"Forgot": AGAIN, "Hard": HARD, "Good": GOOD, "Easy": EASY}
 
-# MedScheduler policy constants (POLICY_VERSION YADORA-6).
+# MedScheduler policy constants (POLICY_VERSION YADORA-7).
 MIN_INTERVAL_DAYS = 1.0
 MAX_INTERVAL_DAYS = 365.0
 RELEARN_STEP_DAYS = 1.0
@@ -151,7 +151,9 @@ def memory_interval(model: Fsrs6, new_state: State, grade: int, retention: float
 
 
 def remediation_days(memory_rating: str, understanding: str, unrepaired_streak: int = 0) -> Optional[float]:
-    """The understanding repair deadline (YADORA-6 backoff), before the "must beat the memory date" rule."""
+    """The understanding repair deadline (YADORA-6 backoff), before the "must beat the memory date" rule. Since
+    YADORA-7 the app keeps it when it beats the memory interval as finally scheduled, fuzz included
+    (MedScheduler.repairDays); YADORA-6 and older compared it with the interval before the fuzz."""
     if memory_rating == "Forgot":
         return 1.0
     if understanding == "Confused":
