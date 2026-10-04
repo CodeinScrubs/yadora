@@ -16,6 +16,10 @@ interface ReviewLogDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLog(log: ReviewLogEntity): Long
+
+    /** A whole history at once, for a restore: the same REPLACE as [insertLog], one call instead of tens of thousands. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertLogs(logs: List<ReviewLogEntity>)
     
     @Query("SELECT * FROM review_logs WHERE reviewedAt >= :sinceTime ORDER BY reviewedAt ASC, id ASC")
     fun getLogsSince(sinceTime: Long): Flow<List<ReviewLogEntity>>

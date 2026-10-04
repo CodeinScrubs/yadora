@@ -25,7 +25,9 @@ What it checks, in the order the report gives it:
      interval must come out EXACTLY as the phone stored them. Any mismatch is a bug, not a statistic.
   2. Adherence: are reviews done near their dates, how big is the backlog, are first ratings given on the
      study day. A scheduling problem and a usage problem look alike in the numbers; this separates them. And
-     the reminders: did each phone deliver one every day, on time (export v13+, REMINDER_FIRED events)?
+     the reminders: did each phone deliver one every day, on time (export v13+, REMINDER_FIRED events)? And the
+     daily load: was the plan keeping up, or did a backlog grow (export v15+, DAILY_SNAPSHOT events)? Each phone's
+     builds are dated (APP_VERSION), so a change can be told from an update.
   3. Calibration: does the model's predicted recall match what learners report? Pooled, per participant,
      per review number, per first rating, per elapsed time, per subject, per method; for each weight set also
      the Brier score, observed over expected, calibration-in-the-large and the calibration slope, with 95%
@@ -434,6 +436,62 @@ def reminder_funnel(d: dict, tz) -> dict:
     return dict(posted=len(posted), opened=opened, reviewed_same_day=same_day,
                 widget_opens=sum(1 for e in events if e.get("type") == "APP_OPENED"
                                  and parse_detail(e.get("detail")).get("from") == "widget"))
+
+
+def daily_load(d: dict, tz) -> dict:
+    """Was the plan keeping up? Read from the DAILY_SNAPSHOT events (export v15+): at most one per local day, written when
+    the app first opened that day or by the 6-hourly safety worker, so mostly before the day's reviews (done says how many
+    came first). Counts only. The review logs alone cannot rebuild this: the notification's "Not today" defers every due
+    topic without naming them, and "Spread out" records only how many it moved. Two snapshots on one day (two writers
+    at once) keep the first."""
+    snaps: Dict[dt.date, dict] = {}
+    for e in sorted((e for e in d.get("eventLogs") or [] if e.get("type") == "DAILY_SNAPSHOT"),
+                    key=lambda e: int(e.get("at") or 0)):
+        at = int(e.get("at") or 0)
+        counts = {k: as_int(v) for k, v in parse_detail(e.get("detail")).items()}
+        counts["at"] = at
+        snaps.setdefault(local_day(at, tz), counts)
+    out = dict(days=len(snaps), span_days=0, days_without=0)
+    if not snaps:
+        return out
+    days = sorted(snaps)
+
+    def series(key):
+        return [snaps[x].get(key) or 0 for x in days]
+
+    due, overdue, held, oldest = series("due"), series("overdue"), series("held"), series("oldest_overdue_days")
+    # The backlog's trend: a least-squares line through the overdue counts against the calendar day, per 30 days.
+    xs = [(x - days[0]).days for x in days]
+    mx, my = statistics.fmean(xs), statistics.fmean(overdue)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, overdue)) / sxx if sxx else None
+    last = snaps[days[-1]]
+    span = (days[-1] - days[0]).days + 1
+    out.update(
+        days=len(days), first_day=days[0].isoformat(), last_day=days[-1].isoformat(), span_days=span,
+        days_without=span - len(days),
+        due_median=statistics.median(due), due_max=max(due),
+        overdue_median=statistics.median(overdue), overdue_max=max(overdue),
+        days_with_backlog=sum(1 for x in overdue if x > 0), oldest_overdue_max=max(oldest),
+        days_held=sum(1 for x in held if x > 0), held_max=max(held),
+        overdue_first30=mean(overdue[:30]), overdue_last30=mean(overdue[-30:]),
+        overdue_trend_per_30d=None if slope is None else 30 * slope,
+        limits=sorted({s["limit"] for s in snaps.values() if s.get("limit") is not None}),
+        active_last=last.get("active"), deferred_last=last.get("deferred"),
+    )
+    return out
+
+
+def app_versions(d: dict, tz) -> List[dict]:
+    """When each build first ran on this phone, oldest first (APP_VERSION events, export v15+). previous = 0 is a fresh
+    install, or the first build that recorded it."""
+    out = []
+    for e in sorted((e for e in d.get("eventLogs") or [] if e.get("type") == "APP_VERSION"),
+                    key=lambda e: int(e.get("at") or 0)):
+        kv = parse_detail(e.get("detail"))
+        out.append(dict(day=local_day(int(e.get("at") or 0), tz).isoformat(), code=as_int(kv.get("code")),
+                        name=kv.get("name"), previous=as_int(kv.get("previous"))))
+    return out
 
 
 def fmt_seconds(x) -> str:
@@ -1127,6 +1185,10 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         events = Counter(ev.get("type") for ev in d.get("eventLogs") or [])
         rd = reminder_delivery(d, e.tz, e.exported_at)
         summary.setdefault("reminders", {})[e.participant] = rd
+        ld = daily_load(d, e.tz)
+        summary.setdefault("load", {})[e.participant] = ld
+        versions = app_versions(d, e.tz)
+        summary.setdefault("app_versions", {})[e.participant] = versions
         info = dict(
             file=os.path.basename(e.path), export_version=d.get("exportVersion"), app=f"{d.get('appVersionName')} ({d.get('appVersionCode')})",
             device=f"{(d.get('device') or {}).get('manufacturer', '?')} {(d.get('device') or {}).get('model', '?')} / SDK {(d.get('device') or {}).get('sdkInt', '?')}",
@@ -1146,6 +1208,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             rating_corrections=sum(len(v) for v in corrections(d).values()),
             opened_from_reminder=rd["opened"], reviewed_after_reminder=rd["reviewed_same_day"],
             older_exports=len(e.older_files), logs_missing_from_newest=e.missing_logs, topics_missing_from_newest=e.missing_topics,
+            snapshot_days=ld["days"], median_overdue=ld.get("overdue_median"), max_overdue=ld.get("overdue_max"),
+            days_held_back=ld.get("days_held"), overdue_trend_per_30d=ld.get("overdue_trend_per_30d"),
+            app_builds="; ".join(f"{v['code']} ({v['name']}) from {v['day']}" for v in versions),
         )
         summary["participants"][e.participant] = info
         inv.append(info)
@@ -1176,6 +1241,9 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             rep.p(f"- {pid}: the newest export lacks {i['logs_missing_from_newest']} review logs and "
                   f"{i['topics_missing_from_newest']} topics that an older one had (deleted for good, a restore or a "
                   "reset). Everything below covers the topics that remain.")
+        if i["app_builds"]:
+            rep.p(f"- {pid}: builds on this phone, first run: {i['app_builds']}. A change in the numbers that starts on "
+                  "one of these days may come from the update, not from the learner.")
 
     recalls = [r for r in all_rows if r.is_recall and r.scheduler_version == "FSRS-6"]
     # As the app's calibration: a prediction counts only if it was made when the review happened. A rating
@@ -1257,6 +1325,28 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     else:
         rep.p("**Reminders:** no delivery data. No reminder alarm fired on these phones before the export: reminders "
               "off, or exported before the first one.")
+
+    load = summary.get("load") or {}
+    if any(l["days"] for l in load.values()):
+        rep.p("**Daily load: was the plan keeping up?** One snapshot a day (DAILY_SNAPSHOT), mostly taken before the "
+              "day's reviews: what was due (first ratings included), how much of it was overdue (due before that day) and "
+              "for how long, and on how many days the daily limit held reviews back. A backlog that grows month after "
+              "month is a plan the learner cannot keep, whatever its intervals; one that comes and goes is irregular study "
+              "the plan absorbs. Days without a snapshot are days the phone ran neither the app nor its 6-hourly worker.")
+        rep.table(["participant", "days with a snapshot (of span)", "due median / max", "overdue median / max",
+                   "days with a backlog", "oldest overdue (days)", "days held back (most held)",
+                   "mean overdue, first 30 → last 30 days", "trend per 30 days", "daily limit"],
+                  [[pid, f"{l['days']} ({l['span_days']})", f"{fmt(l['due_median'], 0)} / {l['due_max']}",
+                    f"{fmt(l['overdue_median'], 0)} / {l['overdue_max']}", l["days_with_backlog"], l["oldest_overdue_max"],
+                    f"{l['days_held']} ({l['held_max']})",
+                    f"{fmt(l['overdue_first30'], 1)} → {fmt(l['overdue_last30'], 1)}",
+                    fmt(l["overdue_trend_per_30d"], 1), ", ".join(str(x) for x in l["limits"]) or "–"]
+                   for pid, l in load.items() if l["days"]])
+    elif all((e.data.get("exportVersion") or 0) < 15 for e in exports):
+        rep.p("**Daily load:** no snapshots. The day's load is logged from export version 15; these files predate it.")
+    else:
+        rep.p("**Daily load:** no snapshots in these files. One is written each day the app opens or its 6-hourly "
+              "worker runs.")
 
     # ---- calibration -----------------------------------------------------------------------------------
     rep.h("4. Calibration: does predicted recall match reported recall?")
@@ -1735,7 +1825,8 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
                 "topics", "active_topics", "logs", "first_studies", "recalls", "span_days", "active_days",
                 "overdue_at_export", "overdue_7d_at_export", "consistency_issues", "scale_raw", "scale_raw_ci", "scale_app",
                 "reminder_days", "days_without_reminder", "reminder_fires", "late_reminders", "safety_net_reminders",
-                "reminder_health_problems", "opened_from_reminder", "reviewed_after_reminder", "rating_corrections"]
+                "reminder_health_problems", "opened_from_reminder", "reviewed_after_reminder", "rating_corrections",
+                "snapshot_days", "median_overdue", "max_overdue", "days_held_back", "overdue_trend_per_30d", "app_builds"]
         w = csv.writer(f)
         w.writerow(keys)
         for pid, i in summary["participants"].items():

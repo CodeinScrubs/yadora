@@ -237,12 +237,22 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     var retention by remember { mutableStateOf(sharedPrefs.getFloat("desired_retention", 0.90f)) }
 
     val exportScope = rememberCoroutineScope()
+    // What a long file operation is doing, shown while it runs. With a year of study (thousands of topics, tens of
+    // thousands of reviews) a restore or an export takes many seconds on a phone, and a screen that shows nothing for
+    // that long looks frozen; leaving it then cannot stop the work, which runs to the end either way.
+    var busyMessage by remember { mutableStateOf<String?>(null) }
+    val preparingFile = when (language) { "fa" -> "در حال آماده‌سازی فایل…"; "de" -> "Datei wird vorbereitet …"; else -> "Preparing the file…" }
     val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
             exportScope.launch {
-                val ok = writePickedDocument(context, uri) { com.example.data.AnalyticsExporter.writeJson(context, it) }
+                busyMessage = preparingFile
+                val ok = try {
+                    writePickedDocument(context, uri) { com.example.data.AnalyticsExporter.writeJson(context, it) }
+                } finally {
+                    busyMessage = null
+                }
                 android.widget.Toast.makeText(context, if (ok) (when (language) { "fa" -> "خروجی ذخیره شد"; "de" -> "Exportiert"; else -> "Exported" }) else (when (language) { "fa" -> "خروجی ناموفق بود"; "de" -> "Export fehlgeschlagen"; else -> "Export failed" }), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
@@ -274,7 +284,12 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     ) { uri ->
         if (uri != null) {
             exportScope.launch {
-                val ok = writePickedDocument(context, uri) { com.example.data.BackupManager.writeBackup(context, it) }
+                busyMessage = preparingFile
+                val ok = try {
+                    writePickedDocument(context, uri) { com.example.data.BackupManager.writeBackup(context, it) }
+                } finally {
+                    busyMessage = null
+                }
                 // A backup made by hand quiets Today's automatic-backup suggestion for a month.
                 if (ok) NotificationScheduler.transientPrefs(context).edit {
                     putLong(com.example.data.AutoBackup.PREF_LAST_MANUAL_AT, System.currentTimeMillis())
@@ -298,22 +313,27 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     val uri = pendingImportUri ?: return@TextButton
                     pendingImportUri = null
                     exportScope.launch {
+                        busyMessage = when (language) { "fa" -> "در حال بازیابی… یادورا را باز نگه دار."; "de" -> "Wiederherstellung läuft … lass Yadora geöffnet."; else -> "Restoring… keep Yadora open." }
                         // Streamed from the file, validated in full before anything is replaced, and not
                         // cancellable half-way: a restore either completes or never touches the data. The
                         // reminder re-arm and the widget refresh belong to the restore, so they run inside the
                         // same block: leaving Settings mid-restore cancels this scope, and a cancelled
                         // withContext throws on return, which used to skip them and leave the reminders armed
                         // for the old data and the widget showing it.
-                        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
-                            val restored = runCatching {
-                                com.example.data.BackupManager.openPicked(context, uri)
-                                    .use { com.example.data.BackupManager.restoreFromStream(context, it) }
+                        val result = try {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                                val restored = runCatching {
+                                    com.example.data.BackupManager.openPicked(context, uri)
+                                        .use { com.example.data.BackupManager.restoreFromStream(context, it) }
+                                }
+                                if (restored.isSuccess) {
+                                    runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
+                                    runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
+                                }
+                                restored
                             }
-                            if (restored.isSuccess) {
-                                runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
-                                runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
-                            }
-                            restored
+                        } finally {
+                            busyMessage = null
                         }
                         val count = result.getOrNull()
                         if (count != null) {
@@ -342,6 +362,23 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 }) { Text(if (language == "fa") "بازیابی" else if (language == "de") "Wiederherstellen" else "Restore") }
             },
             dismissButton = { TextButton(onClick = { pendingImportUri = null }) { Text(strings.cancel) } }
+        )
+    }
+
+    busyMessage?.let { message ->
+        AlertDialog(
+            // Not dismissable: the work runs to the end whatever the screen does, so a dialog that could be closed would
+            // only hide it, and a second tap could start another operation on top of it.
+            onDismissRequest = {},
+            confirmButton = {},
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(message, style = MaterialTheme.typography.bodyLarge)
+                }
+            },
+            properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
         )
     }
 
@@ -1159,7 +1196,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 // Honest scope: countdown only. The exam date is decorative BY DESIGN (settled decision):
                 // it never compresses intervals, so the copy must not promise that it will one day.
                 Text(
-                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی امتحان: هدف به‌خاطرسپاری را روی ۹۰٪ نگه دار و در چهار هفتهٔ آخر، بعد از مرورهای هر روز، «مرور جلوتر از برنامه» را در صفحهٔ امروز بزن (ضعیف‌ترین مباحث اول). در شبیه‌سازی دوساله، این کار تقریباً همهٔ مباحث را روز امتحان به ۹۰٪ یا بیشتر رساند. بالا بردن هدف به‌جای آن، مرور بیشتری خواست و نتیجهٔ کمتری داشت." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für die Prüfung: Lass das Behaltensziel bei 90 % und nutze in den letzten vier Wochen nach den fälligen Wiederholungen auf „Heute“ „Vorausarbeiten“ (die schwächsten Themen zuerst). In einer Zwei-Jahres-Simulation brachte das fast jedes Thema am Prüfungstag auf 90 % oder mehr. Ein höheres Ziel stattdessen kostete mehr Wiederholungen und brachte weniger." else "Only a countdown on the screens — it doesn't change your review schedule. For the exam: keep the retention target at 90% and, in the last four weeks, after each day's reviews, use Review ahead on Today (weakest topics first). In a two-year simulation that brought nearly every topic to 90% or more on exam day. Raising the target instead cost more reviews and did less.",
+                    if (language == "fa") "فقط شمارش معکوس روی صفحه‌ها نشان داده می‌شود؛ برنامهٔ مرورها را تغییر نمی‌دهد. برای آمادگی امتحان: هدف به‌خاطرسپاری را روی ۹۰٪ نگه دار و هر وقت بعد از مرورهای روز وقت اضافه داشتی، به‌خصوص در چهار هفتهٔ آخر، «مرور جلوتر از برنامه» را در صفحهٔ امروز بزن (ضعیف‌ترین مباحث اول). در شبیه‌سازی دوساله، این کار تقریباً همهٔ مباحث را روز امتحان به ۹۰٪ یا بیشتر رساند. بالا بردن هدف به‌جای آن، مرور بیشتری خواست و نتیجهٔ کمتری داشت." else if (language == "de") "Nur ein Countdown auf den Bildschirmen — er ändert deinen Wiederholungsplan nicht. Für die Prüfung: Lass das Behaltensziel bei 90 % und nutze nach den fälligen Wiederholungen auf „Heute“ „Vorausarbeiten“, wann immer Zeit übrig ist (die schwächsten Themen zuerst), vor allem in den letzten vier Wochen. In einer Zwei-Jahres-Simulation brachte das fast jedes Thema am Prüfungstag auf 90 % oder mehr. Ein höheres Ziel stattdessen kostete mehr Wiederholungen und brachte weniger." else "Only a countdown on the screens — it doesn't change your review schedule. For the exam: keep the retention target at 90% and, after the day's reviews, use Review ahead on Today whenever you have time left (weakest topics first), above all in the last four weeks. In a two-year simulation that brought nearly every topic to 90% or more on exam day. Raising the target instead cost more reviews and did less.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1240,8 +1277,13 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         sharing = true
                         exportScope.launch {
                           try {
-                            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching { com.example.data.AnalyticsExporter.writeShareableFile(context) }.getOrNull()
+                            busyMessage = preparingFile
+                            val file = try {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { com.example.data.AnalyticsExporter.writeShareableFile(context) }.getOrNull()
+                                }
+                            } finally {
+                                busyMessage = null
                             }
                             val shared = file != null && runCatching {
                                 val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)

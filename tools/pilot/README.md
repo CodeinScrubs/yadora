@@ -10,6 +10,7 @@ simulation results.
 | `simulate.py` | The identical-twins simulation: a year of study, Yadora vs review without a schedule at equal time, across learner types, rating honesty, missed days, cramming and retention targets. |
 | `experiments.py` | One scheduling choice at a time against its alternatives: queue order under a binding limit, the relearn step, the first-study cap, the maximum interval, a difficulty-adaptive target. Workload-changing choices are compared at equal time. |
 | `residency.py` | Two years to an exam: Yadora's strategies (default, a final Review-ahead push, a higher target) against random and oldest-first review, a fixed-interval ladder and plain FSRS-6, all at the Yadora twin's review time. Reports the average recall on exam day, the share of topics at 90%+ and the weakest tenth. |
+| `one_exam.py` | One exam, one year, a fixed daily budget and a finite syllabus: how to split the day between new material and reviews, which target leaves the most on exam day, and what spare time on Review ahead is worth (RESEARCH.md §2.8). Never-studied topics count 0. |
 | `yadora_model.py` | FSRS-6 and Yadora's scheduling rules, transcribed from the Kotlin sources. Both tools use it. |
 | `test_yadora_model.py` | Checks the transcription against the py-fsrs 6.3.1 goldens the app is tested with, and against kotlin-stdlib's RNG (`kotlin_fuzz_reference.json`) for the interval fuzz. |
 | `test_analyze.py` | Runs `analyze.py` on `fixtures/sample_export.json`, a real app export, and checks every log replays exactly and that tampering is caught. |

@@ -56,6 +56,12 @@ class MainActivity : ComponentActivity() {
     enableEdgeToEdge()
     val app = application as MedReviewApplication
     if (savedInstanceState == null) logOpen(intent)
+    // For the analysis: the first run of a new build, and the day's load if the safety worker has not written it yet
+    // today (AppVersionLog, DailySnapshot). Both are best effort and never throw.
+    lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+      com.example.data.AppVersionLog.recordIfChanged(app)
+      com.example.data.DailySnapshot.recordOnce(app)
+    }
     runCatching { com.example.notifications.AlarmRingActivity.dismissActive() } // opening the app silences a ringing alarm
     com.example.widget.DueWidgetProvider.updateAll(this) // keep the home-screen count fresh on open
     if (intent?.getBooleanExtra("open_review", false) == true) {
