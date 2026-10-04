@@ -120,8 +120,9 @@ internal fun previewReturnDays(
     val memoryInterval = MedScheduler.fuzzedInterval(
         outcome.intervalDays, outcome.baseIntervalDays, unit.id, unit.reviewCount, isFirstStudy = reviewNumber == 0,
     )
-    // The date that actually applies: the earlier of the memory prediction and the understanding repair deadline.
-    return minOf(memoryInterval, outcome.remediationDays ?: Double.MAX_VALUE)
+    // The date that actually applies: the earlier of the memory prediction and the understanding repair deadline, kept by
+    // the same rule the commit applies (MedScheduler.repairDays).
+    return minOf(memoryInterval, MedScheduler.repairDays(outcome, memory, memoryInterval, MedScheduler.POLICY_VERSION) ?: Double.MAX_VALUE)
 }
 
 /**

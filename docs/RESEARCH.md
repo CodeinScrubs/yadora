@@ -339,15 +339,17 @@ the defaults misjudge) and the final push, which a plain FSRS app has no feature
 
 **Checked on the real code.** `TwoYearSoakTest` runs the same case through the app itself:
 
-- **What it runs:** 730 days, 2,432 topics and 24,673 reviews, through the review screen's own commit path, with
+- **What it runs:** 730 days, 2,432 topics and 24,631 reviews, through the review screen's own commit path, with
   today's plan, the daily limit, the queue order, the calibration refresh, deferrals, a holiday and 40 Review ahead
   topics a day in the last four weeks.
-- **Exam day:** 96.9% recall, with every topic at 90%+ and the weakest tenth at 93.1%. The twin who spent the same
-  time on random reviews reaches 90.6%. (Before the calibration stopped lengthening intervals: 96.6%, 92.7% and
+- **Exam day:** 96.8% recall, with every topic at 90%+ and the weakest tenth at 93.1%. The twin who spent the same
+  time on random reviews reaches 91.0%. (Before the calibration stopped lengthening intervals: 96.6%, 92.7% and
   22,804 reviews. The 2026-09-29 queue order left recall and the weakest tenth where they were, 96.9% and 93.1%; it
-  changed which random draw each review gets, and the run did 1.4% more reviews, 24,673 against 24,335.)
+  changed which random draw each review gets, and the run did 1.4% more reviews, 24,673 against 24,335. Policy
+  YADORA-7, 2026-10-04, which keeps a repair date inside the fuzz band, changed the draws again: 96.9% and 90.6%
+  before it.)
 - **Every invariant held** on every day.
-- **Independent replay:** the export replays 27,105 of 27,105 logs exactly in `analyze.py`. CI runs that replay on
+- **Independent replay:** the export replays 27,063 of 27,063 logs exactly in `analyze.py`. CI runs that replay on
   every change.
 
 ### 2.6 What the simulation cannot tell
@@ -378,7 +380,7 @@ a topic reviewed twice on one calendar day and rated Hard. Intervals are whole d
 topic again on a later day (the one exception: a review in the first hour of a daylight-saving fall-back day,
 where a one-day interval comes due that evening; Iran has no DST). Since 2026-09-28 Review ahead leaves out
 topics reviewed today too, so in practice only a deliberate second review from the Library reaches it (none in
-the 24,673 reviews of `TwoYearSoakTest`). The pin stays at 6.3.1.
+the 24,631 reviews of `TwoYearSoakTest`). The pin stays at 6.3.1.
 
 **Headroom.** An ORACLE twin schedules from the learner's true memory (true stability, true curve, true speed
 of forgetting) under the same product rules and the same scheduling rule, one fixed target. No model can know
@@ -507,7 +509,8 @@ studied at least once, unless a share is given):
   is worth 20–45 points there, and the target then moves the score by about one point. With time to spare (45 units)
   nothing matters much. In the app the split is the daily limit, and doing the day's new material before "Review more
   anyway". The price of protecting new material is the tail: at 20 units and 40%, the weakest tenth sits at 57–68%,
-  against 86–95% for the topics a reviews-first learner covered.
+  against 86–95% for the topics a reviews-first learner covered. (The weakest tenth counts studied topics only, so a
+  high one can sit beside half a syllabus never studied; the exam score counts every topic.)
 - **The same held** for a learner who forgets 1.7× faster (at 30 units: 89.7 / 81.2 / 59.4 reviews first, 92.8–94.6
   with the share protected), for a first study costing 5 units, and for 1,600 topics, where 30 units a day cannot
   cover the syllabus with reviews first (58% at 0.90) and covers it with 40% protected (86.5%), and 45 units reaches
@@ -516,9 +519,13 @@ studied at least once, unless a share is given):
   after the day's reviews brings 98.7% on exam day when it goes to Review ahead and 95.0% when it is left unused; a
   0.95 target without Review ahead reaches 97.6%. At 70 units: 99.3% against 95.1% and 97.7%. So Review ahead pays
   whenever time is left, not only in the last four weeks (§2.5 tested only those). Today's caption says so since
-  2026-10-03.
+  2026-10-03. Compared with leaving the time unused or raising the target only: in this model new material stops at
+  10 topics a day, so it was never weighed against more new material, a block of new questions or fixing a concept
+  (an outside audit, 2026-10-04, rightly said so).
 - **Switching the target in phases** (0.85 or 0.90 until the syllabus is covered, then 0.95 or 0.97) never beat the
-  best flat target by more than 0.1 point, and 0.90 then 0.97 cost about 3 points on the weakest tenth.
+  best flat target by more than 0.1 point, and 0.90 then 0.97 cost about 3 points on the weakest tenth. That is about
+  the retention TARGET only; it says nothing about phases of study (a QB pass, a base-book pass, rapid review), which
+  the model does not contain.
 - **Feasibility is the real risk.** If a review of one chapter-sized topic takes 10–15 minutes, seven hours is about
   28–42 units. Around 30 is the edge for 1,000 topics. For 1,600, 30 units covers the syllabus only with new material
   protected (86.5% on exam day), and 45 units reaches 95–96%. For **2,000 topics**, the owner's own target (run
@@ -530,8 +537,9 @@ studied at least once, unless a share is given):
   | 45 | 79.9 / 70.5 / 50.1 (86 / 74 / 51%) | 91.7 / 92.1 / 91.9 |
   | 70 | 97.6 / 97.5 / 77.2 | 97.6 / 97.6 / 97.5 |
 
-  Thirty units a day cannot cover 2,000 topics, 45 does only with new material protected, and 70 is comfortable at any
-  target. Seven hours is 70 units only if a review averages about six minutes (a skim, a block of questions, a
+  Thirty units a day cannot cover 2,000 topics, 45 does only with new material protected, and 70 does with new
+  material protected at any target, or reviews first at 0.85–0.90; at 0.95 with reviews first a fifth of the syllabus
+  is never studied (77.2%), so even with 70 units a higher target is not free. Seven hours is 70 units only if a review averages about six minutes (a skim, a block of questions, a
   rapid-review page, not a reread of the chapter), and the model charges a first study only three reviews' time, less
   than a first reading of a chapter takes, so a real budget is tighter still. Time per review is the number that
   decides the year, and the app does not measure it (by the owner's choice). Only the logs can show which side of
@@ -620,8 +628,10 @@ anyone into a change. Ranked by how much they matter to the twin claim:
 6. **A pooled refit** (D5): do fitted weights predict held-out reviews better than the defaults?
 
 Afterwards, rerun the twin simulation with the fitted weights as the true memory:
-`python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json`. That answers the twin
-question for the pilot's real learners rather than for an average Anki user.
+`python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json`. That gives the twin result for
+learners whose memory those weights describe, rather than for an average Anki user. It is still a simulation: the fit
+learns from the learners' own ratings, so it describes how they rate as much as how they remember (an outside audit,
+2026-10-04), and only a study with a comparison (§5.1) measures the twin question itself.
 
 ### 5.1 The study that would test the goal (after the pilot; not decided)
 
@@ -633,7 +643,9 @@ expect):
 - **Randomise topics within each student.** Each student's topics are split at random between Yadora's schedule and
   the comparison, so ability, motivation and hours cancel. Splitting students instead needs several times more of
   them. Every arm reviews (nothing is withheld), the app times nothing, and "equal study" is held as an equal number
-  of reviews per topic, counted from the logs.
+  of reviews per topic, counted from the logs. An equal count is not equal time: a review after a lapse, a reread and
+  a skim cost different minutes, so the study should also record the time each arm took where it can, and report the
+  difference instead of assuming none (an outside audit, 2026-10-04).
 - **The comparison decides whether the study is feasible.** Against a fixed ladder (§2.5 tested 1, 3, 7, 14, 30, 60,
   120, 240 and 365 days), the averages came within about 1 point (+0.2 to +1.4); the gain is in the weakest tenth of
   topics (72–83% against 90–92%). Against the student's own unscheduled review, §2 expects 5 to 8 points. A study powered for 5 points will

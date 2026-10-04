@@ -400,7 +400,7 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and this one only touches a topic reviewed twice on one calendar day and rated Hard, where it cuts
   stability by more than half, 100 days to 45. The app almost never produces that: the daily plan offers
   a topic again only on a later day, Review ahead leaves out topics reviewed today (2026-09-28), and the
-  soak's 24,673 reviews contain none. What remains is a deliberate second review from the Library and the
+  soak's 24,631 reviews contain none. What remains is a deliberate second review from the Library and the
   fall-back-night hour in the due-date entry above); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
   stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
@@ -423,9 +423,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
   An outside audit (2026-09-27) showed the shift can matter: two reviews an hour apart across midnight
   became a same-day pair after a move, and the current interval went from 40 to 26 days. Since then an
   UNCHANGED rating correction replays nothing, so only a real correction made after a move can shift a
-  history; the complete fix is a per-log day or zone record (a schema change), not taken yet. A clock set BACK
-  between two reviews no longer reorders a replay (saved order since 2026-10-03, entry "A topic's history is walked
-  in the order it was saved").
+  history. FIXED 2026-10-04 without a schema change: every replay (a correction, the move onto a new weight set, the
+  personal model's training data) reads back each FSRS-6 recall's own stored day count (`MedScheduler.storedModelDays`,
+  `replayElapsedDays`; a merged history is still counted again, since its copies' counts run from their own reviews),
+  and TIME_ZONE events record the phone's zone, so `analyze.py` counts each review in the zone it was made in. The
+  live rule is unchanged: a review counts its days in the zone the phone is in then. A clock set BACK between two
+  reviews no longer reorders a replay (saved order since 2026-10-03, entry "A topic's history is walked in the order
+  it was saved").
 - **FSRS-6 is fed COMPLETED WHOLE DAYS** (`MedScheduler.completedModelDays`). The reference
   measures a review's age in whole days and the weights were fitted that way, so fractional
   elapsed time runs the model outside its fitted domain — and on a day-granularity app it also
@@ -473,7 +477,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **The repair clock BACKS OFF** (POLICY `YADORA-6`, user-chosen 2026-09-14). Each consecutive
   answer that leaves understanding unrepaired (Partial/Confused on a successful recall — a lapse or
   a Clear ends the streak) doubles the deadline (3 → 6 → 12 → 24 d), and a deadline that would not
-  beat the memory date is dropped (`remediationDays` returns null). A two-year simulation showed
+  beat the memory date is dropped (`remediationDays` returns null; since YADORA-7, 2026-10-04, the date as finally
+  scheduled, fuzz included: `MedScheduler.repairDays`). A two-year simulation showed
   the flat clock looping a topic every three days forever while its memory date sat months out; a
   repair asked for and not done is evidence that re-quizzing is not fixing it. The streak is
   derived from the logs (`MedScheduler.unrepairedStreak`) by the preview, the commit AND the replay
@@ -514,7 +519,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   predictions with outcomes; the corrected predictions agree with them by construction. Both leave out the predictions
   a rating correction recomputed (every later review of the corrected topic that existed by then, read from its
   RATING_CORRECTED event: `data/RecomputedPredictions`, 2026-10-03), as `analyze.py` does; a correction made before that
-  event existed cannot be seen.
+  event existed cannot be seen. "Existed by then" is the event's `upto`, the topic's last log id in the correction's
+  transaction (since 2026-10-04), not the clock, which can have gone back since those reviews.
 - **The memory model is fitted to the learner — a PERSONAL WEIGHT SET — only when their own later
   reviews prove it predicts better** (DB v9, `domain/srs/Fsrs6Optimizer`, `memory_parameter_sets`,
   `data/PersonalModelWorker`). Once a day (battery not low, Settings switch on) the repository rebuilds
@@ -553,7 +559,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   the calibrated baseline after a calibration of x0.51 gave way to a set at x0.70; it was built, measured and reverted
   the same day): one calibration number cannot bend the curve, so for a learner who forgets more steeply it
   over-shortens, often to its x0.5 floor, and a calibrated baseline would refuse 22 of 40 such learners' sets that
-  predict better (`Fsrs6OptimizerGateTest`). Either way no learner is scheduled longer than the defaults. An ACTIVE set
+  predict better (`Fsrs6OptimizerGateTest`). Either way no learner is scheduled longer than the defaults ON AVERAGE: the
+  check is the geometric mean of the next intervals' ratios, so single topics can come out longer (an outside audit,
+  2026-10-04, built a set at 0.98 on average with Good at 1.25; a per-topic ceiling would refuse sets that predict
+  better, and is the owner's call). An ACTIVE set
   whose first-rating grades are out of order (adopted before 2026-10-02, or restored from such a file) is retired when
   the model is loaded, with a PERSONAL_MODEL_RETIRED event; it stays readable for replay. Model identity is now (model, weight set):
   `study_units.parameterSetId` and `review_logs.parameterSetId`, 0 = the published defaults. Every
@@ -680,9 +689,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   state the topic never had. All of them walk saved order now, and so does `analyze.py` (`history_order`); for an
   ordinary history the two orders are identical, so nothing else moved. `ReplayEqualsLiveTest` pins live == replay with
   the clock set back, and the pilot fixture carries such a topic, so `test_analyze.py` checks that the toolkit agrees.
-  Still recomputed in the CURRENT zone: elapsed days after a time-zone move (the calendar-days entry). Each log's stored
-  `elapsedDays` would fix that, except that a merged history re-anchors at exposures by design; left for a considered
-  change.
+  Elapsed days after a time-zone move: fixed 2026-10-04 (replays read each review's stored day count; the
+  calendar-days entry).
 - **Projection FAILS CLOSED.** `advanceUnit` used to fall back to the raw row when
   `projectOntoCurrentModel` threw — an FSRS-5 stability behind a preview that computes FSRS-6
   intervals, exactly the mismatch the projection exists to prevent. A topic whose history cannot be
@@ -801,7 +809,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   repair backoff). Logs store the version, the applied understanding factor and the calibration
   scale; replay honors the stored values and the stamped policy's rules for untouched rows.
   Calibration constants (prior, window, clamps, evidence rules) do NOT bump it: nothing replays
-  them, because every log already stores the scale it was scheduled with. Currently `YADORA-6`.
+  them, because every log already stores the scale it was scheduled with. Currently `YADORA-7` (2026-10-04: a repair
+  deadline is kept when it beats the memory interval as finally scheduled, fuzz included; YADORA-6 compared it before
+  the fuzz).
 - **Behaviour changes are simulated before they are argued.** A two-year simulated student
   (honest ratings drawn from a true memory that may forget faster or slower than the defaults,
   a daily limit, a holiday, the Spread-Out button) found the Partial loop and the leech spiral
@@ -907,12 +917,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
     self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
     live row; and the twin claim holds on the real schedule.
-  - **Measured:** exam-day recall 96.9% against 90.6% for a random-review twin at equal time (the twin's time
+  - **Measured:** exam-day recall 96.8% against 91.0% for a random-review twin at equal time (the twin's time
     matches Yadora's to within one review since 2026-09-27; before, it got a few percent more and scored 90.1%);
-    100% of topics at 90%+; weakest tenth 93.1%; 24,673 reviews. (Before the calibration stopped lengthening
+    100% of topics at 90%+; weakest tenth 93.1%; 24,631 reviews. (Before the calibration stopped lengthening
     intervals, 2026-09-28: 96.6%, 92.7% and 22,804 reviews. The 2026-09-29 queue order changed neither figure at
-    this limit, which rarely binds; it changed which random draw each review gets, and the count, from 24,335.)
-  - **CI:** `analyze.py` replays the export (27,105 logs, all exact) in the "Pilot toolkit agrees with the app"
+    this limit, which rarely binds; it changed which random draw each review gets, and the count, from 24,335. YADORA-7,
+    2026-10-04, did the same: 96.9%, 90.6% and 24,673 before it.)
+  - **CI:** `analyze.py` replays the export (27,063 logs, all exact) in the "Pilot toolkit agrees with the app"
     step, and exits non-zero on a single mismatch. Runtime is about 65 s.
   - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
     measured numbers, re-measure and record why.
@@ -1212,7 +1223,7 @@ These were decided deliberately. Re-suggesting them wastes a session:
     logs differently from what happened (the live path clamps the gap to 0; replay sorts by time), so a later
     correction or a new weight set rebuilds a different state. Rare (a manual clock change, or a phone that boots with
     the wrong date). FIXED 2026-10-03 without a schema change: histories are walked in saved order (log id).
-    The repair deadline is dropped when it does not beat the memory interval BEFORE fuzz, so in a 5% band a topic can
+    (FIXED 2026-10-04 in YADORA-7.) The repair deadline is dropped when it does not beat the memory interval BEFORE fuzz, so in a 5% band a topic can
     come back up to 5% later than its repair date would have; changing it is a replayed rule, for the next POLICY
     bump. Within one weight set a correction's replayed predictions counted as the APP's calibration evidence: FIXED
     2026-10-03 without a schema change. Every correction is logged (RATING_CORRECTED, with the answer it replaced), and
@@ -1426,7 +1437,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     - ALG-01 / ENG-03 / C02: an adopted set can schedule longer than the calibrated intervals it replaces (its case: one
       topic 1.26 → 1.91 days), never longer than the defaults. The stricter baseline would refuse 22 of 40 sets that
       predict better (the personal-set entry).
-    - MATH-02 / ENG-04 / C03: the repair deadline is dropped before fuzz. Known; for the next policy bump.
+    - MATH-02 / ENG-04 / C03: the repair deadline is dropped before fuzz. Fixed 2026-10-04 in YADORA-7 (the eleventh
+      report's entry).
     - B1, MATH-05 / ENG-06: an equal review count is not equal time in `experiments.py`, and `simulate.py`'s other twin
       can end with unspent time. Known and labelled (the 2026-09-30 to 10-02 entry).
     - C04 / ENG-08: the fit reads the first 64 steps of each topic, py-fsrs's procedure. A topic reviewed 64 times is
@@ -1480,9 +1492,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Measured on the real code** (`OwnerYearSoakTest`: Asia/Tehran, 365 days, the default limit of 50; 10% of days
     off, 15% light, 0–10 new topics on the rest; Not today, Spread out, Review more anyway, review-now including
     same-day second looks, Review ahead on spare evenings and a last-month push, rating corrections, a mid-year phone
-    change, a refit every 20 days): 1,935 topics, 14,764 reviews; exam day 96.9% against 90.7% for random review and
-    93.2% oldest-first at equal time; 99.8% of topics at 90%+, weakest tenth 93.2%, nothing overdue on exam day; every
-    refit refused (the simulated learner is the defaults' learner); the export replays all 16,699 logs exactly. CI runs
+    change, a refit every 20 days): 1,935 topics, 14,989 reviews; exam day 97.1% against 90.7% for random review and
+    93.3% oldest-first at equal time, which is measured (each twin spent what Yadora spent, to within one review); 100%
+    of topics at 90%+, weakest tenth 93.6%, nothing overdue on exam day; every refit refused (the simulated learner is
+    the defaults' learner); the export replays all 16,924 logs exactly (YADORA-7, 2026-10-04; before it 14,764 reviews,
+    96.9%). CI runs
     it and replays its export.
   - **The simulation's finding** (§2.8, model-based): with a fixed daily budget and a finite syllabus, the split of the
     day between new material and reviews decides the exam score when time is tight (20–45 points at 20 units a day),
@@ -1493,6 +1507,49 @@ These were decided deliberately. Re-suggesting them wastes a session:
     (50) and the 0.90 target stay.
   - **Not built** (the owner, 2026-10-03): a mock-exam log (the results go to the chat, to be compared with the logs),
     and a time field per review (a topic's review time varies, and that is fine).
+- **An eleventh outside report, 2026-10-04: Codex's owner-goal review and its flexible-use review** (another assistant;
+  its witnesses ran in a copy outside the repository). Every claim was checked against the code, and each reproducible
+  one re-run; each fix has a test that fails without it.
+  - **Fixed:**
+    - G01: a rating correction with the phone's clock set back since the reviews left its recomputed predictions in the
+      calibration (0.808 → 0.753 and 0.901 → 0.854 counted). The RATING_CORRECTED event records `upto`, the topic's last
+      log in the correction's transaction, and saved order decides (`RecomputedPredictions`, `analyze.py`
+      `recomputed_by`); an event without it falls back to the clock.
+    - G02: every replay counted elapsed days again in the CURRENT zone; after a zone change, reviews at 23:30 and 00:30
+      in Tehran became a same-day pair and stability fell from 7.32 to 2.31 days. Replays read back each FSRS-6 recall's
+      stored day count now (the calendar-days entry); TIME_ZONE events (`data/TimeZoneLog`: app start, foreground,
+      worker) let `analyze.py` count each review in the zone it was made in (`zone_lookup`), and its replay chain
+      follows the stored counts too, so a miscounted day is flagged on its own row. No schema change.
+    - G03: the repair deadline was compared with the memory interval before the ±5% fuzz (a 4-day repair dropped for a
+      memory date 4.05 days out). POLICY YADORA-7 compares with the final interval (`MedScheduler.repairDays`, one rule
+      for the preview, the commit and the replay); rows stamped YADORA-6 or older replay as they were given.
+      `RepairAfterFuzzTest`.
+    - G04: the daily-load trend mixed snapshots taken before and after the day's reviews (a steady backlog read +22.5 a
+      month). Snapshots carry `source`; the trend is drawn through those taken before any review that day when there are
+      14, through all otherwise, and the report says which; a count a snapshot lacks is skipped, not read as 0.
+    - F01: D3's question and PILOT.md gave only "−7/+5"; the rule since 2026-09-24 also needs over 95% recalled on the
+      upper side (a first review that early is nearly wasted; the 5-day first-study cap makes it early by design). Both
+      say so now; the rule is unchanged.
+    - F02: changes of the daily limit, the retention target and the reminder time left no trace. SETTINGS_CHANGED
+      (`data/SettingsChangeLog`, written on the application's own scope so leaving Settings loses nothing).
+    - APP_VERSION carries the install time: a test build over another with the same version code is a new build.
+    - The Persian "Strong" state read "مسلط" (mastered); it is "پایدار" (durable), as EN "Strong" and DE "Gefestigt":
+      a stability of 21+ days, not exam mastery.
+    - Claims narrowed: never-lengthen is on AVERAGE (the geometric mean; one topic can come out longer); an equal review
+      count is not equal time (RESEARCH.md §5.1); a twin run on fitted weights is still a simulation (§5); "70 units
+      comfortable at any target" needed a condition (§2.8); Review ahead was weighed only against unused time and a
+      higher target; target phases are not study phases; the weakest tenth counts studied topics only; reviewDurationMs
+      is screen time, not study time (export field guide). `OwnerYearSoakTest` now measures the twins' review time
+      (equal to within a review).
+  - **Put to the owner, not done:** the same-day Hard floor of py-fsrs 6.3.2. "Save and review now" and reviews the owner
+    chooses make a second review the same day far more reachable than when the pin was set (S 100 → 45; the report's
+    manual path 504 → 204). Adopting it is a new model identity with goldens generated by py-fsrs 6.3.2 itself, which
+    needs installing it (a download).
+  - **Kept:** original predictions beside replayed ones (the declined DB v11; corrections are logged and left out of
+    the evidence); a planner layer or a shadow queue (pilot data first); the 64-step fit window (rarely reached).
+  - **Citations:** Eglington & Pavlik 2020 (npj Science of Learning) is real; Price et al. is real (Academic Medicine
+    2025;100(1):94–102), but its "26,258 physicians" could not be confirmed (a related ABFM study reports 16,751). Nothing
+    in the app depends on either.
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).

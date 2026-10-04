@@ -146,6 +146,11 @@ class OwnerYearSoakTest {
         val oldestTwin = HashMap<Long, TrueMemory>()
         var randomDebt = 0.0
         var oldestDebt = 0.0
+        // Review time spent, in the same units (a remembered review 1, a forgotten one 1.5): "equal time" is measured, not
+        // assumed (an outside audit, 2026-10-04, noted it was never checked here).
+        var yadoraSpent = 0.0
+        var randomSpent = 0.0
+        var oldestSpent = 0.0
         val order = ArrayList<Long>()
 
         val counts = sortedMapOf<String, Int>()
@@ -340,19 +345,26 @@ class OwnerYearSoakTest {
             maxDayReviews = maxOf(maxDayReviews, dayReviews)
 
             // The twins: the same review time today, one on random topics, one always on the topic untouched longest.
-            fun spend(twin: HashMap<Long, TrueMemory>, pool: List<Long>, budget0: Double, rng: kotlin.random.Random?): Double {
+            // Returns the overspend carried into tomorrow and the time spent today.
+            fun spend(twin: HashMap<Long, TrueMemory>, pool: List<Long>, budget0: Double, rng: kotlin.random.Random?): Pair<Double, Double> {
                 var budget = budget0
+                var spent = 0.0
                 for (id in pool) {
                     if (budget <= 0) break
                     val mem = twin.getValue(id)
                     val recalled = (rng ?: rnd).nextDouble() < mem.r(d)
                     mem.update(d, if (recalled) successGrade(rng ?: rnd) else Grade.Again)
-                    budget -= if (recalled) 1.0 else 1.5
+                    val cost = if (recalled) 1.0 else 1.5
+                    budget -= cost
+                    spent += cost
                 }
-                return maxOf(0.0, -budget)
+                return maxOf(0.0, -budget) to spent
             }
-            randomDebt = spend(randomTwin, order.filter { randomTwin.getValue(it).lastDay < d }.shuffled(randomTwinRnd), dayCost - randomDebt, randomTwinRnd)
-            oldestDebt = spend(oldestTwin, order.filter { oldestTwin.getValue(it).lastDay < d }.sortedBy { oldestTwin.getValue(it).lastDay }, dayCost - oldestDebt, randomTwinRnd)
+            yadoraSpent += dayCost
+            spend(randomTwin, order.filter { randomTwin.getValue(it).lastDay < d }.shuffled(randomTwinRnd), dayCost - randomDebt, randomTwinRnd)
+                .let { (debt, spent) -> randomDebt = debt; randomSpent += spent }
+            spend(oldestTwin, order.filter { oldestTwin.getValue(it).lastDay < d }.sortedBy { oldestTwin.getValue(it).lastDay }, dayCost - oldestDebt, randomTwinRnd)
+                .let { (debt, spent) -> oldestDebt = debt; oldestSpent += spent }
         }
 
         // Exam day.
@@ -381,9 +393,14 @@ class OwnerYearSoakTest {
         println("OWNER YEAR: ${order.size} topics, $totalReviews reviews (busiest day $maxDayReviews), events $counts")
         println("OWNER YEAR: exam day recall Yadora ${"%.4f".format(yadoraMean)}, random twin ${"%.4f".format(randomMean)}, oldest-first twin ${"%.4f".format(oldestMean)}")
         println("OWNER YEAR: topics at 90%+ ${"%.4f".format(at90)}, weakest tenth ${"%.4f".format(weakestTenth)}")
+        println("OWNER YEAR: review time Yadora ${"%.1f".format(yadoraSpent)}, random twin ${"%.1f".format(randomSpent)}, oldest-first twin ${"%.1f".format(oldestSpent)}")
         println("OWNER YEAR: backlog left at night on $backlogDays days (largest $maxBacklog); on exam day ${overdueAtExam.size} topics overdue, the oldest by $worstOverdueDays days")
         println("OWNER YEAR: plan ${planMs} ms, review-ahead queue ${aheadMs} ms, export ${exportMs} ms (${json.toString().length / 1024} KB), backup ${backupMs} ms (${backup.length / 1024} KB), restore ${restoreMs} ms, refits ${refitMillis} ms")
 
+        // Equal time, measured: each twin spent what Yadora spent, to within its last day's overspend.
+        for ((name, spent) in listOf("random" to randomSpent, "oldest-first" to oldestSpent)) {
+            assertTrue("the $name twin spent $spent against Yadora's $yadoraSpent", kotlin.math.abs(spent - yadoraSpent) <= 1.5)
+        }
         // The year's schedule beats the same time spent at random, on the real code.
         assertTrue("Yadora on exam day ($yadoraMean) must beat random review at equal time ($randomMean) by 3+ points",
             yadoraMean > randomMean + 0.03)

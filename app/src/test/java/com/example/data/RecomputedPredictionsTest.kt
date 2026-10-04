@@ -17,9 +17,28 @@ class RecomputedPredictionsTest {
         previousIntervalDays = 1.0, nextIntervalDays = 2.0, previousState = "Learning", nextState = "Building",
     )
 
-    private fun correction(unit: Long?, logId: Long, at: Long) = EventLogEntity(
-        at = at, type = RecomputedPredictions.EVENT, unitId = unit, detail = "log=$logId memory=Good>Hard understanding=Clear>Clear",
+    private fun correction(unit: Long?, logId: Long, at: Long, upTo: Long? = null) = EventLogEntity(
+        at = at, type = RecomputedPredictions.EVENT, unitId = unit,
+        detail = "log=$logId" + (upTo?.let { " upto=$it" } ?: "") + " memory=Good>Hard understanding=Clear>Clear",
     )
+
+    /**
+     * The phone's clock set back between the reviews and the correction (an outside audit, 2026-10-04): the rewritten
+     * reviews carry LATER times than the correction. Saved order still tells which existed: the event's `upto`.
+     */
+    @Test
+    fun `with the clock set back, saved order decides, not the time`() {
+        // Reviews 2 and 3 were made with the clock running ahead (times 900 and 950); review 1 was corrected at time 500,
+        // after the clock was set back, when the topic's last log was 3. Review 4 came after the correction.
+        val logs = listOf(log(1, 7, 100), log(2, 7, 900), log(3, 7, 950), log(4, 7, 520))
+        assertEquals(setOf(2L, 3L), RecomputedPredictions.ids(logs, listOf(correction(7, 1, 500, upTo = 3))))
+        assertEquals("a second correction, after review 4, adds it", setOf(2L, 3L, 4L),
+            RecomputedPredictions.ids(logs, listOf(correction(7, 1, 500, upTo = 3), correction(7, 1, 530, upTo = 4))))
+        // An event from before the bound was recorded falls back to the clock, and misses both.
+        assertEquals(emptySet<Long>(), RecomputedPredictions.ids(logs, listOf(correction(7, 1, 500))))
+        assertEquals(3L, RecomputedPredictions.lastLogId("log=1 upto=3 memory=Good>Hard understanding=Clear>Clear"))
+        assertNull(RecomputedPredictions.lastLogId("log=1 memory=Good>Hard understanding=Clear>Clear"))
+    }
 
     @Test
     fun `the later reviews of the corrected topic that existed at the correction`() {

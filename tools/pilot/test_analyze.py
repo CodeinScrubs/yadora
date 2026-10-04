@@ -46,6 +46,16 @@ def run(exports_data, fit=False):
         return summary, warnings, files
 
 
+def rows_of(d):
+    """The analysed rows of one export, each with its list of mismatches."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "export.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        exports = analyze.load_exports([path], lambda w: None)
+        return analyze.build_rows(exports[0])[0]
+
+
 def fixture():
     with open(FIXTURE, encoding="utf-8") as f:
         return json.load(f)
@@ -93,6 +103,31 @@ def test_a_clock_set_back_and_a_corrected_rating_replay_exactly():
     print(f"a clock set back and a corrected rating replay exactly; {len(recomputed)} recomputed predictions left out")
 
 
+def test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed():
+    """Which predictions a correction recomputed is decided by saved order (the event's `upto`, since 2026-10-04), not
+    by the clock: with the clock set back between the reviews and the correction, the rewritten reviews carry later
+    times than the correction itself (an outside audit, 2026-10-04). The app's RecomputedPredictionsTest pins the same
+    case."""
+    logs = [dict(id=1, reviewedAt=100), dict(id=2, reviewedAt=900), dict(id=3, reviewedAt=950), dict(id=4, reviewedAt=520)]
+
+    def marked(detail, at):
+        fixes = analyze.corrections({"eventLogs": [dict(type="RATING_CORRECTED", unitId=7, at=at, detail=detail)]})[7]
+        return {l["id"] for l in logs if analyze.recomputed_by(l, fixes)}
+
+    assert marked("log=1 upto=3 memory=Good>Hard", 500) == {2, 3}
+    assert marked("log=1 memory=Good>Hard", 500) == set(), "an event without the bound falls back to the clock"
+    # The real export: its correction carries the bound, and with the clock running normally both rules agree.
+    d = fixture()
+    fix = next(e for e in d["eventLogs"] if e["type"] == "RATING_CORRECTED")
+    kv = analyze.parse_detail(fix["detail"])
+    assert "upto" in kv, f"regenerate the fixture: {fix['detail']}"
+    unit_logs = [l for l in d["reviewLogs"] if l["studyUnitId"] == fix["unitId"]]
+    by_order = {l["id"] for l in unit_logs if analyze.recomputed_by(l, analyze.corrections(d)[fix["unitId"]])}
+    by_clock = {l["id"] for l in unit_logs if l["id"] > int(kv["log"]) and l["reviewedAt"] < fix["at"]}
+    assert by_order and by_order == by_clock, (by_order, by_clock)
+    print(f"a correction marks what it recomputed by saved order ({len(by_order)} reviews), also after the clock went back")
+
+
 def test_a_tampered_interval_is_caught():
     d = fixture()
     bad = copy.deepcopy(d)
@@ -111,8 +146,17 @@ def test_a_tampered_prediction_and_elapsed_are_caught():
     recalls = [l for l in bad["reviewLogs"] if l["logType"] == "RECALL"]
     recalls[3]["retrievabilityAtReview"] *= 0.9
     recalls[7]["elapsedDays"] += 1
+    rows = rows_of(bad)
+    flagged = {r.log_id: r for r in rows if r.mismatch}
+    assert recalls[3]["id"] in flagged and recalls[7]["id"] in flagged, sorted(flagged)
+    assert any(m.startswith("elapsed") for m in flagged[recalls[7]["id"]].mismatch), flagged[recalls[7]["id"]].mismatch
+    # The replay follows each review's stored day count, as the app's own replays do (since 2026-10-04), so a count
+    # changed by hand also moves the later reviews of its topic; nothing else is flagged.
+    unit = recalls[7]["studyUnitId"]
+    for lid, r in flagged.items():
+        assert lid in (recalls[3]["id"], recalls[7]["id"]) or (r.unit_id == unit and lid > recalls[7]["id"]), (lid, r.mismatch)
     summary, _, _ = run([bad])
-    assert summary["integrity"]["mismatched"] == 2, summary["integrity"]
+    assert summary["integrity"]["mismatched"] == len(flagged) and summary["decisions"][0]["verdict"] == "BUG"
     print("a changed prediction and a changed day count are both caught")
 
 
@@ -423,6 +467,104 @@ def test_the_daily_load_and_the_app_builds_are_reported():
     print("the daily load (a growing backlog, days held back, a day without a snapshot) and each build's first day are reported")
 
 
+def test_days_are_counted_in_the_zone_the_phone_was_in():
+    """FSRS-6 counts local calendar days in the zone the phone is in at the review. Read in another zone (here +07:00,
+    where the fixture's 20:xx Tehran reviews fall on both sides of midnight), the counts differ: each is flagged on
+    its own row, and the predictions and intervals still replay exactly, because the chain follows the stored counts
+    as the app's replays do. With the phone's own TIME_ZONE record (export v15) every count matches again."""
+    d = fixture()
+    moved = copy.deepcopy(d)
+    moved["environment"]["timeZoneId"] = "Asia/Bangkok"
+    moved["environment"]["utcOffsetMinutesAtExport"] = 420
+    rows = rows_of(moved)
+    flagged = [r for r in rows if r.mismatch]
+    assert flagged, "some reviews must cross midnight at +07:00"
+    assert all(all(m.startswith("elapsed") for m in r.mismatch) for r in flagged), [r.mismatch for r in flagged][:3]
+    first = min(int(l["reviewedAt"]) for l in moved["reviewLogs"])
+    moved["eventLogs"] = sorted((moved.get("eventLogs") or []) + [
+        dict(at=first - 1, type="TIME_ZONE", unitId=None, detail="zone=Asia/Tehran offset=+03:30 previous=none"),
+        dict(at=int(moved["exportedAt"]) - 1, type="TIME_ZONE", unitId=None, detail="zone=Asia/Bangkok offset=+07:00 previous=Asia/Tehran"),
+    ], key=lambda e: e["at"])
+    summary, _, files = run([moved])
+    assert summary["integrity"]["mismatched"] == 0, summary["integrity"]
+    assert "time zones on this phone: Asia/Tehran from" in files["report.md"]
+    print(f"days are counted in the zone the phone was in ({len(flagged)} reviews read in another zone, none with its record)")
+
+
+def test_the_backlog_trend_compares_snapshots_taken_at_the_same_point_of_the_day():
+    """An outside audit's case (2026-10-04): every day starts 30 reviews behind and ends with all of them done. Sampled
+    at night for 30 days and in the morning for 30, the trend through every snapshot reads +22.5 a month where there is
+    none; through the snapshots taken before any review that day it is flat."""
+    import datetime as dt
+    d = copy.deepcopy(fixture())
+    tz, _ = analyze.zone_of(d)
+    export_day = dt.datetime.fromtimestamp(d["exportedAt"] / 1000, tz).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def at(days_back, hour):
+        return int((export_day - dt.timedelta(days=days_back)).replace(hour=hour).timestamp() * 1000)
+
+    def snapshots(with_done):
+        out = []
+        for k in range(60):
+            night = k < 30
+            overdue, done = (0, 30) if night else (30, 0)
+            out.append(dict(at=at(60 - k, 22 if night else 7), type="DAILY_SNAPSHOT", unitId=None,
+                            detail=f"active=500 rated=480 due={overdue + 5} overdue={overdue} oldest_overdue_days={1 if overdue else 0} "
+                                   f"first=0 offered={overdue + 5} held=0" + (f" done={done}" if with_done else "")
+                                   + f" deferred=0 limit=50 source={'app' if night else 'worker'}"))
+        return out
+
+    base = [e for e in d.get("eventLogs") or [] if e["type"] != "DAILY_SNAPSHOT"]
+    d["exportVersion"] = 15
+    d["eventLogs"] = sorted(base + snapshots(True), key=lambda e: e["at"])
+    summary, _, files = run([d])
+    load = summary["load"][d["participantId"]]
+    assert (load["trend_basis"], load["trend_days"]) == ("before any review that day", 30), load
+    assert abs(load["overdue_trend_per_30d"]) < 1e-9, load
+    assert load["sources"] == {"app": 30, "worker": 30}, load
+    # Without `done`, the snapshots cannot be told apart, and the trend through all of them shows the artefact, labelled.
+    d["eventLogs"] = sorted(base + snapshots(False), key=lambda e: e["at"])
+    summary, _, files = run([d])
+    load = summary["load"][d["participantId"]]
+    assert load["trend_basis"] == "all snapshots, mixed times of day" and abs(load["overdue_trend_per_30d"] - 22.5) < 0.1, load
+    assert "mixed times of day" in files["report.md"]
+    print("the backlog trend is drawn through comparable snapshots (flat), not through mixed ones (+22.5 a month)")
+
+
+def test_settings_changes_are_listed_with_their_dates():
+    d = copy.deepcopy(fixture())
+    d["eventLogs"] = sorted((d.get("eventLogs") or []) + [
+        dict(at=int(d["exportedAt"]) - 5 * 86_400_000, type="SETTINGS_CHANGED", unitId=None, detail="key=daily_review_limit old=50 new=30"),
+        dict(at=int(d["exportedAt"]) - 2 * 86_400_000, type="SETTINGS_CHANGED", unitId=None, detail="key=desired_retention old=0.90 new=0.85"),
+    ], key=lambda e: e["at"])
+    summary, _, files = run([d])
+    changes = summary["settings_changes"][d["participantId"]]
+    assert [(c["key"], c["old"], c["new"]) for c in changes] == [("daily_review_limit", "50", "30"), ("desired_retention", "0.90", "0.85")]
+    assert "settings changed:" in files["report.md"] and "daily_review_limit 50→30" in files["report.md"]
+    assert "settings_changes" in files["participants.csv"].splitlines()[0]
+    print("settings changes are listed with their dates")
+
+
+def test_d3_says_what_it_checks():
+    """D3's rule since 2026-09-24: LOOK when the first review is more than 7 points below its prediction, or more than 5
+    above it with over 95% recalled (so early it was nearly wasted). The question used to give only the band; an outside
+    audit (2026-10-04) found an OK at +8.3 points. The rule stands; the question and PILOT.md now say it."""
+    def d3(n, observed, predicted):
+        s = dict(integrity=dict(mismatched=0, consistency_issues=0), participants={}, adherence={}, understanding={},
+                 reminders={}, first_review={"Hard": dict(n=n, observed=observed, predicted=predicted)}, question_scores={},
+                 pooled_fit={}, calibration={})
+        return next(x for x in analyze.decide(s, []) if x["id"] == "D3-Hard")
+
+    assert d3(59, 0.80, 0.80)["verdict"] == "WAIT"
+    assert d3(60, 0.72, 0.80)["verdict"] == "LOOK", "8 points below: too late"
+    assert d3(60, 0.74, 0.80)["verdict"] == "OK", "6 below"
+    assert d3(604, 0.8957, 0.8124)["verdict"] == "OK", "the audit's +8.3 at 89.6%: early, not wasted"
+    assert d3(60, 0.96, 0.90)["verdict"] == "LOOK", "+6 at 96%: so early it was nearly wasted"
+    assert d3(60, 0.95, 0.89)["verdict"] == "OK", "95% itself is not over 95%"
+    assert "95%" in d3(60, 0.9, 0.9)["question"]
+    print("D3's question states both sides of its rule")
+
+
 def test_a_backup_is_refused_with_an_explanation():
     backup = {"backupVersion": 9, "studyUnits": [], "reviewLogs": [], "subjects": []}
     backup.pop("reviewLogs")
@@ -594,6 +736,7 @@ def test_each_learner_s_personal_set_is_its_own_calibration_group():
 if __name__ == "__main__":
     test_real_export_replays_exactly()
     test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
+    test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed()
     test_a_tampered_interval_is_caught()
     test_a_tampered_prediction_and_elapsed_are_caught()
     test_several_participants_and_duplicates()
@@ -607,6 +750,10 @@ if __name__ == "__main__":
     test_subjects_and_the_spread_between_learners_are_reported()
     test_reminder_delivery_finds_the_days_a_phone_never_reminded()
     test_the_daily_load_and_the_app_builds_are_reported()
+    test_days_are_counted_in_the_zone_the_phone_was_in()
+    test_the_backlog_trend_compares_snapshots_taken_at_the_same_point_of_the_day()
+    test_settings_changes_are_listed_with_their_dates()
+    test_d3_says_what_it_checks()
     test_a_backup_is_refused_with_an_explanation()
     test_a_file_saved_with_a_byte_order_mark_still_loads()
     test_fitted_weights_saved_with_a_byte_order_mark_still_load_in_the_simulation()

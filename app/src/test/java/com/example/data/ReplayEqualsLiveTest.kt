@@ -509,6 +509,63 @@ class ReplayEqualsLiveTest {
         assertEquals("lastReviewedAt", live.lastReviewedAt, replayed.lastReviewedAt)
     }
 
+    /**
+     * A replay after the phone's time zone changed (an outside audit, 2026-10-04). Two reviews at 23:30 and 00:30 in
+     * Tehran are a calendar day apart; counted again in UTC they fall on one day, and the replay used to rebuild a
+     * stability of 2.31 days where the live one was 7.32. Every replay now reads back each review's own day count
+     * (MedScheduler.storedModelDays): a rating correction, the move onto a new weight set and the personal model's
+     * training data all rebuild the history the topic actually had.
+     */
+    @Test
+    fun `replay equals live after the phone's time zone changed`() = runBlocking {
+        val savedZone = java.util.TimeZone.getDefault()
+        val savedActive = MedScheduler.activeParameterSet
+        val savedKnown = MedScheduler.knownParameterSets
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tehran"))
+            val zone = java.time.ZoneId.of("Asia/Tehran")
+            val day = java.time.LocalDate.now(zone).minusDays(30)
+            fun at(daysAfter: Long, hour: Int, minute: Int): Long =
+                day.plusDays(daysAfter).atTime(hour, minute).atZone(zone).toInstant().toEpochMilli()
+
+            val unitId = repo.insertUnit(newUnit("Nephritic syndrome", at(0, 22, 0)))
+            liveReview(unitId, at(0, 23, 30), MemoryRating.Good, UnderstandingRating.Clear) // first rating, 23:30
+            liveReview(unitId, at(1, 0, 30), MemoryRating.Good, UnderstandingRating.Clear) // an hour later: the next day there
+            liveReview(unitId, at(9, 20, 0), MemoryRating.Good, UnderstandingRating.Clear)
+            val live = repo.getUnitById(unitId)!!
+            val second = db.reviewLogDao().getLogsForUnitOnce(unitId).sortedBy { it.id }[1]
+            assertEquals("in Tehran the second review came a calendar day later", 1.0, second.elapsedDays, 0.0)
+
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC")) // the phone now says UTC
+            assertEquals("counted again in UTC, the two fall on one day", 0.0,
+                MedScheduler.modelElapsedDays(at(0, 23, 30), at(1, 0, 30), MedScheduler.MemoryModel.FSRS_6), 0.0)
+
+            repo.editReviewRating(unitId, -1L, MemoryRating.Good, UnderstandingRating.Clear) // a pure replay
+            val replayed = repo.getUnitById(unitId)!!
+            assertEquals("stability", live.stability, replayed.stability, 1e-9)
+            assertEquals("difficulty", live.difficulty, replayed.difficulty, 1e-9)
+            assertEquals("interval", live.currentIntervalDays, replayed.currentIntervalDays, 1e-9)
+            assertEquals("nextReviewAt", live.nextReviewAt, replayed.nextReviewAt)
+            assertEquals("and the second review keeps its day", 1.0,
+                db.reviewLogDao().getLogsForUnitOnce(unitId).first { it.id == second.id }.elapsedDays, 0.0)
+
+            // The personal model's training data counts the same days.
+            assertEquals(1.0, repo.trainingHistories().single().elapsedDays[1], 0.0)
+
+            // A new weight set (the defaults' numbers under another id): the topic crosses to it by replaying its history.
+            MedScheduler.knownParameterSets = mapOf(5L to com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS)
+            MedScheduler.activeParameterSet = MedScheduler.ParameterSet(5L, com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS)
+            val projected = repo.projectOntoCurrentModel(repo.getUnitById(unitId)!!)
+            assertEquals("crossed onto the new set", 5L, projected.parameterSetId)
+            assertEquals("with the state it had", live.stability, projected.stability, 1e-9)
+            assertEquals(live.difficulty, projected.difficulty, 1e-9)
+        } finally {
+            java.util.TimeZone.setDefault(savedZone)
+            MedScheduler.activeParameterSet = savedActive
+            MedScheduler.knownParameterSets = savedKnown
+        }
+    }
+
     /** A correction rewrites the log in place; the answer it replaced is kept as an event (2026-10-03). */
     @Test
     fun `a correction records the answer it replaced, and nothing else does`() = runBlocking {
@@ -517,7 +574,7 @@ class ReplayEqualsLiveTest {
         val unitId = repo.insertUnit(newUnit("Hyponatraemia", now - 20 * day))
         liveReview(unitId, now - 20 * day + 60_000, MemoryRating.Good, UnderstandingRating.Clear)
         val second = liveReview(unitId, now - 15 * day, MemoryRating.Good, UnderstandingRating.Clear)
-        liveReview(unitId, now - 5 * day, MemoryRating.Easy, UnderstandingRating.Clear)
+        val last = liveReview(unitId, now - 5 * day, MemoryRating.Easy, UnderstandingRating.Clear)
         fun corrections() = runBlocking { db.eventLogDao().getAll().filter { it.type == "RATING_CORRECTED" } }
 
         repo.editReviewRating(unitId, -1L, MemoryRating.Good, UnderstandingRating.Clear) // a pure replay
@@ -527,7 +584,8 @@ class ReplayEqualsLiveTest {
         repo.editReviewRating(unitId, second, MemoryRating.Forgot, UnderstandingRating.Partial)
         val recorded = corrections().single()
         assertEquals(unitId, recorded.unitId)
-        assertEquals("log=$second memory=Good>Forgot understanding=Clear>Partial", recorded.detail)
+        // upto: the topic's last log the replay rewrote, so which predictions it recomputed is known without the clock.
+        assertEquals("log=$second upto=$last memory=Good>Forgot understanding=Clear>Partial", recorded.detail)
         assertEquals("and the log holds the new answer", "Forgot", db.reviewLogDao().getLogsForUnitOnce(unitId).first { it.id == second }.memoryRating)
     }
 

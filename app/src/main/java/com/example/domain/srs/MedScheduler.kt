@@ -273,6 +273,29 @@ object MedScheduler {
         else -> true
     }
 
+    /**
+     * Does the policy that produced a log keep a repair deadline by comparing it with the memory interval as finally
+     * scheduled, the ±5% fuzz included? Only YADORA-7 onward does; older rows replay the comparison they were given,
+     * before the fuzz. Blank means a pre-v5 row, which replays under the current policy like the rest of the code.
+     */
+    fun comparesRepairAfterFuzz(policyVersion: String): Boolean = when (policyVersion) {
+        "YADORA-1", "YADORA-2", "YADORA-3", "YADORA-4", "YADORA-5", "YADORA-6" -> false
+        else -> true
+    }
+
+    /**
+     * The understanding repair deadline that applies, given the memory interval as it is finally scheduled
+     * ([finalIntervalDays], fuzz included), under [policyVersion]. One rule for the preview, the commit and the replay.
+     *
+     * YADORA-7: a deadline is kept when it comes before that interval. YADORA-6 decided against the interval before the
+     * fuzz, so a deadline inside the fuzz band was dropped and the topic came back up to 5% after its repair date (an
+     * outside audit, 2026-10-04: a 4-day repair dropped for a memory date 4.05 days out, 76 minutes later, which can cross
+     * midnight); a row stamped with it replays that way. A lapse keeps its relearn step either way.
+     */
+    fun repairDays(outcome: Outcome, memoryRating: MemoryRating, finalIntervalDays: Double, policyVersion: String): Double? =
+        if (!comparesRepairAfterFuzz(policyVersion)) outcome.remediationDays
+        else outcome.candidateRemediationDays?.takeIf { memoryRating == MemoryRating.Forgot || it < finalIntervalDays }
+
     /** Everything the UI/persistence needs after a scheduling decision. */
     data class Outcome(
         val state: MemoryState,
@@ -293,6 +316,11 @@ object MedScheduler {
          * understanding was a multiplier and is already inside [intervalDays].
          */
         val remediationDays: Double? = null,
+        /**
+         * The repair deadline BEFORE it is compared with the memory date: what [repairDays] keeps or drops against the
+         * interval as finally scheduled (YADORA-7). [remediationDays] is that decision made before the fuzz (YADORA-6).
+         */
+        val candidateRemediationDays: Double? = remediationDays,
     )
 
     /**
@@ -372,7 +400,9 @@ object MedScheduler {
     // YADORA-6: the understanding repair clock backs off (doubles per consecutive unrepaired answer
     // and is dropped once it would not beat the memory date), and the memory interval is multiplied
     // by the per-user calibration scale, which every log now records.
-    const val POLICY_VERSION = "YADORA-6"
+    // YADORA-7 (2026-10-04): a repair deadline is kept when it beats the memory interval as finally scheduled, fuzz
+    // included (repairDays); YADORA-6 compared it with the interval before the fuzz.
+    const val POLICY_VERSION = "YADORA-7"
 
     /**
      * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.
@@ -606,9 +636,10 @@ object MedScheduler {
         }
 
         // A repair deadline that would not beat the memory date repairs nothing sooner, so it is not
-        // a deadline at all; only a genuinely earlier one is kept. A lapse keeps its relearn step.
-        val repair = remediationDays(memoryRating, understanding, unrepairedStreak)
-            ?.takeIf { memoryRating == MemoryRating.Forgot || it < interval }
+        // a deadline at all; only a genuinely earlier one is kept. A lapse keeps its relearn step. This is the
+        // YADORA-6 decision, before the fuzz; callers apply the policy's own rule with [repairDays].
+        val candidate = remediationDays(memoryRating, understanding, unrepairedStreak)
+        val repair = candidate?.takeIf { memoryRating == MemoryRating.Forgot || it < interval }
 
         return Outcome(
             state = newState,
@@ -617,6 +648,7 @@ object MedScheduler {
             reason = ReviewReason(memoryRating, understanding, highYield, interval),
             baseIntervalDays = baseInterval,
             remediationDays = repair,
+            candidateRemediationDays = candidate,
         )
     }
 
@@ -729,9 +761,9 @@ object MedScheduler {
      * FSRS-5 keeps fractional elapsed milliseconds because it is frozen and must keep reproducing
      * the schedules users were actually given.
      *
-     * The cost, accepted: a calendar-day count depends on the device time zone, so a history
-     * replayed after moving continents can differ by a day. That is rare and bounded; the queue
-     * mismatch above was neither.
+     * The cost: a calendar-day count depends on the device time zone. A review is counted in the zone the phone is in
+     * when it happens, which is the live rule. A REPLAY no longer counts again in today's zone: it reads back the count
+     * each review was scheduled with ([storedModelDays], since 2026-10-04).
      */
     fun modelElapsedDays(fromMillis: Long, toMillis: Long, model: MemoryModel): Double = when (model) {
         MemoryModel.FSRS_5 -> ((toMillis - fromMillis) / 86400000.0).coerceAtLeast(0.0)
@@ -739,6 +771,36 @@ object MedScheduler {
             .between(localDate(fromMillis), localDate(toMillis))
             .coerceAtLeast(0L).toDouble()
     }
+
+    /**
+     * The day count a review was scheduled with, as a REPLAY of [model] may reuse it: an FSRS-6 recall recorded by FSRS-6
+     * stores whole local calendar days, counted in the zone the phone was in then. Null when the stored value is not in
+     * that model's units (an FSRS-5 row, a first study, a row from before counts were stored, a fraction): the replay
+     * then counts again from the two times ([modelElapsedDays]).
+     *
+     * Counting again in the phone's CURRENT zone rebuilt states a topic never had once the zone had changed: two reviews
+     * at 23:30 and 00:30 in Tehran are one day apart, the same two in UTC none, and an outside audit (2026-10-04) measured
+     * a replayed stability of 2.31 days where the live one was 7.32. Every other input a replay needs was already read
+     * back from the log (the target, importance, policy, calibration); since 2026-10-04 this one is too. A MERGED history
+     * interleaves copies whose counts run from their own copies' reviews, so callers count it again (`merged`).
+     */
+    fun storedModelDays(storedElapsedDays: Double, schedulerVersion: String, logType: String, model: MemoryModel): Double? =
+        storedElapsedDays.takeIf {
+            model == MemoryModel.FSRS_6 && schedulerVersion == MemoryModel.FSRS_6.id && logType == "RECALL" &&
+                it.isFinite() && it >= 0.0 && it == kotlin.math.floor(it)
+        }
+
+    /** The elapsed days a replay feeds [model] for one review: its stored count when that is reusable, else counted again. */
+    fun replayElapsedDays(
+        fromMillis: Long,
+        toMillis: Long,
+        model: MemoryModel,
+        storedElapsedDays: Double,
+        schedulerVersion: String,
+        logType: String,
+        merged: Boolean,
+    ): Double = (if (merged) null else storedModelDays(storedElapsedDays, schedulerVersion, logType, model))
+        ?: modelElapsedDays(fromMillis, toMillis, model)
 
     private fun localDate(millis: Long): java.time.LocalDate =
         java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate()

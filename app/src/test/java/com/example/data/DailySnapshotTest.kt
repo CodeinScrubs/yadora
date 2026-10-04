@@ -10,6 +10,7 @@ import com.example.ui.today.DayBounds
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -41,8 +42,9 @@ class DailySnapshotTest {
         previousIntervalDays = 3.0, nextIntervalDays = 7.0, previousState = "Building", nextState = "Building", logType = type,
     )
 
+    /** The detail's whole-number fields (source is a word). */
     private fun counts(detail: String?): Map<String, Int> =
-        detail.orEmpty().split(" ").associate { it.substringBefore("=") to it.substringAfter("=").toInt() }
+        detail.orEmpty().split(" ").mapNotNull { kv -> kv.substringAfter("=").toIntOrNull()?.let { kv.substringBefore("=") to it } }.toMap()
 
     private suspend fun snapshots() = app.database.eventLogDao().getAll().filter { it.type == DailySnapshot.EVENT }
 
@@ -84,6 +86,7 @@ class DailySnapshotTest {
         assertEquals(1, c["done"])
         assertEquals(1, c["deferred"])
         assertEquals(10, c["limit"])
+        assertTrue("who wrote it: the app opening, by default", snap.detail!!.endsWith(" source=app"))
         // The plan the reminders, the widget and Today count from: the snapshot must never disagree with it.
         val plan = app.todayPlan(now)
         assertEquals(plan.size, c["offered"])
@@ -91,20 +94,64 @@ class DailySnapshotTest {
 
         // The next day gets its own, and the record of the day lives in the device-only prefs, which a restore never
         // carries to another phone.
-        DailySnapshot.recordOnce(app, now + day)
+        DailySnapshot.recordOnce(app, now + day, source = DailySnapshot.SOURCE_WORKER)
         assertEquals(2, snapshots().size)
+        assertTrue("the 6-hourly worker says so", snapshots().last().detail!!.endsWith(" source=worker"))
         val epochDay = LocalDate.of(2026, 10, 4).toEpochDay()
         assertEquals(epochDay, NotificationScheduler.transientPrefs(app).getLong(DailySnapshot.PREF_DAY, 0L))
     }
 
     @Test
     fun `each build's first run is recorded once, with the build before it`() = runBlocking {
-        AppVersionLog.recordIfChanged(app, 4, "1.1")
-        AppVersionLog.recordIfChanged(app, 4, "1.1")
-        AppVersionLog.recordIfChanged(app, 5, "1.2")
-        AppVersionLog.recordIfChanged(app, 5, "1.2")
+        AppVersionLog.recordIfChanged(app, 4, "1.1", installed = 1_000L)
+        AppVersionLog.recordIfChanged(app, 4, "1.1", installed = 1_000L)
+        AppVersionLog.recordIfChanged(app, 5, "1.2", installed = 2_000L)
+        AppVersionLog.recordIfChanged(app, 5, "1.2", installed = 2_000L)
+        // A test build installed over another with the same version code is a new build too (an outside audit, 2026-10-04).
+        AppVersionLog.recordIfChanged(app, 5, "1.2", installed = 3_000L)
         val details = app.database.eventLogDao().getAll().filter { it.type == AppVersionLog.EVENT }.sortedBy { it.id }.map { it.detail }
-        assertEquals(listOf("code=4 name=1.1 previous=0", "code=5 name=1.2 previous=4"), details)
+        assertEquals(
+            listOf(
+                "code=4 name=1.1 previous=0 installed=1000",
+                "code=5 name=1.2 previous=4 installed=2000",
+                "code=5 name=1.2 previous=5 installed=3000",
+            ),
+            details,
+        )
+    }
+
+    /** The zone the phone counts its days in: a baseline, then each change, never the same zone twice in a row. */
+    @Test
+    fun `a time zone change is recorded once, with the zone it replaced`() = runBlocking {
+        val now = LocalDate.of(2026, 10, 4).atTime(12, 0).atZone(ZoneId.of("UTC")).toInstant().toEpochMilli()
+        TimeZoneLog.recordIfChanged(app, ZoneId.of("Asia/Tehran"), now)
+        TimeZoneLog.recordIfChanged(app, ZoneId.of("Asia/Tehran"), now + 60_000L)
+        TimeZoneLog.recordIfChanged(app, ZoneId.of("UTC"), now + 2 * day)
+        val details = app.database.eventLogDao().getAll().filter { it.type == TimeZoneLog.EVENT }.sortedBy { it.id }.map { it.detail }
+        assertEquals(listOf("zone=Asia/Tehran offset=+03:30 previous=none", "zone=UTC offset=+00:00 previous=Asia/Tehran"), details)
+    }
+
+    /** A setting the plan depends on: one event per real change, none for a drag that ended where it began. */
+    @Test
+    fun `a settings change is logged once, with the value it replaced`() = runBlocking {
+        assertNull("no change, no event", SettingsChangeLog.detail(SettingsChangeLog.DAILY_LIMIT, "50", "50"))
+        assertEquals("50", SettingsChangeLog.limitValue(49.99999f))
+        assertEquals("0.92", SettingsChangeLog.retentionValue(0.9199999f))
+        assertEquals("08:05", SettingsChangeLog.reminderTimeValue(8, 5))
+        SettingsChangeLog.record(app, SettingsChangeLog.DAILY_LIMIT, "50", "50")
+        SettingsChangeLog.record(app, SettingsChangeLog.DAILY_LIMIT, "50", "10", at = 1_000L)
+        SettingsChangeLog.record(app, SettingsChangeLog.DAILY_LIMIT, "10", "50", at = 2_000L)
+        var found = emptyList<com.example.data.local.entity.EventLogEntity>()
+        for (attempt in 0 until 100) { // written on the application's own scope: wait for it, a few seconds at most
+            found = app.database.eventLogDao().getAll().filter { it.type == SettingsChangeLog.EVENT }
+            if (found.size >= 2) break
+            Thread.sleep(50)
+        }
+        assertEquals(
+            "a change made and undone the same day is two events, though the day's snapshot sees 50 both times",
+            listOf(1_000L to "key=daily_review_limit old=50 new=10", 2_000L to "key=daily_review_limit old=10 new=50"),
+            found.sortedBy { it.at }.map { it.at to it.detail },
+        )
     }
 
     /**
@@ -119,15 +166,19 @@ class DailySnapshotTest {
         db.studyUnitDao().insertUnit(unit("a topic", 0, now - 2 * day))
         val backup = BackupManager.buildBackupJson(app) // a file from before anything was recorded
         DailySnapshot.recordOnce(app, now)
-        AppVersionLog.recordIfChanged(app, 4, "1.1")
+        AppVersionLog.recordIfChanged(app, 4, "1.1", installed = 1_000L)
+        TimeZoneLog.recordIfChanged(app, ZoneId.of("Asia/Tehran"), now)
         assertEquals(1, snapshots().size)
         BackupManager.restoreFromJson(app, backup)
         assertEquals("the file's own events replace this phone's", 0, snapshots().size)
         DailySnapshot.recordOnce(app, now + 60_000L)
-        AppVersionLog.recordIfChanged(app, 4, "1.1")
+        AppVersionLog.recordIfChanged(app, 4, "1.1", installed = 1_000L)
+        TimeZoneLog.recordIfChanged(app, ZoneId.of("Asia/Tehran"), now + 60_000L)
         assertEquals("the restored library's load, the same day", 1, snapshots().size)
-        assertEquals(listOf("code=4 name=1.1 previous=0"),
+        assertEquals(listOf("code=4 name=1.1 previous=0 installed=1000"),
             db.eventLogDao().getAll().filter { it.type == AppVersionLog.EVENT }.map { it.detail })
+        assertEquals("and the zone this phone counts its days in", listOf("zone=Asia/Tehran offset=+03:30 previous=none"),
+            db.eventLogDao().getAll().filter { it.type == TimeZoneLog.EVENT }.map { it.detail })
     }
 
     @Test
@@ -141,6 +192,9 @@ class DailySnapshotTest {
         assertTrue("$types", DailySnapshot.EVENT in types && AppVersionLog.EVENT in types)
         val guide = json.getJSONObject("fieldGuide")
         assertTrue(guide.getString("dailySnapshot").contains("held"))
-        assertTrue(guide.getString("eventLogs").contains("APP_VERSION"))
+        for (event in listOf("APP_VERSION", "TIME_ZONE", "SETTINGS_CHANGED")) {
+            assertTrue("the guide explains $event", guide.getString("eventLogs").contains(event))
+        }
+        assertTrue("and that a review's time on screen is not its study time", guide.getString("reviewDurationMs").contains("NOT the time the review took"))
     }
 }

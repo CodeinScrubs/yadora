@@ -186,7 +186,9 @@ val PersianStrings = AppStrings(
     knowledgeState = "وضعیت دانش",
     totalTopics = "کل مباحث",
     past7days = "مرور ۷ روز گذشته",
-    strong = "مسلط",
+    // "Durable", not "مسلط" (mastered): the state is a memory stability of 21+ days, not exam mastery (an outside audit,
+    // 2026-10-04); English says "Strong", German "Gefestigt".
+    strong = "پایدار",
     learning = "در حال یادگیری",
     
     // Settings Screen

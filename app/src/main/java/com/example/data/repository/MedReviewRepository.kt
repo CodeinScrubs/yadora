@@ -133,8 +133,9 @@ class MedReviewRepository(
      */
     suspend fun projectOntoCurrentModel(unit: StudyUnitEntity): StudyUnitEntity {
         if (isOnCurrentModel(unit)) return unit
-        carriedOver(unit, mergedUnitIds())?.let { return it }
-        return projectWithHistory(unit, reviewLogDao.getLogsForUnitOnce(unit.id))
+        val merged = mergedUnitIds()
+        carriedOver(unit, merged)?.let { return it }
+        return projectWithHistory(unit, reviewLogDao.getLogsForUnitOnce(unit.id), merged = unit.id in merged)
     }
 
     /**
@@ -161,7 +162,7 @@ class MedReviewRepository(
      * The pure half of [projectOntoCurrentModel], taking the history rather than fetching it, so a
      * caller already inside a transaction (merge) can project without collecting a Flow there.
      */
-    private fun projectWithHistory(unit: StudyUnitEntity, history: List<ReviewLogEntity>): StudyUnitEntity {
+    private fun projectWithHistory(unit: StudyUnitEntity, history: List<ReviewLogEntity>, merged: Boolean): StudyUnitEntity {
         if (isOnCurrentModel(unit)) return unit
         // Read ONCE: a refresh landing mid-projection must not split one topic's history across two sets.
         // A personal weight set is projected onto exactly like a new model: by replaying the real history.
@@ -194,8 +195,11 @@ class MedReviewRepository(
                 continue
             }
             val grade = runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrNull() ?: continue
-            // Projection rebuilds under the CURRENT model, so time is measured its way too.
-            val elapsed = MedScheduler.modelElapsedDays(prevTime, log.reviewedAt, MedScheduler.CURRENT_MODEL)
+            // Projection rebuilds under the CURRENT model, so time is measured its way too: the day count the review was
+            // scheduled with when it is in that model's units, never counted again in today's time zone.
+            val elapsed = MedScheduler.replayElapsedDays(
+                prevTime, log.reviewedAt, MedScheduler.CURRENT_MODEL, log.elapsedDays, log.schedulerVersion, log.logType, merged,
+            )
             val highYield = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
             state = MedScheduler.projectStep(state, elapsed, grade, highYield, target.weights)
             if (grade == MemoryRating.Forgot) lapses++
@@ -284,7 +288,13 @@ class MedReviewRepository(
         return reviewLogDao.getAllLogsOnce().groupBy { it.studyUnitId }.filterKeys { it !in merged }.values.mapNotNull { logs ->
             com.example.domain.srs.Fsrs6Optimizer.historyOf(
                 logs.sortedWith(REVIEW_HISTORY_ORDER)
-                    .map { com.example.domain.srs.Fsrs6Optimizer.Event(it.reviewedAt, it.memoryRating, it.logType) },
+                    .map {
+                        com.example.domain.srs.Fsrs6Optimizer.Event(
+                            it.reviewedAt, it.memoryRating, it.logType,
+                            // Merged topics are left out above, so every stored count runs from this topic's own reviews.
+                            MedScheduler.storedModelDays(it.elapsedDays, it.schedulerVersion, it.logType, MedScheduler.MemoryModel.FSRS_6),
+                        )
+                    },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
         }
     }
@@ -504,8 +514,11 @@ class MedReviewRepository(
             val absorbedLogs = absorbedRows.map { reviewLogDao.getLogsForUnitOnce(it.id) }
             // A copy that is itself the survivor of an earlier merge keeps its averaged state (carriedOver).
             val mergedBefore = mergedUnitIds()
-            val survivor = carriedOver(survivorRow, mergedBefore) ?: projectWithHistory(survivorRow, survivorLogs)
-            val absorbed = absorbedRows.mapIndexed { i, row -> carriedOver(row, mergedBefore) ?: projectWithHistory(row, absorbedLogs[i]) }
+            val survivor = carriedOver(survivorRow, mergedBefore)
+                ?: projectWithHistory(survivorRow, survivorLogs, merged = survivorRow.id in mergedBefore)
+            val absorbed = absorbedRows.mapIndexed { i, row ->
+                carriedOver(row, mergedBefore) ?: projectWithHistory(row, absorbedLogs[i], merged = row.id in mergedBefore)
+            }
 
             val all = listOf(survivor) + absorbed
             // Weight by evidence: an unrated copy counts once, a well-drilled copy counts per review.
@@ -915,7 +928,9 @@ class MedReviewRepository(
         // adds a SHORT repair deadline instead of scaling that prediction down, and the topic returns on
         // whichever comes first.
         val memoryDueAt = now + (nextInterval * 86400000).toLong()
-        val understandingDueAt = outcome.remediationDays?.let { now + (it * 86400000).toLong() }
+        // Kept only when it beats the memory date as scheduled, fuzz included (MedScheduler.repairDays, YADORA-7).
+        val repairDays = MedScheduler.repairDays(outcome, memoryRating, nextInterval, MedScheduler.POLICY_VERSION)
+        val understandingDueAt = repairDays?.let { now + (it * 86400000).toLong() }
         val effectiveDueAt = listOfNotNull(memoryDueAt, understandingDueAt).min()
 
         val updatedUnit = unit.copy(
@@ -983,7 +998,7 @@ class MedReviewRepository(
         return RatedReview(
             before = loaded, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
             memoryIntervalDays = nextInterval, effectiveDueAt = effectiveDueAt,
-            repairPending = outcome.remediationDays != null,
+            repairPending = repairDays != null,
         )
     }
 
@@ -1095,6 +1110,8 @@ class MedReviewRepository(
         // A topic on a personal weight set replays under that set, so the registry must hold it even in
         // a process where no review session has run yet.
         refreshMemoryModel()
+        // A merged history interleaves two copies' reviews, so its stored day counts run from the wrong reviews here.
+        val merged = unitId in mergedUnitIds()
 
         // A correction is a NEW scheduling decision, so it uses the per-user calibration as it stands
         // now, read from the logs like every other path that schedules. It used to use whatever
@@ -1154,8 +1171,11 @@ class MedReviewRepository(
                 else -> und.name
             }
             // The topic's OWN model decides how elapsed time is counted; a frozen FSRS-5 history
-            // must keep replaying on fractional milliseconds.
-            val elapsed = MedScheduler.modelElapsedDays(prevTime, log.reviewedAt, replayModel)
+            // must keep replaying on fractional milliseconds. An FSRS-6 recall replays with the day count it was
+            // scheduled with, not one counted again in today's time zone (MedScheduler.storedModelDays).
+            val elapsed = MedScheduler.replayElapsedDays(
+                prevTime, log.reviewedAt, replayModel, log.elapsedDays, log.schedulerVersion, log.logType, merged,
+            )
 
             // Timezone-stable classification: trust the logType RECORDED at review time. Recomputing
             // it from timestamps here would use the DEVICE'S CURRENT timezone — a user who travels
@@ -1309,7 +1329,8 @@ class MedReviewRepository(
             )
 
             unrepairedStreak = if (MedScheduler.continuesUnrepairedStreak(mem.name, undStored)) unrepairedStreak + 1 else 0
-            lastRemediationDays = outcome.remediationDays
+            // The repair rule of the policy this row was stamped with (the edited row: today's), against its final interval.
+            lastRemediationDays = MedScheduler.repairDays(outcome, mem, interval, policyForThisLog)
             stability = outcome.state.stability
             difficulty = outcome.state.difficulty
             if (mem == MemoryRating.Forgot) lapseCount++
@@ -1352,13 +1373,15 @@ class MedReviewRepository(
             studyUnitDao.updateUnit(finalUnit)
             // The answer the learner first gave survives its correction: the replay rewrites the log in place, and
             // without this the research export could not tell a corrected rating from an original one, nor which
-            // later predictions a correction recomputed (an outside audit, 2026-10-02).
+            // later predictions a correction recomputed (an outside audit, 2026-10-02). `upto` is the topic's last log
+            // this replay rewrote, read in this transaction: saved order, not the clock, tells which later logs it
+            // recomputed (RecomputedPredictions; the clock can have gone back since those reviews).
             if (logId != -1L) logs.firstOrNull { it.id == logId }?.let { before ->
                 database.eventLogDao().insert(
                     com.example.data.local.entity.EventLogEntity(
                         type = "RATING_CORRECTED",
                         unitId = unitId,
-                        detail = "log=$logId memory=${before.memoryRating}>${newMemory.name} " +
+                        detail = "log=$logId upto=${logs.maxOf { it.id }} memory=${before.memoryRating}>${newMemory.name} " +
                             "understanding=${before.understandingRating}>${newUnderstanding?.name ?: before.understandingRating}",
                     )
                 )
