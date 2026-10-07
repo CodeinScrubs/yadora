@@ -1075,11 +1075,12 @@ def first_rating_value(firsts: List["Row"]) -> dict:
     return dict(n=n, ll_rated=statistics.fmean(rated), ll_blind=statistics.fmean(blind), z=z)
 
 
-def split_times(exports: List[Export], frac=0.75) -> Dict[str, int]:
-    """Per participant: reviews at or after this instant are held out."""
+def split_review_ids(exports: List[Export], frac=0.75) -> Dict[str, int]:
+    """Per participant: saved review ids at or after this boundary are held out.
+    Wall time can run backwards; the fit must never train on a later saved review to predict an earlier one."""
     cut = {}
     for e in exports:
-        ts = sorted(int(l["reviewedAt"]) for l in e.data["reviewLogs"] if l.get("logType") == "RECALL")
+        ts = sorted(int(l["id"]) for l in e.data["reviewLogs"] if l.get("logType") == "RECALL")
         if ts:
             cut[e.participant] = ts[min(int(len(ts) * frac), len(ts) - 1)]
     return cut
@@ -1094,7 +1095,7 @@ def predictions(hist, weights) -> Tuple[List[Tuple[float, bool]], List[Tuple[flo
             if r["predicted"] is None or log.get("logType") != "RECALL" or r["elapsed"] < 1:
                 continue
             pair = (r["predicted"], log["memoryRating"] != "Forgot")
-            if int(log["reviewedAt"]) >= cut:
+            if int(log["id"]) >= cut:
                 test.append(pair)
                 who.append(pid)
             else:
@@ -1158,11 +1159,11 @@ def nelder_mead(f, x0, step=0.25, iters=160):
 
 
 def pooled_fit(exports: List[Export], min_train=300) -> dict:
-    cuts = split_times(exports)
+    cuts = split_review_ids(exports)
     hist = [(p, u, l, un, tz, cuts.get(p, 1 << 62)) for p, u, l, un, tz in histories(exports)]
     base = list(ym.DEFAULT_WEIGHTS)
     train0, test0, who = predictions(hist, tuple(base))
-    result = dict(train_reviews=len(train0), test_reviews=len(test0), fitted=False)
+    result = dict(train_reviews=len(train0), test_reviews=len(test0), fitted=False, validation_order="saved_review_id")
     if len(train0) < min_train or len(test0) < 50:
         result["reason"] = f"needs >= {min_train} training and 50 held-out recall reviews"
         return result
@@ -1761,7 +1762,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     pf = pooled_fit(exports) if fit else dict(fitted=False, reason="skipped (--no-fit)")
     summary["pooled_fit"] = pf
     if pf.get("fitted"):
-        rep.p(f"Fitted {', '.join(FIT_NAMES)} on each participant's earliest 75% of recall reviews "
+        rep.p(f"Fitted {', '.join(FIT_NAMES)} on each participant's earliest 75% of recall reviews in saved-id order "
               f"({pf['train_reviews']}), with a mild pull toward the defaults, and scored both weight sets on the "
               f"remaining 25% ({pf['test_reviews']}), predicted from the full history before each review.")
         rep.table(["weight", "default", "fitted"], [[k, fmt(a, 4), fmt(b, 4)] for k, (a, b) in pf["changed"].items()])
@@ -1774,7 +1775,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         with open(os.path.join(out_dir, "fitted_weights.json"), "w", encoding="utf-8") as f:
             json.dump(dict(weights=pf["weights"], note="Pooled pilot refit of w1,w2,w3,w8,w20; the rest are the FSRS-6 defaults.",
                            held_out_z=pf["z"], grade_order_ok=pf["grade_order_ok"], lengthening=pf["lengthening"],
-                           meets_app_conditions=pf["better"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"]), f, indent=2)
+                           meets_app_conditions=pf["better"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"],
+                           validation_order=pf["validation_order"]), f, indent=2)
     else:
         rep.p(f"Not fitted: {pf.get('reason')}. ({pf.get('train_reviews', 0)} training / {pf.get('test_reviews', 0)} held-out reviews.)")
     rep.p("The app fits a full 21-weight personal set on the phone itself once a learner has 640+ reviews, and only "
