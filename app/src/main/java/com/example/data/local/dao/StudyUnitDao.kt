@@ -8,8 +8,14 @@ import androidx.room.Update
 import com.example.data.local.entity.StudyUnitEntity
 import kotlinx.coroutines.flow.Flow
 
+/** Lightweight live title index: adding a topic must not load thousands of notes per keystroke. */
+data class RelatedTopicTitle(val id: Long, val title: String, val subjectId: Long?, val archived: Boolean)
+
 @Dao
 interface StudyUnitDao {
+    @Query("SELECT id, title, subjectId, archived FROM study_units WHERE deletedAt IS NULL ORDER BY id ASC")
+    fun observeTopicTitles(): Flow<List<RelatedTopicTitle>>
+
     @Query("SELECT * FROM study_units WHERE archived = 0 ORDER BY nextReviewAt ASC")
     fun getAllActiveUnits(): Flow<List<StudyUnitEntity>>
     

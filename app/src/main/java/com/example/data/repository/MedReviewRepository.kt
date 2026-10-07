@@ -39,6 +39,7 @@ class MedReviewRepository(
     // Study Units
     val activeUnits: Flow<List<StudyUnitEntity>> = studyUnitDao.getAllActiveUnits()
     val archivedUnits: Flow<List<StudyUnitEntity>> = studyUnitDao.getArchivedUnits()
+    val topicTitles = studyUnitDao.observeTopicTitles()
     
     fun getDueUnits(cutoffTime: Long): Flow<List<StudyUnitEntity>> {
         return studyUnitDao.getDueUnits(cutoffTime)

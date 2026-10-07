@@ -41,6 +41,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -58,6 +60,11 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
     val reviewLogs: StateFlow<List<ReviewLogEntity>> = _reviewLogs.asStateFlow()
     
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Fold titles when the library changes, on a worker dispatcher; searches reuse that small index.
+    internal val relatedTopicIndex = repository.topicTitles.map(RelatedTopics::index)
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var logsJob: kotlinx.coroutines.Job? = null
@@ -334,6 +341,8 @@ fun AddUnitScreen(
     onReviewNow: (Long) -> Unit = {},
     /** False when this page was opened from a review in progress, whose card is this topic already. */
     showReviewNow: Boolean = true,
+    /** Existing suggestions open without saving or discarding this draft. Archived topics open their details. */
+    onOpenRelatedTopic: (id: Long, archived: Boolean) -> Unit = { _, _ -> },
 ) {
     val viewModel: AddUnitViewModel = viewModel(factory = AddUnitViewModelFactory(repository))
     
@@ -538,6 +547,49 @@ fun AddUnitScreen(
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp)
             )
+            if (unitId == null) {
+                val relatedIndex by viewModel.relatedTopicIndex.collectAsStateWithLifecycle()
+                val related = remember(relatedIndex, title, selectedSubjectId) {
+                    RelatedTopics.search(relatedIndex, title, selectedSubjectId)
+                }
+                if (related.isNotEmpty()) {
+                    val fa = strings.languageCode == "fa"
+                    val de = strings.languageCode == "de"
+                    Text(
+                        when { fa -> "مباحث ثبت‌شدهٔ مشابه"; de -> "Ähnliche vorhandene Themen"; else -> "Related existing topics" },
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    related.take(5).forEach { existing ->
+                        OutlinedCard(
+                            onClick = { onOpenRelatedTopic(existing.id, existing.archived) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        ) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(existing.title, style = MaterialTheme.typography.bodyMedium.autoDirection())
+                                val subject = subjects.firstOrNull { it.id == existing.subjectId }?.name
+                                val action = when {
+                                    existing.archived -> when { fa -> "بایگانی‌شده · مشاهده"; de -> "Archiviert · öffnen"; else -> "Archived · open" }
+                                    fa -> "ثبت مرور"; de -> "Wiederholung eintragen"; else -> "Log a review"
+                                }
+                                Text(listOfNotNull(subject, action).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall.autoDirection(),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                    val remaining = related.size - 5
+                    if (remaining > 0) Text(
+                        when {
+                            fa -> "${com.example.ui.i18n.PersianDate.faDigits(remaining)} مورد دیگر؛ برای محدودکردن نتایج، عنوان را دقیق‌تر بنویس."
+                            de -> "$remaining weitere Treffer. Genauer tippen, um die Suche einzugrenzen."
+                            else -> "$remaining more matches. Keep typing to narrow the results."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
             // OPTIONAL scope (stored as recallPrompt) — what this topic covers. A bare title such as
             // "Appendicitis" leaves open what "I still remembered it" means (the presentation? the whole
