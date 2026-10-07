@@ -145,7 +145,7 @@ class AuditFindingsTest {
         val rated = rate(id, now, MemoryRating.Easy)
         repo.updateUnit(repo.getUnitById(id)!!.copy(title = "Cushing syndrome — causes", notes = "ACTH-dependent first", highYield = true))
 
-        repo.undoReview(rated.before, rated.logId)
+        repo.undoReview(rated)
         val after = repo.getUnitById(id)!!
         assertEquals("the edit stays", "Cushing syndrome — causes", after.title)
         assertEquals("ACTH-dependent first", after.notes)
@@ -175,7 +175,7 @@ class AuditFindingsTest {
 
         val rated = rate(id, now, MemoryRating.Good)
         assertEquals("the review itself runs on the current model", MedScheduler.CURRENT_MODEL.id, rated.after.memoryModel)
-        repo.undoReview(rated.before, rated.logId)
+        repo.undoReview(rated)
 
         assertEquals("undo leaves the row exactly as it was stored", stored, repo.getUnitById(id))
         assertEquals(2, db.reviewLogDao().getLogsForUnitOnce(id).size)

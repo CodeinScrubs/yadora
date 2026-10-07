@@ -1556,6 +1556,13 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - Snooze is REAL: `reminder_snoozed_until` pref suppresses the whole chain until
   the target; colliding primary/secondary slots (±5 min) are coalesced to one.
 
+- **Undo verifies the review it owns** (2026-10-07). `RatedReview` carries the committed row and a fingerprint of
+  the complete topic history. `undoReview` checks those plus the latest saved log id inside its write transaction.
+  A later review, corrected history, merge, changed study date, deferral or changed restored history refuses the stale
+  undo without changing any data. Ordinary title/notes/archive edits survive a valid undo. The UI explains a refused
+  undo and leaves its counters alone. `ReviewWriteIntegrityTest` reproduces five former overwrite/delete paths.
+  `rateUnit` also refuses archived or soft-deleted rows, including a topic merged away after a screen opened.
+
 ## Testing
 
 Unit tests: `app/src/test/java/com/example/...` (JUnit; Robolectric where a

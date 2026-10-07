@@ -838,6 +838,8 @@ class MedReviewRepository(
         /** The date the topic actually returns on: the earlier of the memory and repair clocks. */
         val effectiveDueAt: Long,
         val repairPending: Boolean,
+        /** Exact history at commit, so a stale screen cannot undo across a correction, merge or restore. */
+        val undoHistoryFingerprint: String,
     )
 
     /**
@@ -882,7 +884,7 @@ class MedReviewRepository(
         sessionKind: com.example.domain.model.SessionKind,
         reviewDurationMs: Long,
     ): RatedReview? {
-        val loaded = getUnitById(unitId) ?: return null
+        val loaded = getUnitById(unitId)?.takeIf { !it.archived && it.deletedAt == null } ?: return null
         // An FSRS-5 stability is not an FSRS-6 stability, so the state is rebuilt by replaying this
         // topic's real rating history on the current model. No-op once it is already there, and it
         // never touches the dates: only the latent state moves.
@@ -999,6 +1001,7 @@ class MedReviewRepository(
             before = loaded, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
             memoryIntervalDays = nextInterval, effectiveDueAt = effectiveDueAt,
             repairPending = repairDays != null,
+            undoHistoryFingerprint = reviewHistoryFingerprint(unitId),
         )
     }
 
@@ -1025,17 +1028,37 @@ class MedReviewRepository(
      * and removing the growth event must be one transaction; a crash between them would leave the
      * schedule, the history, and the growth visual disagreeing with each other.
      */
-    suspend fun undoReview(previousUnit: StudyUnitEntity, logId: Long) {
-        database.withTransaction {
+    suspend fun undoReview(review: RatedReview): Boolean = database.withTransaction {
+            val previousUnit = review.before
+            val current = studyUnitDao.getUnitById(previousUnit.id) ?: return@withTransaction false
+            // Check inside the write transaction. ids survive a restore, and wall-clock timestamps can go
+            // backwards, so neither alone proves that this is still the review the screen committed.
+            val latest = reviewLogDao.getLogsForUnitOnce(previousUnit.id).maxByOrNull { it.id }
+            if (latest?.id != review.logId || reviewHistoryFingerprint(previousUnit.id) != review.undoHistoryFingerprint ||
+                !sameScheduling(current, review.after) || current.studiedAt != review.after.studiedAt
+            ) return@withTransaction false
             // Undo takes back the REVIEW, not what the learner changed since: the snapshot's scheduling fields go
             // back, while title, notes, source, scope, subject, Important, study date and archive state stay as
             // they are now. Writing the whole snapshot reverted an edit made between the rating and the undo.
-            val current = studyUnitDao.getUnitById(previousUnit.id)
-            studyUnitDao.updateUnit(current?.let { withSchedulingOf(it, previousUnit) } ?: previousUnit)
-            reviewLogDao.deleteLogById(logId)
-            database.eventLogDao().deleteStudyActionForLog(logId.toString())
-        }
+            studyUnitDao.updateUnit(withSchedulingOf(current, previousUnit))
+            reviewLogDao.deleteLogById(review.logId)
+            database.eventLogDao().deleteStudyActionForLog(review.logId.toString())
+            true
     }
+
+    private suspend fun reviewHistoryFingerprint(unitId: Long): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        reviewLogDao.getLogsForUnitOnce(unitId).sortedWith(REVIEW_HISTORY_ORDER).forEach { log ->
+            // All persisted log fields, including replayed predictions and stored elapsed days. This is an
+            // in-process undo token, not a serialized format or a timestamp-based history identity.
+            digest.update(log.toString().toByteArray(Charsets.UTF_8))
+            digest.update(0.toByte())
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun sameScheduling(a: StudyUnitEntity, b: StudyUnitEntity): Boolean =
+        withSchedulingOf(a, b).copy(updatedAt = a.updatedAt) == a
 
     /**
      * [current] with every field a review writes taken from [snapshot]; everything the learner edits kept. When

@@ -161,8 +161,7 @@ class ReviewViewModel(
     private val repository: MedReviewRepository
 ) : androidx.lifecycle.AndroidViewModel(application) {
     data class ReviewHistoryItem(
-        val unitBeforeRating: StudyUnitEntity,
-        val logId: Long,
+        val review: MedReviewRepository.RatedReview,
         val ratingGiven: MemoryRating,
         /** A first rating logs a study; it is counted apart from reviews in the session summary. */
         val wasFirstRating: Boolean,
@@ -472,7 +471,19 @@ class ReviewViewModel(
         viewModelScope.launch {
             try {
                 // One transaction: restore the unit AND delete its log together (see undoReview).
-                repository.undoReview(historyItem.unitBeforeRating, historyItem.logId)
+                if (!repository.undoReview(historyItem.review)) {
+                    // A later review, correction, merge, restore or deferral won. Drop this stale undo
+                    // entry without decrementing the session's counts or overwriting the newer work.
+                    canUndo = ratedStack.isNotEmpty()
+                    lastReason = when (getApplication<android.app.Application>()
+                        .getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
+                        .getString("app_language", "en")) {
+                        "fa" -> "سابقه یا برنامهٔ این مبحث تغییر کرده است؛ واگرد انجام نشد. اطلاعات جدید حفظ شد."
+                        "de" -> "Verlauf oder Termin dieses Themas wurden geändert. Nichts wurde zurückgenommen; die neueren Daten bleiben erhalten."
+                        else -> "This topic's history or schedule has changed. Nothing was undone; your newer work is preserved."
+                    }
+                    return@launch
+                }
                 com.example.widget.DueWidgetProvider.updateAll(getApplication()) // undo changes the due count
 
                 // Counters adjust only AFTER the undo transaction succeeds (mirror of rateCurrentUnit).
@@ -491,12 +502,12 @@ class ReviewViewModel(
                     dueUnits.add(0, current)
                 }
                 // The undone log is gone, so the streak the buttons preview with must be re-read.
-                currentUnrepairedStreak = repository.unrepairedStreak(historyItem.unitBeforeRating.id)
+                currentUnrepairedStreak = repository.unrepairedStreak(historyItem.review.before.id)
                 // The row as undo left it: its schedule from before the rating, its content as it is now, projected
                 // for the buttons exactly as advanceUnit does. The snapshot is the STORED row, possibly on an older
                 // model, so it is never shown in place of that: a topic that cannot be re-read and projected gives
                 // way to the card that was on screen (fail closed, as advanceUnit does).
-                val restored = repository.getUnitById(historyItem.unitBeforeRating.id)
+                val restored = repository.getUnitById(historyItem.review.before.id)
                     ?.takeIf { it.deletedAt == null && !it.archived }
                     ?.let { runCatching { repository.projectOntoCurrentModel(it) }.getOrNull() }
                 if (restored != null) _currentUnit.value = restored else advanceUnit()
@@ -562,7 +573,7 @@ class ReviewViewModel(
                 MemoryRating.Hard -> sessionHard++
                 MemoryRating.Good, MemoryRating.Easy -> sessionGood++
             }
-            ratedStack.add(ReviewHistoryItem(rated.before.copy(), rated.logId, memoryRating, wasFirstRating = reviewNumber == 0))
+            ratedStack.add(ReviewHistoryItem(rated, memoryRating, wasFirstRating = reviewNumber == 0))
             canUndo = ratedStack.isNotEmpty()
             // (The growth event is inserted inside commitReview's transaction, keyed to the log id,
             // so a committed review and its growth can never disagree — and undo removes both.)
