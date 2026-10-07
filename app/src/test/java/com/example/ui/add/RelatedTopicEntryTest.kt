@@ -1,15 +1,20 @@
 package com.example.ui.add
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.core.app.ApplicationProvider
 import com.example.MedReviewApplication
 import com.example.data.local.entity.StudyUnitEntity
+import com.example.ui.MedReviewApp
 import com.example.ui.i18n.EnglishStrings
+import com.example.ui.i18n.PersianStrings
 import com.example.ui.i18n.LocalStrings
 import com.example.ui.theme.MyApplicationTheme
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
+import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -17,8 +22,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(qualifiers = RobolectricDeviceQualifiers.Pixel8, sdk = [36])
 class RelatedTopicEntryTest {
     @get:Rule val compose = createComposeRule()
@@ -29,10 +36,13 @@ class RelatedTopicEntryTest {
             archived = archived || deleted, deletedAt = if (deleted) 1 else null))
     }
 
-    private fun screen(onOpen: (Long, Boolean) -> Unit = { _, _ -> }) {
+    private fun screen(farsi: Boolean = false, onOpen: (Long, Boolean) -> Unit = { _, _ -> }) {
         compose.setContent {
-            MyApplicationTheme(languageCode = "en") {
-                CompositionLocalProvider(LocalStrings provides EnglishStrings) {
+            MyApplicationTheme(languageCode = if (farsi) "fa" else "en") {
+                CompositionLocalProvider(
+                    LocalStrings provides if (farsi) PersianStrings else EnglishStrings,
+                    LocalLayoutDirection provides if (farsi) LayoutDirection.Rtl else LayoutDirection.Ltr,
+                ) {
                     AddUnitScreen(app.repository, unitId = null, onBack = {}, onOpenRelatedTopic = onOpen)
                 }
             }
@@ -80,4 +90,38 @@ class RelatedTopicEntryTest {
         type("anemia")
         compose.onNodeWithText("Asthma treatment").assertDoesNotExist()
     }
+    @Test fun `Persian form limits visible suggestions and explains remaining matches in RTL`() {
+        listOf("آسم", "درمان آسم", "تشخیص آسم", "افتراق آسم", "آسم کودکان", "آسم در بارداری")
+            .forEach { insert(it) }
+        screen(farsi = true)
+        type("اسم")
+        waitFor("مباحث ثبت‌شدهٔ مشابه")
+        compose.onAllNodesWithText("ثبت مرور").assertCountEquals(5)
+        compose.onNodeWithText("۱ مورد دیگر؛ برای محدودکردن نتایج، عنوان را دقیق‌تر بنویس.").assertExists()
+        compose.onRoot().captureRoboImage(filePath = "build/related-topics/persian.png")
+    }
+
+    @Test fun `opening and leaving a related topic preserves the Add draft through real navigation`() {
+        insert("Asthma treatment")
+        compose.setContent {
+            MyApplicationTheme(languageCode = "en") {
+                CompositionLocalProvider(LocalStrings provides EnglishStrings) { MedReviewApp(app.repository) }
+            }
+        }
+        compose.onNodeWithContentDescription(EnglishStrings.addNewTopic).performClick()
+        waitFor(EnglishStrings.topicTitleLabel)
+        type("Asthma")
+        compose.onNode(hasSetTextAction() and hasText(EnglishStrings.notesExplanation))
+            .performScrollTo().performTextReplacement("Unsaved study note")
+        waitFor("Asthma treatment")
+        compose.onNodeWithText("Asthma treatment").performScrollTo().performClick()
+        waitFor(EnglishStrings.done)
+        compose.onNodeWithText(EnglishStrings.done).performClick()
+        waitFor(EnglishStrings.topicTitleLabel)
+        compose.onNode(hasSetTextAction() and hasText("Asthma")).assertExists()
+        compose.onNode(hasSetTextAction() and hasText("Unsaved study note")).assertExists()
+        assertEquals(1, runBlocking { app.database.studyUnitDao().getAllActiveOnce().size })
+        assertTrue(runBlocking { app.database.reviewLogDao().getAllLogsOnce().isEmpty() })
+    }
+
 }
