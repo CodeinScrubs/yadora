@@ -137,7 +137,7 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 | D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
 | D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar), with the first-rating grades in order and intervals no longer than the defaults' (the app's two other conditions, added 2026-10-03) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
 | D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
-| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each; at 5+ points it is LOOK only if the 95% interval excludes 0, otherwise WAIT (amended 2026-10-03) | Advise the better method in the guide. A method-specific stability gain only if the difference survives a refit. |
+| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each; a topic-clustered interval is required (≥ 20 topics overall, ≥ 2 in each eligible learner). At 5+ points it is LOOK only if the interval excludes 0; with no interval it is WAIT. | Investigate source, timing, topic and rating differences. This is an observational association. A method-specific gain needs a separate prospective validation; refitting these same observations cannot establish causality. |
 | D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
 | D9 | Are at least 80% of first ratings given on the study day? | ≥ 80%, n ≥ 50 | The first-rating flow is being skipped. Look at "Save and rate now" and the Today prompt. |
 | D10 | Are fewer than 40% of successful reviews answered Partial/Confused? | < 40%, n ≥ 100 | The repair clock is adding a lot of load. Check its backoff in simulation. |
@@ -198,7 +198,7 @@ few learners, silence is not proof that nothing is wrong.
 | D3 | 60 first reviews per first rating: a standard error of 4–5 points | about 13% at 90% predicted | a 10-point shortfall 7 times in 10, a 15-point one 9 in 10 |
 | D4 | per learner, 150–600 evidence reviews (an average learner's raw scale falls outside 0.8–1.25 about half the time at 150, a fifth at 600) | with 5 learners, 24% at 150 reviews each, 10% at 300, 2% at 600; with 10 learners, 5% / 1% / 0% | with 300+ evidence reviews each: a group whose scale is truly 0.75 (or 1.35) about 2 times in 3, 0.6 (or 1.7) nearly always |
 | D6 | 50 scored reviews | a true rank correlation of 0.5 reads below 0.3 6% of the time | a true correlation of 0.1 is flagged 92% of the time, 0.2 76% |
-| D7 | 100 next reviews after each method, within learners | 24% on the old 5-point threshold alone; 5% with the interval requirement | a true 10-point difference 65% of the time (92% at 200 each) |
+| D7 | 100 independent next-review outcomes after each method, within learners | 24% on the old 5-point threshold alone; 5% with the interval requirement, **in the independent-review simulation only** | a true 10-point difference 65% of the time (92% at 200 each), in that simulation; repeated topics do not provide this independent sample size |
 
 - **D4 at 8 weeks is a screen.** A LOOK sends a population prior to D5's held-out test anyway, so a false
   alarm costs a simulation, not a change.
@@ -209,6 +209,16 @@ few learners, silence is not proof that nothing is wrong.
   for ±10 points, about 600–800 scored reviews per learner. Pooled over the pilot it is within reach.
 - **The two amendments do not move the thresholds.** They ask the threshold to be crossed by more than noise:
   D2 now uses the topic-clustered interval, and D7 the within-learner interval.
+
+The D7 interval now also clusters on topic **inside each learner**, preserving covariance when a topic
+appears under both methods. This is conditional uncertainty for the observed learners, not inference
+about the population of students. The minimum of 20 topics is a heuristic for the approximate normal
+interval, not an 80%-power calculation. `test_method_uncertainty.py` simulates 1,000 null comparisons:
+40 topics per method, 10 identical repeats per topic, both methods with the same 80% outcome probability.
+Treating reviews as independent produces 508 false LOOK results; clustering on topic produces 48.
+These are controlled synthetic checks of the uncertainty calculation, not evidence of a learning benefit.
+The "next" event follows saved log ids; a first-study exposure or a legacy-model event is not skipped
+to create an artificial pair, and a prediction recomputed after a correction is not eligible.
 
 ## Optional: a direct retention check at week 8
 

@@ -218,6 +218,11 @@ def test_calibration_slope_and_intercept_recover_a_planted_miscalibration():
     print("calibration slope and intercept recover planted miscalibration (1.0 / 0.5 / shifted)")
 
 
+def as_topics(people):
+    return {pid: {group: [(value, (group, i)) for i, value in enumerate(values)]
+                  for group, values in groups.items()} for pid, groups in people.items()}
+
+
 def test_method_comparison_is_made_within_each_learner():
     # A generous rater who mostly does questions and a strict one who mostly reads: pooled, questions look 20 points
     # better; within each learner the methods are identical. D7 must read the within-learner number.
@@ -229,10 +234,10 @@ def test_method_comparison_is_made_within_each_learner():
     pooled_q = [x for p in people.values() for x in p["Questions only"]]
     pooled_r = [x for p in people.values() for x in p["Reading only"]]
     assert sum(pooled_q) / len(pooled_q) - sum(pooled_r) / len(pooled_r) > 0.1, "the confounded pooled gap"
-    wp = analyze.within_participant_difference(people)
+    wp = analyze.within_participant_difference(as_topics(people))
     assert wp["participants"] == 2 and abs(wp["diff"]) < 1e-12, wp
     specialists = {"A": {"Questions only": [0.1] * 50}, "B": {"Reading only": [-0.1] * 50}}
-    assert analyze.within_participant_difference(specialists) is None, "no learner used both: nothing to compare"
+    assert analyze.within_participant_difference(as_topics(specialists)) is None, "no learner used both: nothing to compare"
     print("the method comparison is made within each learner (a between-person gap is not read as a method effect)")
 
 
@@ -320,7 +325,7 @@ def test_d2_and_d7_need_an_interval_that_excludes_zero():
     rng = random.Random(3)
     noisy = {p: {"Questions only": [rng.gauss(0.0, 0.3) for _ in range(40)],
                  "Reading only": [rng.gauss(0.0, 0.3) for _ in range(40)]} for p in "ABC"}
-    wp = analyze.within_participant_difference(noisy)
+    wp = analyze.within_participant_difference(as_topics(noisy))
     assert wp["ci"][0] < wp["diff"] < wp["ci"][1] and 0.03 < wp["se"] < 0.05, wp
     print("D2 and D7: a gap past the threshold is LOOK only when its interval excludes 0, otherwise WAIT")
 
