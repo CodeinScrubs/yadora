@@ -72,6 +72,15 @@ class ForecastAuditTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             fa.parse(snapshot()["detail"] + " p=.1")
 
+    def test_duplicate_saved_log_ids_are_not_silently_joined_to_the_last_row(self):
+        e = export()
+        e.data["reviewLogs"].append(dict(e.data["reviewLogs"][0], studyUnitId=99, memoryRating="Forgot"))
+        rows, excluded, issues = fa.observations(e)
+        self.assertEqual([], rows)
+        self.assertEqual(1, excluded["ambiguous_review_log"])
+        self.assertEqual(1, len(issues))
+        self.assertIn("duplicate saved review log 1", issues[0])
+
     def test_small_clusters_withhold_interval_and_personal_sets_stay_separate(self):
         summary, rows = fa.audit([export(participant="A"), export(participant="B")])
         self.assertEqual(2, len(summary["groups"]))

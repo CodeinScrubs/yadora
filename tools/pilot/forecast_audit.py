@@ -56,9 +56,20 @@ def parse(detail):
 
 
 def observations(export):
-    logs = {int(row["id"]): row for row in export.data["reviewLogs"]}
     grouped = defaultdict(list)
     issues, excluded = [], Counter()
+    logs, ambiguous_logs = {}, set()
+    for row in export.data["reviewLogs"]:
+        log_id = int(row["id"])
+        if log_id in ambiguous_logs:
+            continue
+        if log_id in logs:
+            # SQLite ids are unique. A duplicated row in a modified export has no unambiguous join.
+            del logs[log_id]
+            ambiguous_logs.add(log_id)
+            issues.append(f"{export.participant}: duplicate saved review log {log_id}")
+        else:
+            logs[log_id] = row
     for event in export.data.get("eventLogs") or []:
         if event.get("type") != "REVIEW_FORECAST":
             continue
@@ -73,6 +84,9 @@ def observations(export):
     for log_id, snapshots in grouped.items():
         if len(snapshots) != 1:
             issues.append(f"{export.participant}: duplicate forecasts for log {log_id}")
+            continue
+        if log_id in ambiguous_logs:
+            excluded["ambiguous_review_log"] += 1
             continue
         log = logs.get(log_id)
         if log is None:
