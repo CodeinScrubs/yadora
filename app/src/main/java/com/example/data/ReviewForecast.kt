@@ -30,6 +30,7 @@ object ReviewForecast {
         append(" dueContext=${dueContext(before, log, zone)}")
         append(" retention=${log.desiredRetentionAtReview} scale=${log.calibrationScaleAtReview}")
         append(" memory=${log.memoryRating} understanding=${log.understandingRating} session=${log.sessionKind ?: "UNKNOWN"}")
+        append(" outcome=SUBJECTIVE_POST_STUDY")
     }
 
     /** Status against the same end-of-local-day boundary as Today; describes availability, not why the user chose it. */

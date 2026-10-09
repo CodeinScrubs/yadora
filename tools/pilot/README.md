@@ -14,6 +14,8 @@ simulation results.
 | `yadora_model.py` | FSRS-6 and Yadora's scheduling rules, transcribed from the Kotlin sources. Both tools use it. |
 | `test_yadora_model.py` | Checks the transcription against the py-fsrs 6.3.1 goldens the app is tested with, and against kotlin-stdlib's RNG (`kotlin_fuzz_reference.json`) for the interval fuzz. |
 | `test_analyze.py` | Runs `analyze.py` on `fixtures/sample_export.json`, a real app export, and checks every log replays exactly and that tampering is caught. |
+| `forecast_audit.py` | Scores immutable `REVIEW_FORECAST v1` events. Keeps original predictions and subjective answers separate from mutable replay/corrected answers; never invents forecasts for legacy rows. |
+| `test_forecast_audit.py` | Checks corrections, merged log ownership, exclusions, invalid/duplicate snapshots, finite scores and small-cluster uncertainty. |
 
 ```
 python3 tools/pilot/analyze.py exports/ --out pilot_report
@@ -22,9 +24,21 @@ python3 tools/pilot/simulate.py --weights pilot_report/fitted_weights.json
 python3 tools/pilot/experiments.py                   # ~30 minutes; --quick, --only order,relearn,cap,maxivl,adaptive
 python3 tools/pilot/residency.py --seeds 6            # ~30-40 minutes; --quick, --only default,fast,slow,heavy
 python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py
+python3 tools/pilot/test_forecast_audit.py
+python3 tools/pilot/forecast_audit.py exports/ --out prospective_report
 ```
 
 `yadora_model.py` must change whenever `Fsrs6.kt`, `MedScheduler.kt` or `RecallCalibration.kt` change a
 rule that decides an interval. If it falls behind, `test_analyze.py` fails on the fixture and the
 integrity check (D1) reports every pilot review as a mismatch. Regenerate the fixture after changing the
 export format; the command is at the top of `test_analyze.py`.
+
+`forecast_audit.py` is a second view of the data: `analyze.py` verifies the current mutable replay;
+the forecast audit describes what the scheduler predicted **when each review was saved**. Corrections
+do not change these events, Undo removes them, and a merge keeps their log ids. Old exports without
+the events produce a coverage report with zero prospective forecasts. They are never backfilled.
+The original mixed post-study ratings are a **subjective proxy**, not objective recall. A good Brier
+or log-loss result does not prove a review policy improved exam performance. Groups stay separate
+by learner, weight set, policy and due context. Topic-clustered gap intervals are conditional on
+these learners; the approximate interval is withheld below 20 topics. That floor is a diagnostic
+heuristic, not a sample-size or power calculation. No app schedule or calibration estimate reads it.
