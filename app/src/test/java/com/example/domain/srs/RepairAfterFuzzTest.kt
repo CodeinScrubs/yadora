@@ -26,14 +26,16 @@ class RepairAfterFuzzTest {
     fun `a repair deadline inside the fuzz band is kept, and an old row replays as it was given`() {
         // The audit's case: topic 4 after 8 reviews, rated Easy with Partial understanding a day after the last review.
         val o = outcome(0.17643240250219983, MemoryRating.Easy, UnderstandingRating.Partial)
-        val final = MedScheduler.fuzzedInterval(o.intervalDays, o.baseIntervalDays, 4L, 8, isFirstStudy = false)
+        val final = MedScheduler.fuzzedInterval(o.intervalDays, o.baseIntervalDays, 4L, 8, isFirstStudy = false, policyVersion = "YADORA-7")
         assertEquals("the memory interval before the fuzz", 3.995, o.intervalDays, 1e-9)
         assertEquals("and after it", 4.052766843189816, final, 1e-9)
         assertEquals("the repair deadline asked for", 4.0, o.candidateRemediationDays!!, 0.0)
         assertNull("YADORA-6 compared it with 3.995 days and dropped it", MedScheduler.repairDays(o, MemoryRating.Easy, final, "YADORA-6"))
         assertEquals("YADORA-7 keeps it: the topic returns on its repair date, not 76 minutes later",
             4.0, MedScheduler.repairDays(o, MemoryRating.Easy, final, "YADORA-7")!!, 0.0)
-        assertEquals("the policy new reviews are stamped with", "YADORA-7", MedScheduler.POLICY_VERSION)
+        assertEquals("current policy keeps the final-interval repair rule", 4.0,
+            MedScheduler.repairDays(o, MemoryRating.Easy, final, MedScheduler.POLICY_VERSION)!!, 0.0)
+        assertEquals("the policy new reviews are stamped with", "YADORA-8", MedScheduler.POLICY_VERSION)
         assertEquals("an unstamped row replays under the current policy", 4.0, MedScheduler.repairDays(o, MemoryRating.Easy, final, "")!!, 0.0)
     }
 
@@ -45,7 +47,7 @@ class RepairAfterFuzzTest {
                 for (und in listOf(UnderstandingRating.Confused, UnderstandingRating.Partial, UnderstandingRating.Clear)) {
                     val o = outcome(s, rating, und)
                     for (unit in 1L..40L) {
-                        val final = MedScheduler.fuzzedInterval(o.intervalDays, o.baseIntervalDays, unit, 8, isFirstStudy = false)
+                        val final = MedScheduler.fuzzedInterval(o.intervalDays, o.baseIntervalDays, unit, 8, isFirstStudy = false, policyVersion = "YADORA-7")
                         val now = MedScheduler.repairDays(o, rating, final, "YADORA-7")
                         val old = MedScheduler.repairDays(o, rating, final, "YADORA-6")
                         assertEquals("YADORA-6 keeps its pre-fuzz decision", o.remediationDays, old)

@@ -218,9 +218,10 @@ class RegressionTest {
 
     @Test
     fun `fuzz preserves the exact understanding-multiplier ratios`() {
+        // Frozen FSRS-5 has an understanding multiplier; FSRS-6 repairs understanding separately.
         // Multiplicative fuzz with one seed per (unit, reviewNumber): Partial stays exactly 0.9×Clear.
-        val clear = MedScheduler.fuzzedInterval(20.0, 20.0, 5L, 2)
-        val partial = MedScheduler.fuzzedInterval(20.0 * 0.9, 20.0, 5L, 2)
+        val clear = MedScheduler.fuzzedInterval(20.0, 20.0, 5L, 2, model = MedScheduler.MemoryModel.FSRS_5)
+        val partial = MedScheduler.fuzzedInterval(20.0 * 0.9, 20.0, 5L, 2, model = MedScheduler.MemoryModel.FSRS_5)
         assertEquals("partial must remain exactly 90% of clear after fuzz", clear * 0.9, partial, 1e-9)
     }
 
@@ -228,12 +229,12 @@ class RegressionTest {
     fun `fuzz eligibility comes from the BASE interval so ratios survive the 3-day boundary`() {
         // Base = 3.2d: Clear final = 3.2, Partial final = 2.88. If eligibility were decided from the
         // FINAL interval, Clear would fuzz and Partial wouldn't — breaking the exact 0.9 ratio.
-        val clear = MedScheduler.fuzzedInterval(3.2, 3.2, 11L, 2)
-        val partial = MedScheduler.fuzzedInterval(3.2 * 0.9, 3.2, 11L, 2)
+        val clear = MedScheduler.fuzzedInterval(3.2, 3.2, 11L, 2, model = MedScheduler.MemoryModel.FSRS_5)
+        val partial = MedScheduler.fuzzedInterval(3.2 * 0.9, 3.2, 11L, 2, model = MedScheduler.MemoryModel.FSRS_5)
         assertEquals("ratio must survive the boundary", clear * 0.9, partial, 1e-9)
         // And below the threshold, neither fuzzes.
-        assertEquals(2.9, MedScheduler.fuzzedInterval(2.9, 2.9, 11L, 2), 0.0)
-        assertEquals(2.9 * 0.9, MedScheduler.fuzzedInterval(2.9 * 0.9, 2.9, 11L, 2), 0.0)
+        assertEquals(2.9, MedScheduler.fuzzedInterval(2.9, 2.9, 11L, 2, model = MedScheduler.MemoryModel.FSRS_5), 0.0)
+        assertEquals(2.9 * 0.9, MedScheduler.fuzzedInterval(2.9 * 0.9, 2.9, 11L, 2, model = MedScheduler.MemoryModel.FSRS_5), 0.0)
     }
 
     @Test
