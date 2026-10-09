@@ -45,7 +45,7 @@ class FuzzPolicyReplayTest {
             repo.rateUnit(id, origin, MemoryRating.Good, UnderstandingRating.Clear, sessionKind = SessionKind.TOPIC, reviewDurationMs = 1000)
             val first = db.reviewLogDao().getLogsForUnitOnce(id).single()
             assertEquals("the real current commit applies the boundary", 3.0, first.nextIntervalDays, 0.0)
-            assertEquals("YADORA-8", first.schedulerPolicyVersion)
+            assertEquals("YADORA-9", first.schedulerPolicyVersion)
             // A valid pre-upgrade decision, computed independently from the frozen legacy RNG.
             val legacy = 3.0996 * (1.0 + kotlin.random.Random(6L * 31L).nextDouble(-0.05, 0.05))
             assertTrue(legacy < 3.0)
@@ -64,9 +64,9 @@ class FuzzPolicyReplayTest {
             assertEquals(before.nextReviewAt, repo.getUnitById(id)!!.nextReviewAt)
             repo.editReviewRating(id, first.id, MemoryRating.Good, UnderstandingRating.Partial)
             val corrected = db.reviewLogDao().getLogsForUnitOnce(id).sortedBy { it.id }
-            assertEquals("the edited row is a new decision", "YADORA-8", corrected.first().schedulerPolicyVersion)
+            assertEquals("the edited row is a new decision", "YADORA-9", corrected.first().schedulerPolicyVersion)
             assertEquals(3.0, corrected.first().nextIntervalDays, 0.0)
-            assertEquals("YADORA-8", corrected.last().schedulerPolicyVersion)
+            assertEquals("YADORA-9", corrected.last().schedulerPolicyVersion)
         } finally {
             db.close()
             MedScheduler.userRetention = oldRetention

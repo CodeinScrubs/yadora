@@ -75,7 +75,8 @@ Those parts were thrown away. Accuracy matters more than coverage.
 
 ### 2.1 The memory model: FSRS-6
 
-The code matches py-fsrs 6.3.1 on 4,932 golden test vectors. The default weights w0 to w20 are:
+The code matches py-fsrs 6.3.2 on 4,932 golden test vectors (and 6.3.1, which differs only in a same-day Hard
+review and is what reviews made before 2026-10-09 replay). The default weights w0 to w20 are:
 
 `0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542`
 
@@ -186,7 +187,7 @@ the review itself happens mostly outside the app.
 
 You do not need to redo any of this.
 
-**Implementation.** The FSRS-6 code matches py-fsrs 6.3.1's golden vectors. An independent Python transcription
+**Implementation.** The FSRS-6 code matches py-fsrs 6.3.2's golden vectors (and 6.3.1's). An independent Python transcription
 replays every exported review exactly.
 
 **Simulation results.** These are circular for questions about real memory, because in the simulation the

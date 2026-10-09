@@ -11,9 +11,11 @@ import kotlin.math.pow
  * only meaningful together with the model that produced it. This is now the LIVE model
  * (`MedScheduler.CURRENT_MODEL`); topics cross over lazily via `projectOntoCurrentModel`.
  *
- * Conformance is verified against py-fsrs 6.3.1 itself by `Fsrs6GoldenVectorTest`, not against a
+ * Conformance is verified against py-fsrs itself by `Fsrs6GoldenVectorTest`, not against a
  * transcription of the equations — three deviations once survived a green hand-written spec suite
- * because the same misreading produced both the code and the test.
+ * because the same misreading produced both the code and the test. Two releases are checked: 6.3.2, the live
+ * equations since POLICY YADORA-9 (2026-10-09), and 6.3.1, which differs only in a same-day Hard review
+ * ([nextState]'s `floorSameDayHard`) and is what every review stamped YADORA-8 or earlier was computed with.
  *
  * WHAT ACTUALLY DIFFERS FROM FSRS-5 (it is not a cosmetic bump):
  *  - The forgetting curve's exponent is a trainable weight (w20) instead of the fixed −0.5. The
@@ -67,14 +69,13 @@ class Fsrs6Parameters(
         )
 
         /**
-         * Immutable identity stored per review log. Names the WEIGHTS **and** the implementation
-         * they run through. Both matter: the same
-         * vector evaluated by a subtly different set of equations produces a different stability,
-         * and calibration that pooled the two would be averaging two models under one label. The
-         * suffix is the exact reference release these values are verified against by
-         * Fsrs6GoldenVectorTest, so a future conformance change forces a new id here.
+         * The label of the published defaults in the research export. Names the WEIGHTS **and** the implementation they
+         * run through. Both matter: the same vector evaluated by a subtly different set of equations produces a different
+         * stability. The suffix is the reference release the live equations are verified against by Fsrs6GoldenVectorTest:
+         * 6.3.2 since POLICY YADORA-9. Each review log's policy stamp says which equations computed it (a log stamped
+         * YADORA-8 or earlier: 6.3.1's), and every replay follows the stamp.
          */
-        const val DEFAULT_PARAMETER_SET_ID = "FSRS6-DEFAULT-21-PYFSRS-6.3.1"
+        const val DEFAULT_PARAMETER_SET_ID = "FSRS6-DEFAULT-21-PYFSRS-6.3.2"
     }
 }
 
@@ -120,17 +121,21 @@ object Fsrs6 {
      * The next memory state after a review.
      *
      * @param elapsedDays time since the item was last seen; drives R, and selects the same-day branch.
+     * @param floorSameDayHard py-fsrs 6.3.2's rule (the default, live since POLICY YADORA-9): a same-day Hard cannot
+     *   shrink stability. False is py-fsrs 6.3.1, which a replay uses for a review stamped YADORA-8 or earlier
+     *   (MedScheduler.floorsSameDayHard).
      */
     fun nextState(
         current: MemoryState,
         elapsedDays: Double,
         grade: Grade,
         p: Fsrs6Parameters = Fsrs6Parameters(),
+        floorSameDayHard: Boolean = true,
     ): MemoryState {
         val r = retrievability(elapsedDays, current.stability, p)
         val newDifficulty = nextDifficulty(current.difficulty, grade, p)
         val newStability = when {
-            elapsedDays < 1.0 -> shortTermStability(current.stability, grade, p)
+            elapsedDays < 1.0 -> shortTermStability(current.stability, grade, p, floorSameDayHard)
             grade == Grade.Again -> postLapseStability(current, r, p)
             else -> recallStability(current, r, grade, p)
         }
@@ -152,22 +157,20 @@ object Fsrs6 {
      * The S^(−w19) term is new in FSRS-6 — it damps same-day gains as stability grows, so cramming a
      * well-known topic stops paying the same dividend as cramming a shaky one.
      */
-    internal fun shortTermStability(stability: Double, grade: Grade, p: Fsrs6Parameters): Double {
+    internal fun shortTermStability(stability: Double, grade: Grade, p: Fsrs6Parameters, floorHard: Boolean = true): Double {
         val w = p.weights
         val s = stability.coerceAtLeast(S_MIN)
         var increase = exp(w[17] * (grade.value - 3 + w[18])) * s.pow(-w[19])
-        // The reference floors the MULTIPLIER at 1 for GOOD and EASY only: restudying something on
-        // the same day and getting it right cannot make the memory weaker than not restudying it.
-        // Without this the S^(-w19) damping term drives the multiplier below 1 once stability is
-        // large, so a same-day Good on a mature topic silently SHRANK its stability.
+        // The reference floors the MULTIPLIER at 1: restudying something on the same day and still having it cannot
+        // make the memory weaker than not restudying it. Without this the S^(-w19) damping term drives the multiplier
+        // below 1 once stability is large, so a same-day Good on a mature topic silently SHRANK its stability.
         //
-        // Hard is deliberately NOT floored, and that is not an oversight: py-fsrs 6.3.1 -- the pinned
-        // released reference -- lists only (Good, Easy). py-fsrs 6.3.2 (released 2026-08-09) widens it
-        // to include Hard, so a same-day Hard on a 100-day topic keeps 100 there and drops to 45 here.
-        // The pin stays: adopting 6.3.2 is a new model identity (old history must keep replaying under
-        // the rules that computed it), and the app almost never reviews a topic twice in one day
-        // (CLAUDE.md, the conformance entry).
-        if (grade == Grade.Good || grade == Grade.Easy) increase = increase.coerceAtLeast(1.0)
+        // py-fsrs 6.3.1 floors GOOD and EASY only; 6.3.2 (released 2026-08-09) adds HARD, so a same-day Hard on a
+        // 100-day topic keeps 100 instead of dropping to 45. Yadora adopted 6.3.2 as POLICY YADORA-9 (the owner's
+        // decision, 2026-10-09: "Save and review now" and reviews the learner chooses make a second look the same day
+        // reachable). Old history keeps replaying under the rules that computed it, so [floorHard] is false for a review
+        // stamped YADORA-8 or earlier (MedScheduler.floorsSameDayHard).
+        if (grade == Grade.Good || grade == Grade.Easy || (floorHard && grade == Grade.Hard)) increase = increase.coerceAtLeast(1.0)
         return (s * increase).coerceAtLeast(S_MIN)
     }
 

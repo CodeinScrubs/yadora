@@ -403,8 +403,21 @@ object MedScheduler {
     // YADORA-7 (2026-10-04): a repair deadline is kept when it beats the memory interval as finally scheduled, fuzz
     // included (repairDays); YADORA-6 compared it with the interval before the fuzz.
     // YADORA-8 (2026-10-09): on FSRS-6, fuzz may not cross below its three-day eligibility boundary.
+    // YADORA-9 (2026-10-09): FSRS-6 follows py-fsrs 6.3.2, whose same-day Hard cannot shrink stability (6.3.1 floored
+    // only Good and Easy); a review stamped YADORA-8 or earlier replays 6.3.1's equation ([floorsSameDayHard]).
     // The old policies and frozen FSRS-5 retain their exact factors/intervals for replay.
-    const val POLICY_VERSION = "YADORA-8"
+    const val POLICY_VERSION = "YADORA-9"
+
+    /**
+     * Did the policy that produced a log follow py-fsrs 6.3.2, where a same-day Hard review cannot shrink stability?
+     * Only YADORA-9 onward does (the owner's decision, 2026-10-09); a row stamped earlier replays py-fsrs 6.3.1's
+     * same-day equation, which floored only Good and Easy. Blank means a pre-v5 row, which replays under the current
+     * policy like the rest of the code. FSRS-5 is frozen and never asks.
+     */
+    fun floorsSameDayHard(policyVersion: String): Boolean = when (policyVersion) {
+        "YADORA-1", "YADORA-2", "YADORA-3", "YADORA-4", "YADORA-5", "YADORA-6", "YADORA-7", "YADORA-8" -> false
+        else -> true
+    }
 
     /**
      * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.
@@ -533,6 +546,9 @@ object MedScheduler {
         // Which FSRS-6 weight set computes this transition: null = the active set, otherwise the set the
         // row being replayed is on. Ignored by FSRS-5, which is frozen on its own weights.
         parameterSetId: Long? = null,
+        // Replay passes the same-day rule of the policy that produced the log ([floorsSameDayHard]): a row stamped
+        // YADORA-8 or earlier keeps py-fsrs 6.3.1's same-day Hard. Live reviews use the current policy's.
+        floorSameDayHard: Boolean = true,
     ): Outcome {
         if (model == MemoryModel.FSRS_6) {
             return reviewFsrs6(
@@ -541,6 +557,7 @@ object MedScheduler {
                 unrepairedStreak = if (backOffRepairClock) unrepairedStreak else 0,
                 calibrationScale = calibrationScaleOverride ?: calibrationScale,
                 weights = weightsFor(parameterSetId ?: activeParameterSet.id),
+                floorSameDayHard = floorSameDayHard,
             )
         }
         val p = params(highYield, desiredRetentionOverride)
@@ -611,6 +628,7 @@ object MedScheduler {
         unrepairedStreak: Int,
         calibrationScale: Double,
         weights: DoubleArray,
+        floorSameDayHard: Boolean,
     ): Outcome {
         val p = params6(highYield, desiredRetentionOverride, weights)
         val before = MemoryState(stability = stability, difficulty = difficulty)
@@ -621,7 +639,7 @@ object MedScheduler {
         val newState = if (reviewNumber <= 0) {
             Fsrs6.initialState(grade, p)
         } else {
-            Fsrs6.nextState(before, modelDays, grade, p)
+            Fsrs6.nextState(before, modelDays, grade, p, floorSameDayHard)
         }
 
         val baseInterval: Double
@@ -726,11 +744,14 @@ object MedScheduler {
         // The weight set being projected ONTO. The caller reads the active set once for a whole history,
         // so a refresh landing mid-projection cannot split one topic across two sets.
         weights: DoubleArray = activeParameterSet.weights,
+        // The same-day rule of the policy that produced this rating ([floorsSameDayHard]), as a rating correction's
+        // replay applies it: one history, one reconstruction.
+        floorSameDayHard: Boolean = true,
     ): MemoryState {
         val p = params6(highYield, weights = weights)
         val grade = memoryRating.toGrade()
         return if (previous == null) Fsrs6.initialState(grade, p)
-        else Fsrs6.nextState(previous, completedModelDays(elapsedDays), grade, p)
+        else Fsrs6.nextState(previous, completedModelDays(elapsedDays), grade, p, floorSameDayHard)
     }
 
     /**

@@ -383,8 +383,8 @@ a topic reviewed twice on one calendar day and rated Hard. Intervals are whole d
 topic again on a later day (the one exception: a review in the first hour of a daylight-saving fall-back day,
 where a one-day interval comes due that evening; Iran has no DST). Since 2026-09-28 Review ahead leaves out
 topics reviewed today too, so in practice only a deliberate second review from the Library reaches it (none in
-the 23,601 reviews of `TwoYearSoakTest`; `OwnerYearSoakTest`, whose learner also takes same-day second looks, has 6
-in 14,185). The pin stays at 6.3.1.
+the 23,601 reviews of `TwoYearSoakTest`; `OwnerYearSoakTest`, whose learner also takes same-day second looks, has 4
+in 13,238). Yadora adopted 6.3.2 on 2026-10-09 (POLICY YADORA-9): a review stamped earlier replays 6.3.1's equation.
 
 **Headroom.** An ORACLE twin schedules from the learner's true memory (true stability, true curve, true speed
 of forgetting) under the same product rules and the same scheduling rule, one fixed target. No model can know

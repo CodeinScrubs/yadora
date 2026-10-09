@@ -3,8 +3,9 @@ Checks the Python transcription against the same references the app is checked a
 
   python3 tools/pilot/test_yadora_model.py
 
-1. Every py-fsrs 6.3.1 golden vector in app/src/test/resources/golden_fsrs6.json (the file
-   Fsrs6GoldenVectorTest reads), at the same 1e-9 relative tolerance.
+1. Every py-fsrs golden vector in app/src/test/resources/ (the files Fsrs6GoldenVectorTest reads), at the same
+   1e-9 relative tolerance: golden_fsrs6_632.json (py-fsrs 6.3.2, live since YADORA-9) with the same-day Hard
+   floor, golden_fsrs6.json (py-fsrs 6.3.1, what reviews stamped YADORA-8 or earlier replay) without it.
 2. The Kotlin RNG behind the interval fuzz, against values printed by kotlin-stdlib itself
    (KOTLIN_FUZZ_FACTORS below; regenerate with the jshell line in the comment if the stdlib changes).
 3. The calibration estimator recovers a planted scale.
@@ -20,6 +21,7 @@ import yadora_model as ym  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 GOLDEN = os.path.join(ROOT, "app", "src", "test", "resources", "golden_fsrs6.json")
+GOLDEN_632 = os.path.join(ROOT, "app", "src", "test", "resources", "golden_fsrs6_632.json")
 
 # kotlin_fuzz_reference.json holds 1.0 + Random(seed).nextDouble(-0.05, 0.05) as kotlin-stdlib 2.2.10 computes
 # it (seed = unitId*31 + reviewCount), printed by the stdlib itself:
@@ -32,7 +34,13 @@ def close(a, b, rel=1e-9):
 
 
 def test_goldens():
-    g = json.load(open(GOLDEN))
+    for path, version, floor_hard in ((GOLDEN, "6.3.1", False), (GOLDEN_632, "6.3.2", True)):
+        check_goldens(path, version, floor_hard)
+
+
+def check_goldens(path, version, floor_hard):
+    g = json.load(open(path))
+    assert g["pyFsrsVersion"] == version, (path, g["pyFsrsVersion"])
     m = ym.Fsrs6(g["parameters"])
     assert close(m.decay, g["decay"]) and close(m.factor, g["factor"])
     checked = 0
@@ -51,7 +59,7 @@ def test_goldens():
         if kind == "difficulty":
             got = m.next_difficulty(v["d"], v["g"])
         elif kind == "shortTerm":
-            got = m.short_term_stability(v["s"], v["g"])
+            got = m.short_term_stability(v["s"], v["g"], floor_hard)
         elif kind == "longTerm":
             st = ym.State(v["s"], v["d"])
             got = (m.lapse_stability(st, v["r"]) if v["g"] == ym.AGAIN
@@ -61,10 +69,10 @@ def test_goldens():
         assert close(got, v["out"]), (v, got)
         checked += 1
     for v in g["fullState"]:
-        st = m.next_state(ym.State(v["s"], v["d"]), v["t"], v["g"])
+        st = m.next_state(ym.State(v["s"], v["d"]), v["t"], v["g"], floor_hard)
         assert close(st.stability, v["outS"]) and close(st.difficulty, v["outD"]), (v, st)
         checked += 2
-    print(f"goldens: {checked} values agree with py-fsrs 6.3.1")
+    print(f"goldens: {checked} values agree with py-fsrs {version}")
 
 
 def test_kotlin_random():
