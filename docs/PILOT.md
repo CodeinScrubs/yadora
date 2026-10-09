@@ -55,15 +55,21 @@ Everything is in the Persian guide. The essentials:
   Record a review after covering that whole scope. A scope line is optional; topics need not have equal
   size or take one sitting. Larger scopes make a single memory rating harder to interpret.
 - **Rate the first study the same day**, ideally straight after studying ("Save and rate now"). The
-  schedule counts from that moment.
+  schedule counts from that moment; a study logged a day late can say "Studied: yesterday".
 - **Choose a topic and review it outside the app**, by any method, then record memory and understanding.
-  The owner uses a mixed subjective post-study rating: remembered material, perceived mastery after study
-  and topic difficulty may all affect it. No separate pre-study estimate or quiz is required. A recalled
-  pre-study impression can inform the answer, but these grades are not an objective recall test.
-- **"Forgot" is not failure.** It is the most useful answer the model gets. Rating a lost topic "Hard"
-  can mislead the schedule (RESEARCH.md §2.2). Do not turn a subjective answer into a claim of measured recall.
-- Optionally tick how you reviewed, and if you did questions, the score. Ten seconds; it is what lets the
-  pilot tell methods apart and check the ratings.
+  The memory rating is the learner's overall judgement after the review (what was still there, how well
+  they know it now, how heavy the topic is) with ONE fixed point (the owner's definition, 2026-10-09):
+  **Forgot = most of it was gone when they came back to the topic, even if they know it well after
+  reading.** No separate pre-study estimate or quiz is required; these grades are a self-rating, not an
+  objective recall test. The understanding question follows every answer, Forgot included.
+- **"Forgot" is not failure.** It is the most useful answer the model gets: the schedule learns from Forgot
+  or not. Rating a lost topic "Hard" can mislead the schedule (RESEARCH.md §2.2). Hard for a heavy,
+  memorization-dense topic that was still there is fine: it brings the topic back sooner.
+- Optionally tick how you reviewed, and if you did questions, the score; and, under the understanding
+  question, about how long the review took (10, 20, 30, 45 or 60+ minutes; none = not known). Ten
+  seconds; it is what lets the pilot tell methods apart, check the ratings and see whether the workload fits.
+- **Logged a review late?** The "Reviewed: today" chip on the rating screen says yesterday or an earlier
+  day, and a review's day can be corrected from the topic's history.
 - "Not today" and missed days are fine. Deleting and re-adding a topic is not: it throws away its history.
   Edit it instead.
 

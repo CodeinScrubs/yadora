@@ -29,8 +29,8 @@ internal object BackupIdentity {
                 "MERGE" -> detail.split(',').forEach { field ->
                     field.trim().toLongOrNull()?.let { topic = maxOf(topic, reservable(it)) }
                 }
-                "RATING_CORRECTED", "REVIEW_FORECAST" -> detail.split(' ').forEach { field ->
-                    if (field.startsWith("log=") || (event.type == "RATING_CORRECTED" && field.startsWith("upto="))) {
+                "RATING_CORRECTED", "REVIEW_DATE_CORRECTED", "REVIEW_FORECAST" -> detail.split(' ').forEach { field ->
+                    if (field.startsWith("log=") || (event.type != "REVIEW_FORECAST" && field.startsWith("upto="))) {
                         field.substringAfter('=').toLongOrNull()?.let { review = maxOf(review, reservable(it)) }
                     }
                 }

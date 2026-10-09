@@ -897,8 +897,11 @@ class MedReviewRepository(
      * It reloads the row (so an edit made on the Edit screen is not clobbered by a stale copy), carries it
      * onto the current memory model BEFORE anything schedules from it, schedules with the same
      * [MedScheduler.review] the rating buttons preview with, and writes the row and its log in one
-     * transaction ([commitReview]). [now] is a parameter only so a test can place a history in time; the
-     * screen passes the wall clock. Returns null if the topic no longer exists.
+     * transaction ([commitReview]). [now] is when the review HAPPENED: the screen passes the wall clock, or the
+     * chosen day's time when the learner says it was an earlier day ([com.example.domain.model.ReviewDay]), and a test
+     * places a history in time with it. [loggedAt] is when it is SAVED, on the wall clock (it defaults to [now], which
+     * is what a test means). [studyMinutes] is the learner's optional rough estimate. Returns null if the topic no
+     * longer exists.
      *
      * The read, the projection, the scheduling and the write are ONE transaction, not only the write: a write
      * landing between this read and [commitReview] (an Edit-screen save, a second rating of the same topic, a
@@ -916,7 +919,12 @@ class MedReviewRepository(
         questionsTotal: Int? = null,
         sessionKind: com.example.domain.model.SessionKind,
         reviewDurationMs: Long,
-    ): RatedReview? = database.withTransaction { rateUnitLocked(unitId, now, memoryRating, understandingRating, understandingAsked, methods, questionsCorrect, questionsTotal, sessionKind, reviewDurationMs) }
+        studyMinutes: Int = com.example.domain.model.StudyMinutes.NOT_GIVEN,
+        loggedAt: Long = now,
+    ): RatedReview? = database.withTransaction {
+        rateUnitLocked(unitId, now, memoryRating, understandingRating, understandingAsked, methods, questionsCorrect, questionsTotal,
+            sessionKind, reviewDurationMs, studyMinutes, loggedAt)
+    }
 
     private suspend fun rateUnitLocked(
         unitId: Long,
@@ -929,6 +937,8 @@ class MedReviewRepository(
         questionsTotal: Int?,
         sessionKind: com.example.domain.model.SessionKind,
         reviewDurationMs: Long,
+        studyMinutes: Int,
+        loggedAt: Long,
     ): RatedReview? {
         val loaded = getUnitById(unitId)?.takeIf { !it.archived && it.deletedAt == null } ?: return null
         // An FSRS-5 stability is not an FSRS-6 stability, so the state is rebuilt by replaying this
@@ -1005,7 +1015,8 @@ class MedReviewRepository(
             difficulty = outcome.state.difficulty,
             stability = outcome.state.stability,
             retrievability = outcome.retrievabilityAtReview,
-            updatedAt = now,
+            // The row was changed now, even when the review it records happened on an earlier day.
+            updatedAt = loggedAt,
         )
 
         val score = if (reviewNumber == 0) -1 to -1
@@ -1049,6 +1060,8 @@ class MedReviewRepository(
             questionsCorrect = score.first,
             questionsTotal = score.second,
             sessionKind = sessionKind.name,
+            studyMinutes = com.example.domain.model.StudyMinutes.normalized(studyMinutes),
+            loggedAt = loggedAt,
         )
         val logId = commitReview(updatedUnit, log, com.example.data.ReviewForecast.detail(unit, log, reviewZone))
         return RatedReview(
@@ -1165,32 +1178,74 @@ class MedReviewRepository(
      * correction still recomputes everything, which is what the dialog says it does.
      *
      * The read, the replay and the write are one transaction, so nothing written in between is overwritten.
+     *
+     * [newReviewedAt] also moves the review to another time (the day a review happened, corrected from the topic's
+     * history, 2026-10-09). It must stay strictly between the reviews saved before and after it and not lie after
+     * [now], so the order of the history never changes ([com.example.domain.model.ReviewDay.timeForCorrection] picks
+     * such a time). The corrected review and the one after it count their days again from the new time; every other
+     * review keeps the day count it was scheduled with. A first rating moved to before the topic's study date takes the
+     * study date with it (the first rating is when it was studied). The move is logged as REVIEW_DATE_CORRECTED; like a changed
+     * rating it is a new decision under today's policy and calibration, and the predictions it recomputed, the
+     * corrected review's own included, leave the calibration's evidence ([com.example.data.RecomputedPredictions]).
      */
     suspend fun editReviewRating(
         unitId: Long,
         logId: Long,
         newMemory: MemoryRating,
         newUnderstanding: UnderstandingRating?,
-    ) = database.withTransaction { editReviewRatingLocked(unitId, logId, newMemory, newUnderstanding) }
+        newReviewedAt: Long? = null,
+        now: Long = System.currentTimeMillis(),
+    ) = database.withTransaction { editReviewRatingLocked(unitId, logId, newMemory, newUnderstanding, newReviewedAt, now) }
 
     private suspend fun editReviewRatingLocked(
         unitId: Long,
         logId: Long,
         newMemory: MemoryRating,
         newUnderstanding: UnderstandingRating?,
+        newReviewedAt: Long?,
+        now: Long,
     ) {
         val unit = studyUnitDao.getUnitById(unitId) ?: return
         // The order the reviews happened in (REVIEW_HISTORY_ORDER: saved order, not the clock, which can go back).
         // One-shot read: a Flow's query would run outside this transaction.
-        val logs = reviewLogDao.getLogsForUnitOnce(unitId)
+        val stored = reviewLogDao.getLogsForUnitOnce(unitId)
             .sortedWith(REVIEW_HISTORY_ORDER)
-        if (logs.isEmpty()) return
+        if (stored.isEmpty()) return
+        var ratingChanged = false
+        var movedFrom: Long? = null
+        // A topic's first rating moved to before its study date takes the study date with it: the first rating is when it
+        // was studied (the owner's model), and a study date after it would read as a first rating given early.
+        var studiedAt = unit.studiedAt
+        var logs = stored
         if (logId != -1L) {
             // A correction of a log that is gone (undone meanwhile) corrects nothing.
-            val target = logs.firstOrNull { it.id == logId } ?: return
+            val index = stored.indexOfFirst { it.id == logId }
+            if (index < 0) return
+            val target = stored[index]
             val sameMemory = target.memoryRating == newMemory.name
             val sameUnderstanding = newUnderstanding == null || target.understandingRating == newUnderstanding.name
-            if (sameMemory && sameUnderstanding) return
+            val dateChanged = newReviewedAt != null && newReviewedAt != target.reviewedAt
+            if (sameMemory && sameUnderstanding && !dateChanged) return
+            ratingChanged = !(sameMemory && sameUnderstanding)
+            if (dateChanged) {
+                val to = newReviewedAt!!
+                val previous = stored.getOrNull(index - 1)
+                val next = stored.getOrNull(index + 1)
+                require(to <= now && (previous == null || to > previous.reviewedAt) && (next == null || to < next.reviewedAt)) {
+                    "A corrected review must stay between the reviews saved before and after it, and not in the future"
+                }
+                movedFrom = target.reviewedAt
+                if (index == 0 && to < studiedAt) studiedAt = to
+                val model = MedScheduler.MemoryModel.of(unit.memoryModel)
+                logs = stored.mapIndexed { i, l ->
+                    when (i) {
+                        // The first log seeds the history, so its own gap is never read.
+                        index -> l.copy(reviewedAt = to, elapsedDays = previous?.let { MedScheduler.modelElapsedDays(it.reviewedAt, to, model) } ?: l.elapsedDays)
+                        index + 1 -> l.copy(elapsedDays = MedScheduler.modelElapsedDays(to, l.reviewedAt, model))
+                        else -> l
+                    }
+                }
+            }
         }
 
         // A topic on a personal weight set replays under that set, so the registry must hold it even in
@@ -1214,12 +1269,12 @@ class MedReviewRepository(
         val replaySeed = MedScheduler.firstStudy(UnderstandingRating.Partial, unit.highYield).state
         var stability = replaySeed.stability
         var difficulty = replaySeed.difficulty
-        var prevTime = unit.studiedAt
+        var prevTime = studiedAt
         var prevStateName = "New"
         var prevInterval = 0.0
         var reviewCount = 0
         var lapseCount = 0
-        var lastReviewedAt = unit.studiedAt
+        var lastReviewedAt = studiedAt
         var lastInterval = 0.0
         var lastStability = stability
         var lastDifficulty = difficulty
@@ -1435,6 +1490,7 @@ class MedReviewRepository(
         // Re-anchor the next due date to the last (corrected) review time + recomputed interval, then write
         // the corrected logs + unit ATOMICALLY so a crash mid-replay can't desync history and schedule.
         val finalUnit = unit.copy(
+            studiedAt = studiedAt,
             stability = lastStability,
             difficulty = lastDifficulty,
             state = lastStateName,
@@ -1463,13 +1519,24 @@ class MedReviewRepository(
             // later predictions a correction recomputed (an outside audit, 2026-10-02). `upto` is the topic's last log
             // this replay rewrote, read in this transaction: saved order, not the clock, tells which later logs it
             // recomputed (RecomputedPredictions; the clock can have gone back since those reviews).
-            if (logId != -1L) logs.firstOrNull { it.id == logId }?.let { before ->
+            if (ratingChanged) stored.firstOrNull { it.id == logId }?.let { before ->
                 database.eventLogDao().insert(
                     com.example.data.local.entity.EventLogEntity(
                         type = "RATING_CORRECTED",
                         unitId = unitId,
-                        detail = "log=$logId upto=${logs.maxOf { it.id }} memory=${before.memoryRating}>${newMemory.name} " +
+                        detail = "log=$logId upto=${stored.maxOf { it.id }} memory=${before.memoryRating}>${newMemory.name} " +
                             "understanding=${before.understandingRating}>${newUnderstanding?.name ?: before.understandingRating}",
+                    )
+                )
+            }
+            // The day a review happened, corrected: the time it had and the time it has now, so the research export can
+            // tell when a review happened from when it was saved, and which predictions the move recomputed.
+            movedFrom?.let { from ->
+                database.eventLogDao().insert(
+                    com.example.data.local.entity.EventLogEntity(
+                        type = com.example.data.RecomputedPredictions.DATE_EVENT,
+                        unitId = unitId,
+                        detail = "log=$logId upto=${stored.maxOf { it.id }} from=$from to=$newReviewedAt",
                     )
                 )
             }

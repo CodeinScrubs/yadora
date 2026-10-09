@@ -30,9 +30,11 @@ object AnalyticsExporter {
         put("purpose", "One learner's Yadora history for analysing and tuning the scheduler. Yadora schedules WHEN to review a " +
             "topic; the review itself is done by any method, mostly outside the app. No topic titles, notes, prompts or key points.")
         put("times", "Epoch milliseconds (UTC). Local dates need environment.timeZoneId. Day counts on FSRS-6 logs are whole LOCAL calendar days.")
-        put("recallOutcome", "reviewLogs with logType RECALL: memoryRating is the learner's subjective POST-STUDY judgment, " +
-            "mixing remembered material, current mastery and topic difficulty. Forgot = 0 and Hard/Good/Easy = 1 are " +
-            "diagnostic proxies only: no separate pre-study recall test, item-correctness measurement or exam outcome is implied.")
+        put("recallOutcome", "reviewLogs with logType RECALL: memoryRating is the learner's own judgement, given after the review. " +
+            "Since 2026-10-09 (ratingDef=2 in its REVIEW_FORECAST): Forgot = most of the topic was gone when the learner came " +
+            "back to it, even if they know it well now after reading; Hard/Good/Easy = their overall judgement (what was still " +
+            "there, current mastery, how heavy the topic is). Before (no ratingDef): 'what you still knew before rereading or " +
+            "checking answers'. Forgot = 0 and Hard/Good/Easy = 1 are a self-rating, not a recall test, an item score or an exam outcome.")
         put("firstStudy", "logType FIRST_STUDY: the rating given right after first studying the topic. memoryRating Easy/Good/Hard " +
             "there means topic difficulty Easy/Medium/Hard (initialDifficulty), NOT a recall. The schedule counts from this moment. " +
             "A later FIRST_STUDY row on the same topic (only after a merge) is a re-exposure, never a recall.")
@@ -41,7 +43,8 @@ object AnalyticsExporter {
             "calibration. Pool predictions only within one (schedulerVersion, parameterSetId). A rating correction replays " +
             "the topic's history on the set it is on now and rewrites this value on its other rows: a row reviewed before " +
             "its set's activatedAt (memoryParameterSets), or a later row of a topic whose rating was corrected (a RATING_CORRECTED " +
-            "event made after it), was recomputed, not predicted, and the app's calibration leaves it out.")
+            "event made after it), was recomputed, not predicted, and the app's calibration leaves it out. A REVIEW_DATE_CORRECTED " +
+            "event recomputes the moved review's own row as well.")
         put("calibrationScaleAtReview", "The per-user multiplier applied to the memory interval when this review was scheduled " +
             "(1 = none). Calibrated recall = (1 + ((p^(1/decay)) - 1) / scale)^decay with decay = -w20 of the log's weight set.")
         put("intervals", "nextIntervalDays is the MEMORY interval actually scheduled (after calibration, caps and +-5% fuzz). The topic " +
@@ -55,7 +58,14 @@ object AnalyticsExporter {
             "Empty = not said. questionsCorrect/questionsTotal: optional score for that review, -1 = not recorded.")
         put("sessionKind", "PLAN = today's plan within the daily limit, EXTRA = 'review more anyway', TOPIC = one topic opened on purpose, " +
             "AHEAD = 'review ahead' (not yet due, weakest first). Null = logged before v12.")
-        put("understandingRating", "'How well do you understand it now?' Confused / Partial / Clear; NotAsked after Forgot.")
+        put("understandingRating", "'How well do you understand it now?' Confused / Partial / Clear. NotAsked: after Forgot, " +
+            "which skipped the question until 2026-10-09; it is asked after Forgot too since then (the date stays tomorrow).")
+        put("studyMinutes", "The learner's rough estimate of how long this review or first study took, from quick choices " +
+            "(10, 20, 30, 45, 60 = 60 or more); -1 = not given, which is NOT zero. Optional and often skipped, so report how " +
+            "many reviews carry one before using it. Not reviewDurationMs (the seconds the rating screen was open).")
+        put("loggedAt", "When the review was saved, on the phone's clock. reviewedAt is when it happened: the learner can say it " +
+            "was an earlier day ('Reviewed: yesterday', then reviewedAt is that day at this hour) or correct the day later " +
+            "(REVIEW_DATE_CORRECTED). -1 = saved before export v16.")
         put("consistency", "consistency.issues lists broken invariants: each one is a bug report, not a statistic. Empty is expected.")
         put("eventLogs", "Non-review actions, oldest first: STUDY_ACTION, PROCRASTINATE (a topic's 'Not today'), PROCRASTINATE_ALL " +
             "(the notification's 'Not today'), REDISTRIBUTE ('Spread out'), SNOOZE, MERGE, NOTIF_SHOWN (a reminder posted; " +
@@ -72,7 +82,9 @@ object AnalyticsExporter {
             "SETTINGS_CHANGED (key=daily_review_limit|desired_retention|reminder_time old=<v> new=<v>: when the learner " +
             "changed a setting the plan depends on) and the PERSONAL_MODEL family. RATING_CORRECTED also carries " +
             "upto=<id>: the topic's last log when the correction replayed it; the logs after log=<id> up to it were " +
-            "recomputed (an event without upto: the later logs reviewed before it).")
+            "recomputed (an event without upto: the later logs reviewed before it). REVIEW_DATE_CORRECTED (log=<id> upto=<id> " +
+            "from=<ms> to=<ms>, since export v16): the day a logged review happened was moved, and its log and the logs " +
+            "after it up to upto were recomputed.")
         put("reviewDurationMs", "How long the review screen showed the topic before the rating, capped at 30 minutes. NOT " +
             "the time the review took: a review is done by any method, mostly outside the app (a question bank, a book).")
         put("reviewForecast", "REVIEW_FORECAST events (v=1) are immutable snapshots saved atomically with a review: log=<id> joins " +
@@ -82,7 +94,8 @@ object AnalyticsExporter {
             "memoryDue/repairDue/effectiveDue/deferredUntil are the stored dates before the review; dueContext classifies " +
             "availability by the end of that local day (not the user's motive). FIRST_STUDY is not delayed-recall evidence. " +
             "Older reviews have no forecast event: do not backfill one from a later replay. These self-ratings are a proxy, " +
-            "not objectively measured recall or proof of an educational benefit. tools/pilot/forecast_audit.py reads them.")
+            "not objectively measured recall or proof of an educational benefit. ratingDef (2 since 2026-10-09; absent = 1) says " +
+            "which meaning the memory rating had (recallOutcome). tools/pilot/forecast_audit.py reads them.")
         put("dailySnapshot", "DAILY_SNAPSHOT: at most one per local day, written when the app first opens that day or by the " +
             "6-hourly safety worker, whichever comes first (its time says which part of the day; a day without one is a day " +
             "the phone ran neither). Counts only, no content. detail: active (topics not archived or deleted), rated (with a " +
@@ -204,7 +217,10 @@ object AnalyticsExporter {
         // because the notification's "Not today" defers every due topic without naming them. Also TIME_ZONE (the zone
         // the phone counts its days in), SETTINGS_CHANGED (the daily limit, the target, the reminder time) and the
         // `upto` bound on RATING_CORRECTED (which predictions a correction recomputed, by saved order not the clock).
-        root.put("exportVersion", 15)
+        // v16 (2026-10-09, the owner's redesign): per log the learner's optional minutes (studyMinutes) and when it was
+        // saved (loggedAt) as against when it happened (reviewedAt, which can be an earlier day); REVIEW_DATE_CORRECTED;
+        // the understanding question after Forgot; and the anchored rating definition (ratingDef=2 in REVIEW_FORECAST).
+        root.put("exportVersion", 16)
         root.put("participantId", ResearchId.get(context))
         root.put("exportedAt", System.currentTimeMillis())
         root.put("appVersionName", com.example.BuildConfig.VERSION_NAME) // never goes stale on version bumps
@@ -480,6 +496,8 @@ object AnalyticsExporter {
                 put("questionsCorrect", l.questionsCorrect)
                 put("questionsTotal", l.questionsTotal)
                 put("sessionKind", l.sessionKind ?: JSONObject.NULL)
+                put("studyMinutes", l.studyMinutes)
+                put("loggedAt", l.loggedAt)
             })
         }
         w.endArray()
@@ -505,6 +523,8 @@ object AnalyticsExporter {
             if (!(l.questionsCorrect == -1 && l.questionsTotal == -1) &&
                 !com.example.domain.model.QuestionScore.isValid(l.questionsCorrect, l.questionsTotal)
             ) flag("BAD_QUESTION_SCORE", l.studyUnitId, "log ${l.id} has ${l.questionsCorrect}/${l.questionsTotal}")
+            if (!com.example.domain.model.StudyMinutes.isValid(l.studyMinutes))
+                flag("BAD_STUDY_MINUTES", l.studyUnitId, "log ${l.id} has ${l.studyMinutes} minutes")
             if (l.parameterSetId !in usableSetIds) flag("UNKNOWN_PARAMETER_SET", l.studyUnitId, "log ${l.id} names weight set ${l.parameterSetId}")
         }
         for (u in units) {

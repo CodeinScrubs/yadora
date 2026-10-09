@@ -96,11 +96,13 @@ data class AppStrings(
     // Review Session Screen
     val memoryRating: String = "Memory Rating",
     val understandingRating: String = "Understanding Rating",
-    // A review is whatever the learner chooses (questions, notes, a lecture, a video); the rating is how
-    // much of the topic they still had when they came back to it — the recall outcome FSRS models.
+    // A review is whatever the learner chooses (questions, notes, a lecture, a video). The rating is the owner's own
+    // judgement after the review, with ONE fixed point (2026-10-09): Forgot = most of it was gone when they came back to
+    // the topic, even if they know it well now. That is the one distinction FSRS learns from (Forgot or not); Hard, Good
+    // and Easy only change how fast the interval grows.
     val memoryQuestion: String = "How much did you still remember?",
-    // One sentence: the method row just above already says a review can be done any way.
-    val memoryQuestionHint: String = "Rate what you still knew before rereading or checking answers.",
+    // One sentence: the method row just above already says a review can be done any way, and the screen must fit a phone.
+    val memoryQuestionHint: String = "Your overall judgement, but Forgot if most of it was gone when you came back, even if you know it now.",
     val understandingNowQuestion: String = "How well do you understand it now?",
     // Key points (DB v8): the scoring standard, ticked after the reveal.
     val dueNow: String = "Due Now",
@@ -111,10 +113,11 @@ data class AppStrings(
     val ratingHard: String = "Hard",
     val ratingGood: String = "Good",
     val ratingEasy: String = "Easy",
-    // What each rating means for a review done any way. Behaviourally anchored: they describe what the
-    // learner still had, never which button is "right".
-    val ratingFailMeaning: String = "Most of it was gone",
-    val ratingHardMeaning: String = "The core was there, with real gaps",
+    // What each rating means for a review done any way. They describe what the learner had, never which button is
+    // "right". Hard also covers a heavy, memorization-dense topic: the owner rates those lower, and Hard brings them
+    // back sooner, which is what they want (2026-10-09).
+    val ratingFailMeaning: String = "Most of it was gone when I came back",
+    val ratingHardMeaning: String = "Real gaps, or a heavy topic",
     val ratingGoodMeaning: String = "I remembered most of it",
     val ratingEasyMeaning: String = "I knew it thoroughly",
 )
@@ -215,7 +218,7 @@ val PersianStrings = AppStrings(
     memoryRating = "درجه‌بندی حافظه",
     understandingRating = "درجه‌بندی درک مطلب",
     memoryQuestion = "چقدر از آن یادت مانده بود؟",
-    memoryQuestionHint = "بگو پیش از دوباره‌خواندن یا دیدن جواب‌ها چقدر از آن یادت بود.",
+    memoryQuestionHint = "قضاوت کلی خودت؛ ولی اگر وقتی سراغش آمدی بیشترش رفته بود، «فراموش کردم»، حتی اگر الان بلدی.",
     understandingNowQuestion = "الان چقدر آن را می‌فهمی؟",
     dueNow = "موعد الان",
     needsRelearnState = "نیاز به یادگیری مجدد",
@@ -225,8 +228,8 @@ val PersianStrings = AppStrings(
     ratingHard = "سخت",
     ratingGood = "خوب",
     ratingEasy = "آسان",
-    ratingFailMeaning = "بیشترش را فراموش کرده بودم",
-    ratingHardMeaning = "اصلش یادم بود، ولی با جاهای خالی جدی",
+    ratingFailMeaning = "وقتی سراغش آمدم، بیشترش رفته بود",
+    ratingHardMeaning = "جاهای خالی جدی، یا مبحث سنگین",
     ratingGoodMeaning = "بیشترش یادم بود",
     ratingEasyMeaning = "کامل و مسلط بودم",
 )
@@ -324,7 +327,7 @@ val GermanStrings = AppStrings(
     memoryRating = "Erinnerung",
     understandingRating = "Verständnis",
     memoryQuestion = "Wie viel wusstest du noch?",
-    memoryQuestionHint = "Bewerte, was du noch wusstest, bevor du nachgelesen oder Lösungen angesehen hast.",
+    memoryQuestionHint = "Dein Gesamteindruck, aber „Vergessen“, wenn das meiste beim Wiederanfangen weg war, auch wenn du es jetzt kannst.",
     understandingNowQuestion = "Wie gut verstehst du es jetzt?",
     dueNow = "Jetzt fällig",
     needsRelearnState = "Neu lernen",
@@ -334,8 +337,8 @@ val GermanStrings = AppStrings(
     ratingHard = "Schwer",
     ratingGood = "Gut",
     ratingEasy = "Leicht",
-    ratingFailMeaning = "Das meiste war weg",
-    ratingHardMeaning = "Der Kern war da, mit echten Lücken",
+    ratingFailMeaning = "Beim Wiederanfangen war das meiste weg",
+    ratingHardMeaning = "Echte Lücken, oder ein schweres Thema",
     ratingGoodMeaning = "Das meiste wusste ich noch",
     ratingEasyMeaning = "Ich konnte es sicher und vollständig",
 )

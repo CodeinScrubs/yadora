@@ -129,6 +129,48 @@ def test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed()
     print(f"a correction marks what it recomputed by saved order ({len(by_order)} reviews), also after the clock went back")
 
 
+def test_a_corrected_day_recomputes_the_moved_review_too():
+    """REVIEW_DATE_CORRECTED (export v16, 2026-10-09) moves a review to another day: its own gap changed, so its own
+    prediction was recomputed as well as every later one up to `upto`. The app's RecomputedPredictions applies the
+    same rule; a rating correction still leaves the corrected review's prediction alone."""
+    logs = [dict(id=1, reviewedAt=100), dict(id=2, reviewedAt=200), dict(id=3, reviewedAt=300), dict(id=4, reviewedAt=400)]
+
+    def marked(kind, detail):
+        fixes = analyze.corrections({"eventLogs": [dict(type=kind, unitId=7, at=500, detail=detail)]})[7]
+        return {l["id"] for l in logs if analyze.recomputed_by(l, fixes)}
+
+    assert marked("REVIEW_DATE_CORRECTED", "log=2 upto=3 from=200 to=150") == {2, 3}
+    assert marked("RATING_CORRECTED", "log=2 upto=3 memory=Good>Hard") == {3}
+    d = fixture()
+    d = copy.deepcopy(d)
+    d["eventLogs"].append(dict(id=99999, at=1, type="REVIEW_DATE_CORRECTED", unitId=7, detail="log=2 upto=3 from=200 to=150"))
+    d["eventLogs"].append(dict(id=99998, at=1, type="RATING_CORRECTED", unitId=7, detail="log=2 upto=3 memory=Good>Hard"))
+    fixes = analyze.corrections(d)[7]
+    assert sum(1 for c in fixes if c[3]) == 1 and sum(1 for c in fixes if not c[3]) == 1
+    print("a corrected day marks the moved review and the later ones; a corrected rating only the later ones")
+
+
+def test_review_time_reports_coverage_before_the_minutes():
+    """The learner's optional minutes (export v16): not given (-1) is never read as zero, coverage comes first, and a
+    review saved hours after it happened (a backdated rating) is counted apart."""
+    base = 1_790_000_000_000
+    logs = [dict(id=1, logType="FIRST_STUDY", reviewedAt=base, studyMinutes=60, loggedAt=base),
+            dict(id=2, logType="RECALL", reviewedAt=base + 5 * 86_400_000, studyMinutes=-1, loggedAt=base + 5 * 86_400_000,
+                 reviewMethods=["Questions"]),
+            dict(id=3, logType="RECALL", reviewedAt=base + 9 * 86_400_000, studyMinutes=20,
+                 loggedAt=base + 10 * 86_400_000, reviewMethods=["Questions"]),
+            dict(id=4, logType="RECALL", reviewedAt=base + 20 * 86_400_000, studyMinutes=30, loggedAt=-1,
+                 reviewMethods=["Reading"])]
+    t = analyze.review_time(dict(reviewLogs=logs, eventLogs=[dict(type="REVIEW_DATE_CORRECTED", detail="log=3 upto=4")]))
+    assert (t["logs"], t["given"], t["first_studies_given"], t["reviews_given"]) == (4, 3, 1, 2), t
+    assert t["first_study_median"] == 60 and t["review_median"] == 25, t
+    assert t["by_method"]["Questions only"] == dict(n=1, median=20) and t["by_method"]["Reading only"] == dict(n=1, median=30), t
+    assert (t["with_save_time"], t["saved_later"], t["date_corrections"]) == (3, 1, 1), t
+    empty = analyze.review_time(dict(reviewLogs=[dict(id=1, logType="RECALL", reviewedAt=base)]))
+    assert empty["given"] == 0 and empty["review_median"] is None, empty
+    print("review time: coverage first, not given is never zero, a backdated save is counted apart")
+
+
 def test_a_tampered_interval_is_caught():
     d = fixture()
     bad = copy.deepcopy(d)
@@ -188,7 +230,10 @@ def test_rows_a_correction_recomputed_are_not_calibration_evidence():
         log["parameterSetId"] = 7  # the same numbers as the defaults, so every row still replays exactly
     summary, _, files = run([d])
     assert summary["integrity"]["mismatched"] == 0, summary["integrity"]
-    after = sum(1 for l in recalls if l["reviewedAt"] >= activated and 0 <= l["retrievabilityAtReview"] <= 1)
+    # Rows a correction recomputed are left out too (`recomputed_by`), whichever side of the activation they fall on.
+    fixes = analyze.corrections(d)
+    after = sum(1 for l in recalls if l["reviewedAt"] >= activated and 0 <= l["retrievabilityAtReview"] <= 1
+                and not analyze.recomputed_by(l, fixes.get(l["studyUnitId"], [])))
     key = "FSRS-6/7@" + d["participantId"]  # a personal set is one learner's (its id is local to the phone)
     assert summary["calibration"][key]["raw"]["n"] == after, (summary["calibration"][key]["raw"]["n"], after)
     assert "left out" in files["report.md"]
@@ -637,7 +682,12 @@ def test_history_missing_from_the_newest_export_is_reported():
     older = fixture()
     newer = copy.deepcopy(older)
     newer["exportedAt"] += 40 * 86_400_000
-    gone = 8  # a topic with two reviews; its events stay behind, as they do when a topic is purged
+    # A topic with two reviews (found, not assumed: the fixture is regenerated when the export changes); its events stay
+    # behind, as they do when a topic is purged.
+    per_topic = {}
+    for l in older["reviewLogs"]:
+        per_topic[l["studyUnitId"]] = per_topic.get(l["studyUnitId"], 0) + 1
+    gone = min(u for u, n in per_topic.items() if n == 2)
     lost = [l for l in newer["reviewLogs"] if l["studyUnitId"] == gone]
     newer["reviewLogs"] = [l for l in newer["reviewLogs"] if l["studyUnitId"] != gone]
     newer["studyUnits"] = [u for u in newer["studyUnits"] if u["id"] != gone]
@@ -793,6 +843,8 @@ if __name__ == "__main__":
     test_real_export_replays_exactly()
     test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
     test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed()
+    test_a_corrected_day_recomputes_the_moved_review_too()
+    test_review_time_reports_coverage_before_the_minutes()
     test_a_tampered_interval_is_caught()
     test_a_tampered_prediction_and_elapsed_are_caught()
     test_several_participants_and_duplicates()

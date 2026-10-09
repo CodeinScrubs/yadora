@@ -38,7 +38,9 @@ object BackupManager {
     // v9: what each review consisted of (review_logs.reviewMethods / questionsCorrect / questionsTotal /
     // sessionKind) and the pseudonymous research id, so a pilot participant who restores onto a new phone
     // keeps one identity and loses none of the pilot data.
-    const val BACKUP_VERSION = 9
+    // v10 (2026-10-09): the learner's optional minutes per review (studyMinutes) and when each review was saved
+    // (loggedAt), as against when it happened (reviewedAt, which can be an earlier day). Older files: not given (-1).
+    const val BACKUP_VERSION = 10
 
     // The user-preference keys worth carrying across devices (deliberately excludes transient state
     // like last_notif_shown_at).
@@ -137,6 +139,7 @@ object BackupManager {
             w.field("reviewMethods", l.reviewMethods)
             w.field("questionsCorrect", l.questionsCorrect).field("questionsTotal", l.questionsTotal)
             w.field("sessionKind", l.sessionKind)
+            w.field("studyMinutes", l.studyMinutes).field("loggedAt", l.loggedAt)
             w.endObject()
         }
         w.endArray()
@@ -339,6 +342,9 @@ object BackupManager {
                     val sessionKind = o.strOrNull("sessionKind")?.takeIf { k ->
                         com.example.domain.model.SessionKind.entries.any { it.name == k }
                     }
+                    // v10. Absent in older files = not given / not recorded.
+                    val minutes = o.optInt("studyMinutes", com.example.domain.model.StudyMinutes.NOT_GIVEN)
+                    require(com.example.domain.model.StudyMinutes.isValid(minutes)) { "Damaged backup: invalid study minutes $minutes (log ${i + 1})" }
                     logs += ReviewLogEntity(
                         id = o.optLong("id", 0L), studyUnitId = unitRef,
                         reviewedAt = o.optLong("reviewedAt", System.currentTimeMillis()),
@@ -367,6 +373,8 @@ object BackupManager {
                         questionsCorrect = qCorrect,
                         questionsTotal = qTotal,
                         sessionKind = sessionKind,
+                        studyMinutes = minutes,
+                        loggedAt = o.optLong("loggedAt", -1L),
                     )
                 }
                 // v1 backups have no eventLogs array; that's fine — restore just clears the table.

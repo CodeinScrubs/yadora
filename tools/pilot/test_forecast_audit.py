@@ -40,6 +40,29 @@ class ForecastAuditTest(unittest.TestCase):
         self.assertAlmostEqual(-math.log(.8), m["log_loss"])
         self.assertEqual(1, m["answer_changed"])
 
+    def test_rating_definitions_are_told_apart_and_a_moved_day_is_flagged(self):
+        # ratingDef (2026-10-09): absent = definition 1, 2 = the anchored Forgot; an unknown one is refused, not guessed.
+        rows, _, issues = fa.observations(export(events=[snapshot()]))
+        self.assertFalse(issues)
+        self.assertEqual(1, rows[0]["rating_def"])
+        rows, _, issues = fa.observations(export(events=[snapshot(ratingDef=2)]))
+        self.assertEqual(2, rows[0]["rating_def"])
+        _, _, issues = fa.observations(export(events=[snapshot(ratingDef=3)]))
+        self.assertTrue(any("rating definition" in i for i in issues), issues)
+        # The two definitions are never pooled in one group.
+        a = export(events=[snapshot()])
+        b = export(events=[snapshot(ratingDef=2)], participant="YD-TEST-AAAA")
+        summary, _ = fa.audit([a, b])
+        self.assertEqual({1, 2}, {g["rating_def"] for g in summary["groups"]})
+        # A review moved to another day after its forecast: the forecast keeps its time, the row says the day changed.
+        moved = export(events=[snapshot()])
+        moved.data["reviewLogs"][0]["reviewedAt"] = 500
+        rows, _, issues = fa.observations(moved)
+        self.assertFalse(issues)
+        self.assertTrue(rows[0]["day_changed"])
+        self.assertEqual(1000, rows[0]["at"])
+        self.assertEqual(1, fa.metrics(rows)["day_changed"])
+
     def test_legacy_missing_and_purged_forecasts_are_not_backfilled_or_scored(self):
         rows, excluded, issues = fa.observations(export(events=[]))
         self.assertEqual([], rows)
