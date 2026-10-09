@@ -39,6 +39,7 @@ class MedReviewRepository(
     // Study Units
     val activeUnits: Flow<List<StudyUnitEntity>> = studyUnitDao.getAllActiveUnits()
     val archivedUnits: Flow<List<StudyUnitEntity>> = studyUnitDao.getArchivedUnits()
+    val topicTitles = studyUnitDao.observeTopicTitles()
     
     fun getDueUnits(cutoffTime: Long): Flow<List<StudyUnitEntity>> {
         return studyUnitDao.getDueUnits(cutoffTime)
@@ -293,6 +294,8 @@ class MedReviewRepository(
                             it.reviewedAt, it.memoryRating, it.logType,
                             // Merged topics are left out above, so every stored count runs from this topic's own reviews.
                             MedScheduler.storedModelDays(it.elapsedDays, it.schedulerVersion, it.logType, MedScheduler.MemoryModel.FSRS_6),
+                            // Folds follow the order the app recorded reviews, independently of a phone clock rollback.
+                            validationOrder = it.id,
                         )
                     },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
@@ -306,16 +309,24 @@ class MedReviewRepository(
      * the fit began (a higher id) does not. Read inside a transaction, where the fit captures its inputs and where
      * it would adopt the result.
      */
-    internal suspend fun fitIdentity(maxLogId: Long): String {
+    internal suspend fun fitIdentity(
+        maxLogId: Long,
+        retention: Double = MedScheduler.effectiveRetention(highYield = false),
+    ): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         reviewLogDao.getAllLogsOnce().asSequence().filter { it.id <= maxLogId }.sortedBy { it.id }.forEach { l ->
             digest.update(
-                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}\n"
+                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}|${l.elapsedDays}\n"
                     .toByteArray(Charsets.UTF_8)
             )
         }
         val active = database.memoryParameterSetDao().getActive()
         digest.update("active|${active?.id ?: 0L}|${active?.weights.orEmpty()}".toByteArray(Charsets.UTF_8))
+        // These also change training or its adoption test without changing a log's id, rating or time:
+        // merging an unrated duplicate excludes the survivor, legacy logs use the current zone, and
+        // the retention target controls the candidate's interval-lengthening check.
+        digest.update("\nmerged|${mergedUnitIds().sorted().joinToString(",")}".toByteArray(Charsets.UTF_8))
+        digest.update("\nzone|${java.time.ZoneId.systemDefault().id}|retention|$retention".toByteArray(Charsets.UTF_8))
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
@@ -333,6 +344,9 @@ class MedReviewRepository(
      * attempt saw or a month since it. The fit is judged against the set in use on the learner's own
      * later reviews ([com.example.domain.srs.Fsrs6Optimizer.fitAndValidate]); the attempt is recorded
      * either way, and an accepted set becomes ACTIVE in the same transaction that retires the old one.
+     * At a due attempt the active set is also rechecked against the same bounds/grade/lengthening
+     * conditions; a failing baseline is retired even if the candidate is rejected. The lengthening
+     * ceiling is a geometric mean against published defaults, not a per-topic or exam guarantee.
      * Writes the database only — the scheduler switches at the next [refreshMemoryModel]. Returns the
      * attempt's report, or null when none was due.
      */
@@ -357,9 +371,11 @@ class MedReviewRepository(
         var histories: List<com.example.domain.srs.Fsrs6Optimizer.History> = emptyList()
         var latest: com.example.data.local.entity.MemoryParameterSetEntity? = null
         var activeRow: com.example.data.local.entity.MemoryParameterSetEntity? = null
+        var retention = 0.9
         database.withTransaction {
             maxLogId = reviewLogDao.maxLogId()
-            identity = fitIdentity(maxLogId)
+            retention = MedScheduler.effectiveRetention(highYield = false)
+            identity = fitIdentity(maxLogId, retention)
             histories = trainingHistories()
             latest = dao.getLatest()
             activeRow = dao.getActive()
@@ -373,10 +389,25 @@ class MedReviewRepository(
 
         val activeWeights = activeRow?.let { com.example.domain.srs.Fsrs6Optimizer.decode(it.weights) }
         val current = activeWeights ?: com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS
+        // Adoption's conservative ceiling is checked on the learner's history at that attempt.
+        // As the library/evidence changes, the same active weights can cross it. Rejecting a new
+        // candidate must not silently retain that unsafe baseline. This check uses the SAME history
+        // and retention snapshot as the fit; no retirement is committed until its identity is rechecked.
+        val activeLengthening = activeWeights?.let {
+            com.example.domain.srs.Fsrs6Optimizer.lengthening(histories, it, retention)
+        }
+        val activeFailure = when {
+            activeRow == null -> null
+            activeWeights == null -> "invalid weights"
+            !com.example.domain.srs.Fsrs6Optimizer.keepsGradeOrder(activeWeights) -> "grade order"
+            activeLengthening == null || !activeLengthening.isFinite() -> "non-finite lengthening"
+            activeLengthening > 1.0 -> "lengthening"
+            else -> null
+        }
         val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(
-            histories, current, retention = com.example.domain.srs.MedScheduler.effectiveRetention(highYield = false),
+            histories, current, retention = retention,
         )
-        if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return report
+        if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA && activeFailure == null) return report
 
         val weights = report.weights
         val accepted = report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.ACCEPTED && weights != null
@@ -397,7 +428,18 @@ class MedReviewRepository(
                 )
                 return@withTransaction
             }
-            if (accepted) dao.retireActive(now)
+            if (accepted || activeFailure != null) dao.retireActive(now)
+            if (activeFailure != null) {
+                database.eventLogDao().insert(
+                    com.example.data.local.entity.EventLogEntity(
+                        type = "PERSONAL_MODEL_RETIRED",
+                        detail = "set=${activeRow?.id} reason=$activeFailure retention=$retention evidence=$available" +
+                            (if (activeLengthening == null) "" else " lengthening=$activeLengthening"),
+                    )
+                )
+            }
+            // Rechecking the active set does not turn insufficient training data into a fit attempt.
+            if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return@withTransaction
             dao.insert(
                 com.example.data.local.entity.MemoryParameterSetEntity(
                     createdAt = now,
@@ -797,6 +839,10 @@ class MedReviewRepository(
     suspend fun procrastinateUnit(id: Long, until: Long) {
         database.withTransaction {
             val unit = studyUnitDao.getUnitById(id) ?: return@withTransaction
+            // A stale screen may outlive archive, delete or merge. Deferring it must not change
+            // inactive material or invent an adherence event. First check-ins log study already done,
+            // so they stay due, just as the bulk notification action leaves them due.
+            if (unit.archived || unit.deletedAt != null || unit.reviewCount == 0) return@withTransaction
             // "Not today" means LATER, never sooner. The Library's review-now opens a topic weeks
             // before its date, and writing [until] unconditionally pulled a topic due in a month
             // forward to tomorrow — and recorded that as the user's own choice. A topic not due
@@ -838,6 +884,8 @@ class MedReviewRepository(
         /** The date the topic actually returns on: the earlier of the memory and repair clocks. */
         val effectiveDueAt: Long,
         val repairPending: Boolean,
+        /** Exact history at commit, so a stale screen cannot undo across a correction, merge or restore. */
+        val undoHistoryFingerprint: String,
     )
 
     /**
@@ -882,7 +930,7 @@ class MedReviewRepository(
         sessionKind: com.example.domain.model.SessionKind,
         reviewDurationMs: Long,
     ): RatedReview? {
-        val loaded = getUnitById(unitId) ?: return null
+        val loaded = getUnitById(unitId)?.takeIf { !it.archived && it.deletedAt == null } ?: return null
         // An FSRS-5 stability is not an FSRS-6 stability, so the state is rebuilt by replaying this
         // topic's real rating history on the current model. No-op once it is already there, and it
         // never touches the dates: only the latent state moves.
@@ -892,11 +940,17 @@ class MedReviewRepository(
         // offered by today's queue is credited with the day the learner actually waited rather than the
         // clock difference from whatever hour they last reviewed at. Clamped at 0: a future-dated topic
         // reviewed early would otherwise log negative elapsed days.
-        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
+        val reviewZone = java.time.ZoneId.systemDefault()
+        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL, reviewZone)
 
         // The first graded rating is always review #0 (seeded from the rating, capped by the first-study
         // window) however late it happens. Same rule as the replay path.
         val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
+        // A settings/calibration refresh may arrive while the streak read suspends. Capture the
+        // scheduling context once, normalize it as the model does, and use these exact values in
+        // both the calculation and its immutable/replay log; never re-read mutable globals later.
+        val desiredRetention = MedScheduler.effectiveRetention(unit.highYield)
+        val calibration = com.example.domain.srs.RecallCalibration.safeScale(MedScheduler.calibrationScale)
 
         val outcome = MedScheduler.review(
             stability = unit.stability,
@@ -911,6 +965,8 @@ class MedReviewRepository(
             unrepairedStreak = unrepairedStreak(unit.id),
             // The set the projection just put this topic on, stated rather than re-read.
             parameterSetId = unit.parameterSetId,
+            desiredRetentionOverride = desiredRetention,
+            calibrationScaleOverride = calibration,
         )
 
         // Deterministic ±5% fuzz (seeded by unit + prior review count): the value the preview showed and
@@ -973,7 +1029,7 @@ class MedReviewRepository(
             initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(memoryRating) else null,
             reviewDurationMs = reviewDurationMs,
             wasImportantAtReview = if (unit.highYield) 1 else 0,
-            desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
+            desiredRetentionAtReview = desiredRetention,
             schedulerVersion = MedScheduler.SCHEDULER_VERSION,
             // Which policy bundle and which understanding factor shaped this interval, so later policy
             // changes replay history faithfully. -1.0 = "not recorded": the fast Forgot path passes Partial
@@ -982,7 +1038,7 @@ class MedReviewRepository(
             understandingFactorAtReview =
                 if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
             // The per-user interval correction this review was scheduled with.
-            calibrationScaleAtReview = MedScheduler.calibrationScale,
+            calibrationScaleAtReview = calibration,
             // Not scored since the key-point rating cap was retired.
             keyPointsTotal = -1,
             keyPointsRecalled = -1,
@@ -994,11 +1050,12 @@ class MedReviewRepository(
             questionsTotal = score.second,
             sessionKind = sessionKind.name,
         )
-        val logId = commitReview(updatedUnit, log)
+        val logId = commitReview(updatedUnit, log, com.example.data.ReviewForecast.detail(unit, log, reviewZone))
         return RatedReview(
             before = loaded, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
             memoryIntervalDays = nextInterval, effectiveDueAt = effectiveDueAt,
             repairPending = repairDays != null,
+            undoHistoryFingerprint = reviewHistoryFingerprint(unitId),
         )
     }
 
@@ -1006,11 +1063,19 @@ class MedReviewRepository(
      * Persist a review atomically: the unit's schedule, its log, AND its growth event land in one
      * transaction (keyed by the log id, so undo can remove exactly this event). Returns the log id.
      */
-    suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity): Long {
+    suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity, forecastDetail: String? = null): Long {
         var logId = 0L
         database.withTransaction {
             studyUnitDao.updateUnit(updatedUnit)
             logId = reviewLogDao.insertLog(log)
+            // Prospective evidence must land with the review or not at all. Never backfill from a replay:
+            // today's reconstructed state is not the prediction made at that historic review.
+            if (forecastDetail != null) database.eventLogDao().insert(
+                com.example.data.local.entity.EventLogEntity(
+                    at = log.reviewedAt, type = com.example.data.ReviewForecast.EVENT,
+                    unitId = updatedUnit.id, detail = "log=$logId $forecastDetail",
+                )
+            )
             database.eventLogDao().insert(
                 com.example.data.local.entity.EventLogEntity(
                     type = "STUDY_ACTION", unitId = updatedUnit.id, detail = logId.toString()
@@ -1025,17 +1090,38 @@ class MedReviewRepository(
      * and removing the growth event must be one transaction; a crash between them would leave the
      * schedule, the history, and the growth visual disagreeing with each other.
      */
-    suspend fun undoReview(previousUnit: StudyUnitEntity, logId: Long) {
-        database.withTransaction {
+    suspend fun undoReview(review: RatedReview): Boolean = database.withTransaction {
+            val previousUnit = review.before
+            val current = studyUnitDao.getUnitById(previousUnit.id) ?: return@withTransaction false
+            // Check inside the write transaction. ids survive a restore, and wall-clock timestamps can go
+            // backwards, so neither alone proves that this is still the review the screen committed.
+            val latest = reviewLogDao.getLogsForUnitOnce(previousUnit.id).maxByOrNull { it.id }
+            if (latest?.id != review.logId || reviewHistoryFingerprint(previousUnit.id) != review.undoHistoryFingerprint ||
+                !sameScheduling(current, review.after) || current.studiedAt != review.after.studiedAt
+            ) return@withTransaction false
             // Undo takes back the REVIEW, not what the learner changed since: the snapshot's scheduling fields go
             // back, while title, notes, source, scope, subject, Important, study date and archive state stay as
             // they are now. Writing the whole snapshot reverted an edit made between the rating and the undo.
-            val current = studyUnitDao.getUnitById(previousUnit.id)
-            studyUnitDao.updateUnit(current?.let { withSchedulingOf(it, previousUnit) } ?: previousUnit)
-            reviewLogDao.deleteLogById(logId)
-            database.eventLogDao().deleteStudyActionForLog(logId.toString())
-        }
+            studyUnitDao.updateUnit(withSchedulingOf(current, previousUnit))
+            reviewLogDao.deleteLogById(review.logId)
+            database.eventLogDao().deleteStudyActionForLog(review.logId.toString())
+            database.eventLogDao().deleteReviewForecastForLog("log=${review.logId} %")
+            true
     }
+
+    private suspend fun reviewHistoryFingerprint(unitId: Long): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        reviewLogDao.getLogsForUnitOnce(unitId).sortedWith(REVIEW_HISTORY_ORDER).forEach { log ->
+            // All persisted log fields, including replayed predictions and stored elapsed days. This is an
+            // in-process undo token, not a serialized format or a timestamp-based history identity.
+            digest.update(log.toString().toByteArray(Charsets.UTF_8))
+            digest.update(0.toByte())
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun sameScheduling(a: StudyUnitEntity, b: StudyUnitEntity): Boolean =
+        withSchedulingOf(a, b).copy(updatedAt = a.updatedAt) == a
 
     /**
      * [current] with every field a review writes taken from [snapshot]; everything the learner edits kept. When
@@ -1281,6 +1367,7 @@ class MedReviewRepository(
             val interval = MedScheduler.fuzzedInterval(
                 outcome.intervalDays, outcome.baseIntervalDays, unit.id, reviewCount,
                 isFirstStudy = reviewNumber == 0,
+                policyVersion = policyForThisLog, model = replayModel,
             )
             val nextStateName = MedScheduler.masteryState(outcome.state.stability, mem == MemoryRating.Forgot).name
 

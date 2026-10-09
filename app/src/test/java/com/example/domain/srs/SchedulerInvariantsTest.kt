@@ -171,13 +171,14 @@ class SchedulerInvariantsTest {
         for (unitId in listOf(1L, 7L, 12345L)) for (rn in 0..6) {
             val clear = 20.0
             val partial = clear * MedScheduler.UNDERSTANDING_PARTIAL_FACTOR
-            val a = MedScheduler.fuzzedInterval(clear, clear, unitId, rn)
-            val b = MedScheduler.fuzzedInterval(clear, clear, unitId, rn)
+            val a = MedScheduler.fuzzedInterval(clear, clear, unitId, rn, model = MedScheduler.MemoryModel.FSRS_5)
+            val b = MedScheduler.fuzzedInterval(clear, clear, unitId, rn, model = MedScheduler.MemoryModel.FSRS_5)
             assertEquals("same (unit, reviewCount) must always fuzz identically — preview == commit == replay", a, b, 0.0)
             assertTrue("fuzz stays within +/-5%", a in clear * 0.95 - 1e-9..clear * 1.05 + 1e-9)
 
+            // This multiplier belongs to frozen FSRS-5.
             // Multiplicative fuzz keeps the transparent x0.9 ratio intact between previews.
-            val fp = MedScheduler.fuzzedInterval(partial, clear, unitId, rn)
+            val fp = MedScheduler.fuzzedInterval(partial, clear, unitId, rn, model = MedScheduler.MemoryModel.FSRS_5)
             assertEquals("understanding ratio survives fuzz", a * MedScheduler.UNDERSTANDING_PARTIAL_FACTOR, fp, 1e-9)
         }
     }

@@ -66,4 +66,19 @@ class CalibrationCardTest {
         assertEquals(RecallCalibration.WINDOW, card.n)
         assertEquals("old failures have aged out", 100, card.actualPct)
     }
+
+    @Test
+    fun `the card and scheduler agree on saved order after clock rollback regardless of display order`() {
+        val old = (1..RecallCalibration.WINDOW).map { log(it, true).copy(reviewedAt = 100_000L + it) }
+        val recent = (RecallCalibration.WINDOW + 1..2 * RecallCalibration.WINDOW)
+            .map { log(it, it % 100 < 80).copy(reviewedAt = it.toLong()) }
+        val expected = RecallCalibration.scale(DoubleArray(RecallCalibration.WINDOW) { 0.91 },
+            recent.map { it.memoryRating != "Forgot" }.toBooleanArray())
+        for (logs in listOf(old + recent, (old + recent).sortedBy { it.reviewedAt }, (old + recent).reversed())) {
+            val card = calibrationStatsOf(logs)!!
+            assertEquals(RecallCalibration.WINDOW, card.n)
+            assertEquals("saved last rather than greatest timestamp", 80, card.actualPct)
+            assertEquals("same evidence regardless of input/display order", expected, card.scale, 1e-12)
+        }
+    }
 }

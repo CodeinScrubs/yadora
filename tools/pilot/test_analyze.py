@@ -13,6 +13,7 @@ Regenerate the fixture after changing the export format:
       open('tools/pilot/fixtures/sample_export.json', 'w'), separators=(',', ':'), ensure_ascii=False)"
 """
 import copy
+from dataclasses import replace
 import csv
 import json
 import math
@@ -218,6 +219,11 @@ def test_calibration_slope_and_intercept_recover_a_planted_miscalibration():
     print("calibration slope and intercept recover planted miscalibration (1.0 / 0.5 / shifted)")
 
 
+def as_topics(people):
+    return {pid: {group: [(value, (group, i)) for i, value in enumerate(values)]
+                  for group, values in groups.items()} for pid, groups in people.items()}
+
+
 def test_method_comparison_is_made_within_each_learner():
     # A generous rater who mostly does questions and a strict one who mostly reads: pooled, questions look 20 points
     # better; within each learner the methods are identical. D7 must read the within-learner number.
@@ -229,10 +235,10 @@ def test_method_comparison_is_made_within_each_learner():
     pooled_q = [x for p in people.values() for x in p["Questions only"]]
     pooled_r = [x for p in people.values() for x in p["Reading only"]]
     assert sum(pooled_q) / len(pooled_q) - sum(pooled_r) / len(pooled_r) > 0.1, "the confounded pooled gap"
-    wp = analyze.within_participant_difference(people)
+    wp = analyze.within_participant_difference(as_topics(people))
     assert wp["participants"] == 2 and abs(wp["diff"]) < 1e-12, wp
     specialists = {"A": {"Questions only": [0.1] * 50}, "B": {"Reading only": [-0.1] * 50}}
-    assert analyze.within_participant_difference(specialists) is None, "no learner used both: nothing to compare"
+    assert analyze.within_participant_difference(as_topics(specialists)) is None, "no learner used both: nothing to compare"
     print("the method comparison is made within each learner (a between-person gap is not read as a method effect)")
 
 
@@ -320,7 +326,7 @@ def test_d2_and_d7_need_an_interval_that_excludes_zero():
     rng = random.Random(3)
     noisy = {p: {"Questions only": [rng.gauss(0.0, 0.3) for _ in range(40)],
                  "Reading only": [rng.gauss(0.0, 0.3) for _ in range(40)]} for p in "ABC"}
-    wp = analyze.within_participant_difference(noisy)
+    wp = analyze.within_participant_difference(as_topics(noisy))
     assert wp["ci"][0] < wp["diff"] < wp["ci"][1] and 0.03 < wp["se"] < 0.05, wp
     print("D2 and D7: a gap past the threshold is LOOK only when its interval excludes 0, otherwise WAIT")
 
@@ -651,6 +657,31 @@ def test_history_missing_from_the_newest_export_is_reported():
     print("history missing from the newest export is counted and reported; a complete newer export says so")
 
 
+def test_pooled_validation_follows_saved_order_after_clock_rollback():
+    """A later rating must stay held out even when the phone records an earlier wall time.
+    Stored elapsed days keep model inputs identical; only the split is being challenged."""
+    origin, day = 1_790_000_000_000, 86_400_000
+    logs = [dict(id=i + 1, studyUnitId=1, reviewedAt=origin + i * 2 * day,
+                 memoryRating=rating, logType="FIRST_STUDY" if i == 0 else "RECALL",
+                 schedulerVersion="FSRS-6", elapsedDays=float(i * 2))
+            for i, rating in enumerate(["Good", "Good", "Hard", "Good", "Forgot"])]
+    export = analyze.Export("synthetic", dict(studyUnits=[dict(id=1, studiedAt=origin)], reviewLogs=logs),
+                            "learner", origin + 10 * day, analyze.dt.timezone.utc, "UTC")
+
+    def partition(e):
+        cuts = analyze.split_review_ids([e])
+        hist = [(p, u, l, un, tz, cuts[p]) for p, u, l, un, tz in analyze.histories([e])]
+        return analyze.predictions(hist, analyze.ym.DEFAULT_WEIGHTS)
+
+    before = partition(export)
+    assert len(before[0]) == 3 and [y for _, y in before[1]] == [False]
+    changed = copy.deepcopy(export)
+    changed.data["reviewLogs"][-1]["reviewedAt"] -= 30 * day
+    after = partition(changed)
+    assert after == before, "clock rollback moved a later rating into training and exposed a future state to the fit"
+    print("pooled validation keeps later saved reviews held out despite a clock rollback")
+
+
 def test_the_pooled_refit_must_meet_the_app_s_conditions():
     # The pooled refit used to be judged on z alone. The app also refuses a set whose first-rating grades are out of
     # order, or that would schedule longer than the published defaults (Fsrs6Optimizer.keepsGradeOrder, .lengthening).
@@ -733,7 +764,32 @@ def test_each_learner_s_personal_set_is_its_own_calibration_group():
     print("each learner's personal set is its own calibration group; D2 flags one 25 points off")
 
 
+def test_calibration_window_follows_saved_ids_and_filters_before_limiting():
+    # Use the real export's Row type and replay, then deliberately reverse its wall-clock order.
+    row = next(r for r in rows_of(fixture()) if r.is_recall and r.predicted is not None)
+    old = [replace(row, participant="owner", log_id=i + 1, at=100_000 + i, parameter_set=0,
+                   scheduler_version="FSRS-6", predicted=.9, elapsed_days=10., previous_interval=10.,
+                   rating="Good", recomputed=False) for i in range(analyze.ym.CAL_WINDOW)]
+    recent = [replace(r, log_id=r.log_id + analyze.ym.CAL_WINDOW, at=1_000 + i,
+                      rating="Good" if i % 100 < 80 else "Forgot") for i, r in enumerate(old)]
+    invalid = [replace(recent[0], log_id=10_000 + i, **kw) for i, kw in enumerate([
+        dict(participant="another phone"), dict(parameter_set=7), dict(log_type="FIRST_STUDY"),
+        dict(scheduler_version="FSRS-5"), dict(recomputed=True), dict(predicted=None),
+        dict(predicted=1.01), dict(predicted=-.1), dict(predicted=float("nan")),
+        dict(elapsed_days=None), dict(elapsed_days=1.), dict(previous_interval=100.), dict(at=0),
+    ])]
+    rows = old + recent + invalid
+    for ordered in (rows, rows[::-1], sorted(rows, key=lambda r: r.at)):
+        selected = analyze.calibration_window(ordered, "owner", 0, 1_000)
+        assert [r.log_id for r in selected] == [r.log_id for r in recent]
+        scale = analyze.ym.calibration_scale([r.predicted for r in selected], [r.success for r in selected])
+        expected = analyze.ym.calibration_scale([.9] * len(recent), [r.success for r in recent])
+        assert abs(scale - expected) < 1e-12 and scale < 1., scale
+    print("calibration uses the latest 600 saved eligible ids after clock rollback, in every display order")
+
+
 if __name__ == "__main__":
+    test_calibration_window_follows_saved_ids_and_filters_before_limiting()
     test_real_export_replays_exactly()
     test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
     test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed()
@@ -760,6 +816,7 @@ if __name__ == "__main__":
     test_the_summary_prints_on_a_console_that_cannot_encode_it()
     test_a_malformed_export_is_set_aside_and_the_others_are_analysed()
     test_history_missing_from_the_newest_export_is_reported()
+    test_pooled_validation_follows_saved_order_after_clock_rollback()
     test_the_pooled_refit_must_meet_the_app_s_conditions()
     test_each_learner_s_personal_set_is_its_own_calibration_group()
     print("all checks passed")

@@ -362,6 +362,21 @@ def history_order(log: dict) -> Tuple[int, int]:
     return int(log.get("id", 0)), int(log["reviewedAt"])
 
 
+def calibration_window(rows: List[Row], participant: str, parameter_set: int, activated_at: int) -> List[Row]:
+    """The app's most recent eligible evidence, in saved order, independent of export/display clock order.
+
+    Select the participant and live set before limiting: ids are local to one phone. Recomputed predictions
+    and invalid/short/early observations never displace eligible ones. This does not change the activation
+    boundary: a prediction dated before a set began scheduling is still excluded as in the app.
+    """
+    eligible = [r for r in rows if r.participant == participant and r.parameter_set == parameter_set
+                and r.is_recall and r.scheduler_version == "FSRS-6" and not r.recomputed
+                and r.predicted is not None and 0 <= r.predicted <= 1
+                and r.elapsed_days is not None and r.at >= activated_at
+                and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
+    return sorted(eligible, key=lambda r: (r.log_id, r.at))[-ym.CAL_WINDOW:]
+
+
 def corrections(d: dict) -> Dict[int, List[Tuple[int, int, Optional[int]]]]:
     """RATING_CORRECTED events (export v14+) per topic: (corrected log id, when, the topic's last log id when it
     replayed). A correction replays the topic, so the stored prediction of every later log that existed then was
@@ -790,7 +805,7 @@ def check_row(row: Row, log: dict, rp: Optional[dict], weights) -> None:
     if row.desired_retention > 0:
         ivl, base = ym.memory_interval(m, rp["after"], grade, row.desired_retention, rp["first"],
                                        row.calibration_scale if row.calibration_scale > 0 else 1.0)
-        ivl = ym.fuzzed_interval(ivl, base, row.unit_id, rp["graded_before"], rp["first"])
+        ivl = ym.fuzzed_interval(ivl, base, row.unit_id, rp["graded_before"], rp["first"], row.policy, row.scheduler_version)
         row.replayed_interval = ivl
         if abs(ivl - row.next_interval) > 1e-6 * max(1.0, ivl):
             row.mismatch.append(f"interval {row.next_interval:.6f} stored vs {ivl:.6f} replayed")
@@ -915,32 +930,98 @@ def logistic_calibration(pairs: Sequence[Tuple[float, bool]]) -> dict:
 WITHIN_MIN = 10  # next reviews after each method, per learner, before that learner's difference counts
 
 
-def within_participant_difference(by_person: Dict[str, Dict[str, List[float]]]) -> Optional[dict]:
-    """D7's comparison with each learner as their own control: the mean residual after "Questions only" minus after
-    "Reading only", computed inside each learner who has at least WITHIN_MIN of each, then averaged with weights
-    nq*nr/(nq+nr). Pooling everyone instead compares people as much as methods: if one learner mostly does
-    questions and rates generously while another mostly reads, the pooled gap is theirs, not the methods'. Topics
-    are still chosen by the learner, so the result stays observational. Added 2026-09-28."""
-    num = den = var_num = 0.0
-    people, nq_total, nr_total = 0, 0, 0
+METHOD_MIN_CLUSTERS = 20  # heuristic floor for a normal-approximation interval, not proof of adequate power
+
+
+def _effective_cluster_count(counts):
+    """Kish weight-concentration index, NOT a power calculation or an independent sample count."""
+    counts = list(counts)
+    total = sum(counts)
+    return total * total / sum(x * x for x in counts) if total else 0.0
+
+
+def within_participant_difference(by_person: Dict[str, Dict[str, List[Tuple[float, object]]]]) -> Optional[dict]:
+    """Questions minus Reading residual, compared inside each learner and weighted by nq*nr/(nq+nr).
+
+    Uncertainty clusters on topic INSIDE each learner; a topic present in both methods keeps its covariance.
+    Repeating the same topic cannot create independent evidence. This interval is conditional on these learners,
+    not a population/causal effect. Require 20 effective topic clusters overall and at least two effective
+    topics per learner/method. Raw counts alone hide dominant topics/learners. Report the point estimate but
+    withhold the interval when this guard fails. The floor is a diagnostic policy, not a power
+    calculation. Cluster-normal intervals remain approximate and no interval repairs method-choice confounding.
+    """
+    num = den = var_num = mass_sq = 0.0
+    people = nq_total = nr_total = clusters = 0
+    estimable = True
     for groups in by_person.values():
         q, r = groups.get("Questions only", []), groups.get("Reading only", [])
         if len(q) < WITHIN_MIN or len(r) < WITHIN_MIN:
             continue
+        mq, mr = statistics.fmean(x for x, _ in q), statistics.fmean(x for x, _ in r)
         w = len(q) * len(r) / (len(q) + len(r))
-        num += w * (statistics.fmean(q) - statistics.fmean(r))
+        num += w * (mq - mr)
         den += w
-        # Since 2026-10-03 the difference carries a 95% interval, and D7 needs it to exclude 0: with 100 reviews
-        # after each method a 5-point threshold alone fires about one time in four when the methods are equal.
-        var_num += w * w * (statistics.variance(q) / len(q) + statistics.variance(r) / len(r))
+        qc = Counter(topic for _, topic in q)
+        rc = Counter(topic for _, topic in r)
+        eq = _effective_cluster_count(qc.values())
+        er = _effective_cluster_count(rc.values())
+        # Preserve the existing learner weights and point estimate. With only one influential
+        # topic in either arm, centred residuals can give a false zero-variance contrast.
+        estimable = estimable and eq + 1e-9 >= 2 and er + 1e-9 >= 2
+        # Combine absolute arm weights on shared topics before measuring concentration.
+        # Counting the arms separately overstates effective clusters when they share
+        # the same influential topics; signed cancellation is not new evidence either.
+        topic_mass = defaultdict(float)
+        for topic, n in qc.items():
+            topic_mass[topic] += n / len(q)
+        for topic, n in rc.items():
+            topic_mass[topic] += n / len(r)
+        mass_sq += w * w * sum(m * m for m in topic_mass.values())
+        scores = defaultdict(float)
+        for x, topic in q:
+            scores[topic] += (x - mq) / len(q)
+        for x, topic in r:
+            scores[topic] -= (x - mr) / len(r)
+        k = len(scores)
+        if k < 2:
+            estimable = False
+        else:
+            var_num += w * w * k / (k - 1) * sum(x * x for x in scores.values())
+        clusters += k
         people += 1
         nq_total += len(q)
         nr_total += len(r)
     if not people:
         return None
-    diff, se = num / den, math.sqrt(var_num) / den
-    return dict(diff=diff, se=se, ci=(diff - 1.96 * se, diff + 1.96 * se), participants=people,
-                n_questions=nq_total, n_reading=nr_total)
+    diff = num / den
+    # Absolute cluster masses sum to 2*den; each learner/topic occurs once, even
+    # across both methods. The cap absorbs floating-point drift above the raw count.
+    effective = min(float(clusters), 4 * den * den / mass_sq)
+    se = math.sqrt(var_num) / den if estimable and effective + 1e-9 >= METHOD_MIN_CLUSTERS else None
+    return dict(diff=diff, se=se, ci=None if se is None else (diff - 1.96 * se, diff + 1.96 * se),
+                participants=people, clusters=clusters, effective_clusters=effective, n_questions=nq_total, n_reading=nr_total,
+                uncertainty="topic-clustered, conditional on observed learners")
+
+
+def method_comparison(rows: Sequence[Row]):
+    """Use the next SAVED event, including exposure/legacy boundaries; never bridge or reorder them by the clock."""
+    by_topic = defaultdict(list)
+    for row in rows:
+        by_topic[(row.participant, row.unit_id)].append(row)
+    resid = defaultdict(list)
+    by_person = defaultdict(lambda: defaultdict(list))
+    by_group = defaultdict(list)
+    for rs in by_topic.values():
+        rs.sort(key=lambda r: r.log_id)
+        for a, b in zip(rs, rs[1:]):
+            if (a.is_recall and b.is_recall and a.scheduler_version == b.scheduler_version == "FSRS-6"
+                    and b.predicted is not None and not b.recomputed):
+                value = (1.0 if b.success else 0.0) - b.predicted
+                group = method_group(a.methods)
+                resid[group].append(value)
+                by_person[a.participant][group].append((value, a.unit_id))
+                by_group[group].append((b.predicted, bool(b.success), (a.participant, a.unit_id)))
+    return resid, within_participant_difference(by_person), by_group
 
 
 def clustered_gap(items: Sequence[Tuple[float, bool, object]]) -> Optional[dict]:
@@ -948,7 +1029,8 @@ def clustered_gap(items: Sequence[Tuple[float, bool, object]]) -> Optional[dict]
     cluster-robust variance). Reviews of one topic can move together, for instance a topic harder than its prediction
     failing several times in a row, and an interval that treats them as independent is then too narrow.
     design_effect is the clustered variance over the independent one (1 = the reviews behave as independent).
-    Added 2026-10-03, when outside researchers asked whether the pilot's review counts overstate its certainty."""
+    Added 2026-10-03. Intervals also require 20 effective topic clusters (a weight-concentration
+    guard, not a power calculation); many tiny topics must not conceal one dominant topic."""
     n = len(items)
     if n < 2:
         return None
@@ -958,12 +1040,15 @@ def clustered_gap(items: Sequence[Tuple[float, bool, object]]) -> Optional[dict]
     for (_, _, c), d in zip(items, gaps):
         sums[c] += d - g
     k = len(sums)
+    effective = _effective_cluster_count(Counter(c for _, _, c in items).values())
     if k < 2:
-        return dict(gap=g, gap_ci=None, design_effect=None, clusters=k)
+        return dict(gap=g, gap_ci=None, design_effect=None, clusters=k, effective_clusters=effective)
     naive = sum((d - g) ** 2 for d in gaps) / (n * (n - 1))
     clustered = k / (k - 1) * sum(s * s for s in sums.values()) / (n * n)
     half = 1.96 * math.sqrt(clustered)
-    return dict(gap=g, gap_ci=(g - half, g + half), design_effect=clustered / naive if naive > 0 else None, clusters=k)
+    ci = (g - half, g + half) if effective + 1e-9 >= METHOD_MIN_CLUSTERS else None
+    return dict(gap=g, gap_ci=ci, design_effect=clustered / naive if naive > 0 else None,
+                clusters=k, effective_clusters=effective)
 
 
 def moment_scale_ci(predicted: Sequence[float], recalled: Sequence[bool], model: ym.Fsrs6) -> dict:
@@ -1075,11 +1160,12 @@ def first_rating_value(firsts: List["Row"]) -> dict:
     return dict(n=n, ll_rated=statistics.fmean(rated), ll_blind=statistics.fmean(blind), z=z)
 
 
-def split_times(exports: List[Export], frac=0.75) -> Dict[str, int]:
-    """Per participant: reviews at or after this instant are held out."""
+def split_review_ids(exports: List[Export], frac=0.75) -> Dict[str, int]:
+    """Per participant: saved review ids at or after this boundary are held out.
+    Wall time can run backwards; the fit must never train on a later saved review to predict an earlier one."""
     cut = {}
     for e in exports:
-        ts = sorted(int(l["reviewedAt"]) for l in e.data["reviewLogs"] if l.get("logType") == "RECALL")
+        ts = sorted(int(l["id"]) for l in e.data["reviewLogs"] if l.get("logType") == "RECALL")
         if ts:
             cut[e.participant] = ts[min(int(len(ts) * frac), len(ts) - 1)]
     return cut
@@ -1094,7 +1180,7 @@ def predictions(hist, weights) -> Tuple[List[Tuple[float, bool]], List[Tuple[flo
             if r["predicted"] is None or log.get("logType") != "RECALL" or r["elapsed"] < 1:
                 continue
             pair = (r["predicted"], log["memoryRating"] != "Forgot")
-            if int(log["reviewedAt"]) >= cut:
+            if int(log["id"]) >= cut:
                 test.append(pair)
                 who.append(pid)
             else:
@@ -1158,11 +1244,11 @@ def nelder_mead(f, x0, step=0.25, iters=160):
 
 
 def pooled_fit(exports: List[Export], min_train=300) -> dict:
-    cuts = split_times(exports)
+    cuts = split_review_ids(exports)
     hist = [(p, u, l, un, tz, cuts.get(p, 1 << 62)) for p, u, l, un, tz in histories(exports)]
     base = list(ym.DEFAULT_WEIGHTS)
     train0, test0, who = predictions(hist, tuple(base))
-    result = dict(train_reviews=len(train0), test_reviews=len(test0), fitted=False)
+    result = dict(train_reviews=len(train0), test_reviews=len(test0), fitted=False, validation_order="saved_review_id")
     if len(train0) < min_train or len(test0) < 50:
         result["reason"] = f"needs >= {min_train} training and 50 held-out recall reviews"
         return result
@@ -1524,6 +1610,10 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                   f"cluster ({cl['clusters']} topics; design effect {fmt(cl['design_effect'], 2)}: 1 means the reviews "
                   "behave as independent, 2 means the review count overstates the evidence twofold). The intervals above "
                   "treat every review as independent.")
+        elif cl:
+            rep.p(f"Reported minus predicted: **{100 * cl['gap']:+.1f} points**; clustered interval withheld "
+                  f"({cl['clusters']} topics; {cl['effective_clusters']:.1f} effective topic clusters, "
+                  f"needs {METHOD_MIN_CLUSTERS}). D2 waits. Intervals above treat each review as independent.")
         summary.setdefault("calibration", {})[f"{model}/{sid}" + (f"@{owner}" if owner else "")] = dict(raw=c, calibrated=cc)
     bins = [(0, .5), (.5, .7), (.7, .8), (.8, .85), (.85, .9), (.9, .95), (.95, 1.0001)]
     rows_b = []
@@ -1581,9 +1671,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             if sid not in sets:
                 continue
             model = m0 if sid == 0 else ym.Fsrs6(sets[sid])
-            ev = [r for r in recalls_pred if r.participant == pid and r.parameter_set == sid and r.elapsed_days is not None
-                  and r.at >= starts.get(sid, 0) and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
-            ev = ev[-ym.CAL_WINDOW:]
+            ev = calibration_window(recalls_pred, pid, sid, starts.get(sid, 0))
             if not ev:
                 continue
             est = moment_scale_ci([r.predicted for r in ev], [r.success for r in ev], model)
@@ -1705,39 +1793,33 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
 
     # ---- review method -----------------------------------------------------------------------------------
     rep.h("7. Review method: what does the NEXT review find?")
-    by_topic = defaultdict(list)
-    for r in all_rows:
-        if r.log_type in ("RECALL", "FIRST_STUDY") and r.scheduler_version == "FSRS-6":
-            by_topic[(r.participant, r.unit_id)].append(r)
-    resid = defaultdict(list)
-    resid_by_person: Dict[str, Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
-    for rs in by_topic.values():
-        rs.sort(key=lambda r: (r.at, r.log_id))
-        for a, b in zip(rs, rs[1:]):
-            if a.is_recall and b.is_recall and b.predicted is not None:
-                value = (1.0 if b.success else 0.0) - b.predicted
-                resid[method_group(a.methods)].append(value)
-                resid_by_person[a.participant][method_group(a.methods)].append(value)
+    resid, within, method_clusters = method_comparison(all_rows)
     rows_m = []
     for gname in ("Questions only", "Reading only", "Lecture only", "Questions + other", "other mix", "not said"):
         v = resid.get(gname)
         if v:
             mu = statistics.fmean(v)
-            se = statistics.stdev(v) / math.sqrt(len(v)) if len(v) > 1 else float("nan")
-            rows_m.append([gname, len(v), f"{mu:+.3f}", f"{mu - 1.96 * se:+.3f} to {mu + 1.96 * se:+.3f}" if len(v) > 1 else "–"])
+            interval = clustered_gap(method_clusters[gname])
+            ci = interval.get("gap_ci") if interval and interval["clusters"] >= METHOD_MIN_CLUSTERS else None
+            rows_m.append([gname, len(v), f"{mu:+.3f}", f"{ci[0]:+.3f} to {ci[1]:+.3f}" if ci else "–"])
     summary["method_residuals"] = {k: dict(n=len(v), mean=statistics.fmean(v)) for k, v in resid.items() if v}
-    summary["method_within_participant"] = within_participant_difference(resid_by_person)
+    summary["method_within_participant"] = within
     rep.p("For each review, how the NEXT review of the same topic turned out against its prediction (reported − predicted; "
           "positive = the topic held better than the model expected after that kind of review). Differences between "
           "rows, not the rows themselves, are what matter; they are observational (learners chose their method):")
-    rep.table(["how the previous review was done", "next reviews", "mean residual", "95% CI"], rows_m)
+    rep.table(["how the previous review was done", "next reviews", "mean residual", "topic-clustered 95% CI"], rows_m)
     wp = summary["method_within_participant"]
-    rep.p("The same comparison inside each learner (Questions only minus Reading only, among learners with at least "
-          f"{WITHIN_MIN} next reviews after each), so that differences between people cannot pose as a difference "
-          "between methods: " + (f"**{wp['diff']:+.3f}** (95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}) from "
-                                 f"{wp['participants']} learner(s), {wp['n_questions']}/{wp['n_reading']} reviews. D7 "
-                                 "reads this number and its interval."
-                                 if wp else "no learner used both methods often enough yet. D7 waits for it."))
+    if wp:
+        interval = (f"95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}" if wp["ci"] else
+                    f"interval withheld: fewer than {METHOD_MIN_CLUSTERS} effective topic clusters overall or fewer than two effective topics per learner/method")
+        rep.p(f"Inside each learner (Questions minus Reading, at least {WITHIN_MIN} next reviews per method): "
+              f"**{wp['diff']:+.3f}** ({interval}), {wp['participants']} learner(s), {wp['clusters']} topics, "
+              f"{wp['effective_clusters']:.1f} effective topic clusters, {wp['n_questions']}/{wp['n_reading']} reviews. "
+              "Topic-clustered and conditional on these learners. "
+              "D7 reads this interval; no interval means WAIT. This is an observational association, not a causal "
+              "method effect or a population-level confidence interval.")
+    else:
+        rep.p("No learner used both methods often enough yet. D7 waits.")
     own = defaultdict(list)
     for r in recalls_pred:
         own[method_group(r.methods)].append(r)
@@ -1761,7 +1843,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     pf = pooled_fit(exports) if fit else dict(fitted=False, reason="skipped (--no-fit)")
     summary["pooled_fit"] = pf
     if pf.get("fitted"):
-        rep.p(f"Fitted {', '.join(FIT_NAMES)} on each participant's earliest 75% of recall reviews "
+        rep.p(f"Fitted {', '.join(FIT_NAMES)} on each participant's earliest 75% of recall reviews in saved-id order "
               f"({pf['train_reviews']}), with a mild pull toward the defaults, and scored both weight sets on the "
               f"remaining 25% ({pf['test_reviews']}), predicted from the full history before each review.")
         rep.table(["weight", "default", "fitted"], [[k, fmt(a, 4), fmt(b, 4)] for k, (a, b) in pf["changed"].items()])
@@ -1774,7 +1856,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
         with open(os.path.join(out_dir, "fitted_weights.json"), "w", encoding="utf-8") as f:
             json.dump(dict(weights=pf["weights"], note="Pooled pilot refit of w1,w2,w3,w8,w20; the rest are the FSRS-6 defaults.",
                            held_out_z=pf["z"], grade_order_ok=pf["grade_order_ok"], lengthening=pf["lengthening"],
-                           meets_app_conditions=pf["better"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"]), f, indent=2)
+                           meets_app_conditions=pf["better"], train_reviews=pf["train_reviews"], test_reviews=pf["test_reviews"],
+                           validation_order=pf["validation_order"]), f, indent=2)
     else:
         rep.p(f"Not fitted: {pf.get('reason')}. ({pf.get('train_reviews', 0)} training / {pf.get('test_reviews', 0)} held-out reviews.)")
     rep.p("The app fits a full 21-weight personal set on the phone itself once a learner has 640+ reviews, and only "
@@ -1828,9 +1911,9 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         gap = c["observed"] - c["predicted"]
         ci_gap = (c.get("clustered") or {}).get("gap_ci")
         sure = ci_gap is not None and (ci_gap[0] > 0 or ci_gap[1] < 0)
-        judged.append("OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT"))
+        judged.append("WAIT" if ci_gap is None else ("OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT")))
         notes.append(f"{key}: reported {fmt_p(c['observed'])} vs predicted {fmt_p(c['predicted'])} (n={c['n']}"
-                     + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else ")"))
+                     + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else "; interval withheld: insufficient effective topic evidence)"))
     q2 = "Does reported recall match the (calibrated) prediction within 5 points?"
     if judged:
         add("D2", q2, "; ".join(notes), "LOOK" if "LOOK" in judged else ("WAIT" if "WAIT" in judged else "OK"))
@@ -1884,11 +1967,13 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         # Judged within each learner (2026-09-28, before any pilot data): the pooled gap is shown for comparison only.
         # Amended 2026-10-03, before any data: a 5-point difference must also have a 95% interval that excludes 0. With
         # 100 reviews after each method the threshold alone fired about one time in four on equal methods (PILOT.md).
-        sure = wp["ci"][0] > 0 or wp["ci"][1] < 0
+        sure = wp["ci"] is not None and (wp["ci"][0] > 0 or wp["ci"][1] < 0)
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
-            f"{wp['diff']:+.3f} (95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}) within learners ({wp['participants']}); "
+            (f"{wp['diff']:+.3f} (topic-clustered 95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}) "
+             if wp["ci"] else f"{wp['diff']:+.3f} (insufficient effective topic evidence for an interval) ") +
+            f"within learners ({wp['participants']}); "
             f"pooled {q['mean'] - rd['mean']:+.3f} (n={q['n']}/{rd['n']})",
-            "OK" if abs(wp["diff"]) < 0.05 else ("LOOK" if sure else "WAIT"))
+            "WAIT" if wp["ci"] is None else ("OK" if abs(wp["diff"]) < 0.05 else ("LOOK" if sure else "WAIT")))
     elif q and rd and q["n"] >= 100 and rd["n"] >= 100:
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
             f"no learner used both methods {WITHIN_MIN}+ times; pooled {q['mean'] - rd['mean']:+.3f} compares people, "

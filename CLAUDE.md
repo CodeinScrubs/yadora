@@ -400,7 +400,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and this one only touches a topic reviewed twice on one calendar day and rated Hard, where it cuts
   stability by more than half, 100 days to 45. The app almost never produces that: the daily plan offers
   a topic again only on a later day, Review ahead leaves out topics reviewed today (2026-09-28), and the
-  soak's 24,631 reviews contain none. What remains is a deliberate second review from the Library and the
+  two-year soak's 23,601 reviews contain none (the owner-year soak's 14,647, with its same-day second looks, hold 11).
+  What remains is a deliberate second review from the Library and the
   fall-back-night hour in the due-date entry above); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
   stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
@@ -716,6 +717,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   chosen by the keyboard, not the writer, and visually identical — produced two topics with no
   duplicate warning. That is precisely the "same material added twice, often in two languages" case
   merge exists for. Comparison only; stored titles stay exactly as typed.
+- **Related topics while adding (2026-10-07).**
+  The new-topic title field shows live normalized matches across subjects, including archived topics and excluding
+  trash. This uses a Room projection of id/title/subject/archive state, indexed off the main thread when the library
+  changes; a keystroke does not reload notes or run a full-entity database query. Up to five matches are shown, with
+  an explicit remaining-match count and a prompt to refine the title. Persian/Arabic letter variants, digits and
+  spacing use the existing `TopicTitle` normalization. Exact titles and the selected subject rank first.
+
+  An active match opens that topic's review screen; an archived match opens its details without restoring it.
+  The Add draft stays on the navigation back stack. Suggestions are advisory: distinct scopes keep independent
+  histories and nothing is merged or saved by selecting a match. Existing duplicate checks still run at save time.
+  `RelatedTopicsTest` covers matching, ordering and a 2,000-topic index; `RelatedTopicEntryTest` covers live UI
+  updates, opening without creating a duplicate, archive labels and trash exclusion.
 - **One memory seed per history.** `Fsrs.initialState` may only be re-applied for the
   chronologically FIRST review log of a topic. A merged topic legitimately carries
   several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each
@@ -809,7 +822,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   repair backoff). Logs store the version, the applied understanding factor and the calibration
   scale; replay honors the stored values and the stamped policy's rules for untouched rows.
   Calibration constants (prior, window, clamps, evidence rules) do NOT bump it: nothing replays
-  them, because every log already stores the scale it was scheduled with. Currently `YADORA-7` (2026-10-04: a repair
+  them, because every log already stores the scale it was scheduled with. Currently `YADORA-8` (2026-10-09: on FSRS-6
+  an eligible fuzz never takes an interval below three days; YADORA-7, 2026-10-04: a repair
   deadline is kept when it beats the memory interval as finally scheduled, fuzz included; YADORA-6 compared it before
   the fuzz).
 - **Behaviour changes are simulated before they are argued.** A two-year simulated student
@@ -917,13 +931,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
     self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
     live row; and the twin claim holds on the real schedule.
-  - **Measured:** exam-day recall 96.8% against 91.0% for a random-review twin at equal time (the twin's time
+  - **Measured:** exam-day recall 96.8% against 89.6% for a random-review twin at equal time (the twin's time
     matches Yadora's to within one review since 2026-09-27; before, it got a few percent more and scored 90.1%);
-    100% of topics at 90%+; weakest tenth 93.1%; 24,631 reviews. (Before the calibration stopped lengthening
+    100% of topics at 90%+; weakest tenth 93.0%; 23,601 reviews. (Before the calibration stopped lengthening
     intervals, 2026-09-28: 96.6%, 92.7% and 22,804 reviews. The 2026-09-29 queue order changed neither figure at
     this limit, which rarely binds; it changed which random draw each review gets, and the count, from 24,335. YADORA-7,
-    2026-10-04, did the same: 96.9%, 90.6% and 24,673 before it.)
-  - **CI:** `analyze.py` replays the export (27,063 logs, all exact) in the "Pilot toolkit agrees with the app"
+    2026-10-04, did the same: 96.9%, 90.6% and 24,673 before it; YADORA-8, 2026-10-09, again: 96.8%, 91.0%, 93.1% and
+    24,631 before it.)
+  - **CI:** `analyze.py` replays the export (26,033 logs, all exact) in the "Pilot toolkit agrees with the app"
     step, and exits non-zero on a single mismatch. Runtime is about 65 s.
   - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
     measured numbers, re-measure and record why.
@@ -1055,7 +1070,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
       refused before anything is replaced; an unreviewed library without the section still restores
       (`BackupRoundTripTest`). A missing section used to restore topics that claimed reviews and had none.
     - The personal fit's "did the history change while it ran?" check is a SHA-256 over every log the fit learned
-      from (id, topic, time, both ratings, type, model, set) plus the active set (`MedReviewRepository.fitIdentity`).
+      from (id, topic, time, both ratings, type, model, set, stored elapsed days), the active set, merged-topic
+      exclusions, current time zone and retention target (`MedReviewRepository.fitIdentity`). These are captured
+      with the training snapshot and checked again before adoption: a restore, merge or settings change can
+      invalidate a fit without adding or deleting any review ids.
+    - Validation folds use saved review ids, not wall-clock timestamps. A phone clock rollback must not put a
+      later review into the training prefix for an earlier held-out review. Actual timestamps and stored elapsed
+      days still determine memory gaps. The pooled pilot fit uses the same saved-order split per learner;
+      `pooled_fit.validation_order` states that choice in the analysis output. This changes validation and stale
+      result detection, not the FSRS equations or the adoption thresholds (`PersonalFitSnapshotTest`,
+      `OptimizerValidationOrderTest`, and the pilot clock-rollback regression).
       The old fingerprint (count and sum of times) missed a changed rating at the same time, a merge re-pointing
       logs, and a restore of the same times with other ratings, so a fit begun on one history could be adopted
       after another. A review added after the fit began changes nothing (`AuditFindingsTest`).
@@ -1492,11 +1516,12 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Measured on the real code** (`OwnerYearSoakTest`: Asia/Tehran, 365 days, the default limit of 50; 10% of days
     off, 15% light, 0–10 new topics on the rest; Not today, Spread out, Review more anyway, review-now including
     same-day second looks, Review ahead on spare evenings and a last-month push, rating corrections, a mid-year phone
-    change, a refit every 20 days): 1,935 topics, 14,989 reviews; exam day 97.1% against 90.7% for random review and
-    93.3% oldest-first at equal time, which is measured (each twin spent what Yadora spent, to within one review); 100%
-    of topics at 90%+, weakest tenth 93.6%, nothing overdue on exam day; every refit refused (the simulated learner is
-    the defaults' learner); the export replays all 16,924 logs exactly (YADORA-7, 2026-10-04; before it 14,764 reviews,
-    96.9%). CI runs
+    change, a refit every 20 days): 1,958 topics, 14,647 reviews; exam day 96.9% against 90.9% for random review and
+    92.6% oldest-first at equal time, which is measured (each twin spent what Yadora spent, to within one review); 100%
+    of topics at 90%+, weakest tenth 93.2%, nothing overdue on exam day; every refit refused (the simulated learner is
+    the defaults' learner); the export replays all 16,605 logs exactly. (YADORA-8, 2026-10-09, changed which random
+    draw each step gets, so the days, the new topics and the reviews differ: before it 1,935 topics, 14,989 reviews,
+    97.1%, 90.7%, 93.3%, 93.6%; YADORA-7, 2026-10-04: before it 14,764 reviews, 96.9%.) CI runs
     it and replays its export.
   - **The simulation's finding** (§2.8, model-based): with a fixed daily budget and a finite syllabus, the split of the
     day between new material and reviews decides the exam score when time is tight (20–45 points at 20 units a day),
@@ -1541,20 +1566,112 @@ These were decided deliberately. Re-suggesting them wastes a session:
       higher target; target phases are not study phases; the weakest tenth counts studied topics only; reviewDurationMs
       is screen time, not study time (export field guide). `OwnerYearSoakTest` now measures the twins' review time
       (equal to within a review).
-  - **Put to the owner, not done:** the same-day Hard floor of py-fsrs 6.3.2. "Save and review now" and reviews the owner
-    chooses make a second review the same day far more reachable than when the pin was set (S 100 → 45; the report's
-    manual path 504 → 204). Adopting it is a new model identity with goldens generated by py-fsrs 6.3.2 itself, which
-    needs installing it (a download).
-  - **Kept:** original predictions beside replayed ones (the declined DB v11; corrections are logged and left out of
-    the evidence); a planner layer or a shadow queue (pilot data first); the 64-step fit window (rarely reached).
+  - **Put to the owner, and adopted 2026-10-09:** the same-day Hard floor of py-fsrs 6.3.2. "Save and review now" and
+    reviews the owner chooses make a second review the same day far more reachable than when the pin was set (S 100 → 45;
+    the report's manual path 504 → 204). It is a new model identity with goldens generated by py-fsrs 6.3.2 itself (the
+    redesign entry below).
+  - **Updated 2026-10-09:** immutable original predictions are now `REVIEW_FORECAST v1` events in the existing event
+    table (no DB v11): saved atomically with a review, joined by log id, unchanged by corrections/replay, removed by
+    a valid Undo. Older logs without one stay missing; `tools/pilot/forecast_audit.py` never backfills a prediction.
+    Ratings are the owner's own judgements (the redesign entry below), not an objective recall test or an exam outcome.
+  - **Still kept:** a planner layer or a shadow queue (pilot data first); the 64-step fit window (rarely reached).
   - **Citations:** Eglington & Pavlik 2020 (npj Science of Learning) is real; Price et al. is real (Academic Medicine
     2025;100(1):94–102), but its "26,258 physicians" could not be confirmed (a related ABFM study reports 16,751). Nothing
     in the app depends on either.
+- **Thirteen PRs from Codex, 2026-10-07 to 10-09 (#23–#35), merged 2026-10-09** (another agent, on branches under the
+  owner's account). Every claim was checked against the code, the numbers recomputed and the citations looked up before
+  the owner approved the merge; all held. No schema change.
+  - **Undo verifies the review it owns** (#23). `RatedReview` carries the committed row and a SHA-256 of the topic's whole
+    history; `undoReview` checks them and the latest saved log id inside its write transaction, so a later review, a
+    correction, a merge, a changed study date, a deferral or a restored history refuses a stale Undo and changes nothing
+    (the screen says so and keeps its counters). `rateUnit` refuses an archived or deleted row: a stale screen, since
+    archived topics offer no review. `ReviewWriteIntegrityTest`.
+  - **The personal fit's identity covers every input** (#24): the stored day counts, the merged-topic exclusions, the
+    zone and the retention target join the log fields, and the validation folds split by saved order, not the clock
+    (`PersonalFitSnapshotTest`, `OptimizerValidationOrderTest`; the pooled pilot fit does the same and says so in
+    `pooled_fit.validation_order`).
+  - **Related topics while adding** (#25, the owner's request): the new-topic title field lists up to five existing
+    topics whose title contains every typed word, normalized by `TopicTitle` (ی/ي, ک/ك, digits, half-spaces), the exact
+    title and the chosen subject first, archived ones labelled. A tap on an active one opens its rating screen with the
+    Add draft kept underneath; an archived one opens its details without restoring it. Advisory only: nothing is merged,
+    and the save-time duplicate check still runs. A Room projection (id, title, subject, archived) is indexed off the
+    main thread when the library changes. `RelatedTopicsTest`, `RelatedTopicEntryTest`.
+  - **"Not today" leaves inactive and unrated topics alone** (#26): a stale screen cannot defer an archived, deleted,
+    merged-away or purged topic, nor an unrated one (the review screen never offers it for a first rating).
+    `DeferralLifecycleTest`.
+  - **The pilot's method comparison clusters by topic inside each learner** (#27): repeated reviews of one topic are not
+    independent evidence. An interval needs 20 effective topic clusters (a Kish concentration guard, not a power
+    calculation) and two per learner and method, otherwise D2 and D7 WAIT; pairs follow saved order, never bridge a first
+    study or a legacy-model log, and skip recomputed predictions. In 1,000 null runs (40 topics a method, 10 identical
+    repeats) the old calculation gave 508 false LOOKs, the clustered one 48. `test_method_uncertainty.py`; PILOT.md
+    amended before any data. Also `docs/EXTERNAL_REPORT_AUDIT_2026-10-09_FA.md`, whose numbers and citations were re-checked.
+  - **Every review saves an immutable forecast** (#28; approved by the owner 2026-10-09: it is the content of the DB v11
+    declined on 2026-10-03, without its schema change). A `REVIEW_FORECAST v1` event lands in the same transaction as the
+    review (`data/ReviewForecast`): the raw prediction, the pre-review state, the elapsed days and the zone, the
+    model/set/policy, the stored dates, a due context (FIRST_STUDY, MEMORY_DUE, UNDERSTANDING_DUE, BOTH_DUE, USER_MOVED,
+    AHEAD) and the original answers. Corrections and replays never touch it; a valid Undo removes it; older reviews have
+    none and are never backfilled. `tools/pilot/forecast_audit.py` scores them (`test_forecast_audit.py`). Backups grow by
+    about 40%. The two soaks now check their files by streaming (`SoakJsonFiles`: every field, row and value, in order)
+    after the in-memory parse ran out of heap.
+  - **A restore reserves the ids its retained events still name** (#29, `BackupIdentity`). After a purge, a backup keeps
+    growth, merge, correction and forecast events that name deleted rows, and a fresh install restoring it used to hand
+    those ids out again (Undo then erased old growth; a new topic looked merged). `sqlite_sequence` is raised inside the
+    restore transaction. `BackupIdentityTest`.
+  - **Calibration evidence is the newest by saved order** (#30): the 600-review window and the Progress card select by
+    log id, not the clock, and predictions outside 0–1 are filtered before the LIMIT (`RecallCalibrationEvidenceTest`,
+    `CalibrationCardTest`, `analyze.py` `calibration_window`).
+  - **The active personal set is re-checked at every due refit** (#31): invalid weights, first-rating grades out of order
+    or lengthening above 1 against the defaults on the current histories retire it (PERSONAL_MODEL_RETIRED), also when the
+    new candidate loses, and only after the fit identity has been re-checked. `ActiveModelSafetyTest`.
+  - **The forecasts are compared with a past-only base rate** (#32): the last 50 comparable original ratings,
+    Laplace-smoothed, after 20 of warm-up, scored on the same reviews (log loss, Brier, a topic-clustered interval).
+    Diagnostic only: on the public benchmark a moving average ties FSRS-7 recency on log loss (0.3369 against 0.3370) at a
+    lower AUC (0.700 against 0.722), so log loss alone cannot choose a scheduler. `test_forecast_baselines.py`.
+  - **YADORA-8** (#33): on FSRS-6 the fuzz no longer takes an eligible interval below three days (3.0996 d could fuzz to
+    2.990 d, under an unfuzzed 2.992 d). Older policies and FSRS-5 replay as they were; a replay passes each log's policy
+    and model. `FuzzPolicyTest`; 72 Kotlin reference cases are checked bit for bit by `test_yadora_model.py`.
+  - **One scheduling context per review** (#34): `rateUnit` reads the retention target and the calibration scale once and
+    uses exactly those values for the interval, the log and the forecast. `ReviewPolicySnapshotTest`.
+  - **RESEARCH.md claims no more than its sources** (#35): associations are not called effects, the Deng 2015 link and its
+    erratum are fixed, Maye & Hurley 2026 is 14 studies reviewed and 13 meta-analysed, the FSRS-7 rows are told apart
+    (plain 0.3401, recency 0.3370). `docs/SECOND_REPORT_AUDIT_2026-10-09_FA.md` decides its report's C1–C15; its C8
+    (keep 6.3.1 for now) was overruled by the owner the same day (next entry).
+  - **Superseded:** the rating definition these PRs wrote into PILOT.md, the participant guide and the export field guide
+    ("a mixed subjective post-study judgement") predates the owner's Forgot anchor of 2026-10-04 (next entry); those
+    texts are rewritten with the rating copy.
+- **The owner's redesign, decided 2026-10-04 and 10-09 (being built; update each entry it touches as its part lands).**
+  From the owner's own answers in a requirements chat with another assistant, then two rounds of questions here:
+  - A topic's scope is its title ("آسم" is all of asthma, "درمان آسم" only its treatment); a logged review means that
+    whole scope was covered, from any source; one history per topic.
+  - The owner picks topics, studies outside the app and rates each one afterwards: no "Start review" session. Today lists
+    ALL due topics in the queue's urgency order (the priority score, not the due date), with a line after the first N
+    (N = the daily limit): today's suggested share, the rest of the time for new material. In the one-year simulation the
+    split between new material and reviews is the largest lever (RESEARCH.md §2.8), and the limit is what protects it.
+  - The memory rating: "Forgot" = when I came back to it, most of it was gone, even if I know it well now after reading.
+    Hard, Good and Easy stay the owner's overall judgement after the review (what was still there, current mastery, how
+    heavy the topic is); the hint text says exactly this. The understanding question stays, and is asked after Forgot
+    too (the date stays tomorrow; the log records the answer instead of the skipped -1).
+  - Optional review minutes as quick chips (10 / 20 / 30 / 45 / 60+); none chosen = unknown, never 0. This reverses the
+    2026-10-03 decline: the time a review takes decides whether about 2,000 topics fit one year (RESEARCH.md §2.8).
+  - The review day: a "Reviewed: today" chip on the rating screen (yesterday, another day), and changing the day of a
+    logged review from the topic's history, replayed like a rating correction, only between its neighbouring reviews and
+    never in the future.
+  - Notifications: one per topic, for the topics above today's line (at most 40: Android shows about 50 per app and stacks
+    them under the app's name); a tap opens that topic; once it is rated the next one comes in silently; sound and
+    vibration at most once per chosen reminder time. Swiping one away hides it until the next reminder time: not a
+    review, not a deferral.
+  - Review ahead becomes a section under today's list (next up, weakest predicted recall first; a tap reviews early);
+    Spread out goes: the share line does its job, and a backlog is not hidden on later days.
+  - The Important switch stays, off by default. The exam date stays display-only. No automatic same-day re-suggestion
+    (already the case: the shortest interval is one day).
+  - py-fsrs 6.3.2's same-day Hard floor is adopted: a new model identity, with goldens generated by py-fsrs 6.3.2 itself
+    (the owner approved the download).
 - Exact alarms: ONLY `SCHEDULE_EXACT_ALARM` is declared (user-grantable; inexact
   fallback + Reminder Health + permission-regrant receiver handle denial).
   `USE_EXACT_ALARM` was removed 2026-07 per Play policy (declare one, not both).
 - Snooze is REAL: `reminder_snoozed_until` pref suppresses the whole chain until
   the target; colliding primary/secondary slots (±5 min) are coalesced to one.
+
 
 ## Testing
 

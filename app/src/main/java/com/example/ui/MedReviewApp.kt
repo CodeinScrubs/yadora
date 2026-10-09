@@ -152,6 +152,12 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                         navController.popBackStack()
                         navController.navigate(Screen.ReviewSession(newId)) { launchSingleTop = true }
                     },
+                    onOpenRelatedTopic = { id, archived ->
+                        // Keep the Add draft in the back stack: viewing a match never creates a duplicate,
+                        // overwrites the existing topic or silently restores an archived topic.
+                        if (archived) navController.navigate(Screen.EditUnit(id)) { launchSingleTop = true }
+                        else navController.navigate(Screen.ReviewSession(id)) { launchSingleTop = true }
+                    },
                 )
             }
             composable<Screen.EditUnit> { backStackEntry ->

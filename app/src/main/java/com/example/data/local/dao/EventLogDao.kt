@@ -28,6 +28,10 @@ interface EventLogDao {
     @Query("DELETE FROM event_logs WHERE type = 'STUDY_ACTION' AND detail = :logIdStr")
     suspend fun deleteStudyActionForLog(logIdStr: String)
 
+    /** A forecast has exactly one review; an undone review must not survive as research evidence. */
+    @Query("DELETE FROM event_logs WHERE type = 'REVIEW_FORECAST' AND detail LIKE :logPrefix")
+    suspend fun deleteReviewForecastForLog(logPrefix: String)
+
     @Query("DELETE FROM event_logs")
     suspend fun deleteAll()
 

@@ -130,10 +130,20 @@ object Fsrs6Optimizer {
     // --- histories ---------------------------------------------------------------------------------
 
     /** One topic's graded history as the model sees it: step 0 seeds, every later step is a transition. */
-    class History(val grades: IntArray, val elapsedDays: DoubleArray, val reviewedAt: LongArray) {
+    class History(
+        val grades: IntArray,
+        val elapsedDays: DoubleArray,
+        val reviewedAt: LongArray,
+        /** Saved log ids in the app; synthetic histories may use their monotone timestamps. Never elapsed time. */
+        val validationOrder: LongArray = reviewedAt,
+    ) {
         init {
             require(grades.isNotEmpty() && grades.size == elapsedDays.size && grades.size == reviewedAt.size)
             require(grades.all { it in 1..4 })
+            require(validationOrder.size == grades.size)
+            require((1 until validationOrder.size).all { validationOrder[it] >= validationOrder[it - 1] }) {
+                "validation order must not run backwards; supply saved review ids for a clock rollback"
+            }
         }
 
         val size: Int get() = grades.size
@@ -143,18 +153,19 @@ object Fsrs6Optimizer {
 
         internal fun capped(maxSteps: Int): History =
             if (size <= maxSteps) this
-            else History(grades.copyOf(maxSteps), elapsedDays.copyOf(maxSteps), reviewedAt.copyOf(maxSteps))
+            else History(grades.copyOf(maxSteps), elapsedDays.copyOf(maxSteps), reviewedAt.copyOf(maxSteps), validationOrder.copyOf(maxSteps))
 
-        /** The part of this history that happened before [time], or null if none of it did. */
-        internal fun before(time: Long): History? {
-            val k = reviewedAt.indexOfFirst { it >= time }.let { if (it < 0) size else it }
-            return if (k == 0) null else History(grades.copyOf(k), elapsedDays.copyOf(k), reviewedAt.copyOf(k))
+        /** A prefix strictly before a validation boundary; wall time still determines the memory model's gaps. */
+        internal fun before(order: Long): History? {
+            val k = validationOrder.indexOfFirst { it >= order }.let { if (it < 0) size else it }
+            return if (k == 0) null else History(grades.copyOf(k), elapsedDays.copyOf(k), reviewedAt.copyOf(k), validationOrder.copyOf(k))
         }
     }
 
-    /** A review log as the optimizer needs it, in chronological order (reviewedAt, then id). */
+    /** A review log as the optimizer needs it, in saved order. */
     /** [storedElapsedDays]: the day count the review was scheduled with when a replay may reuse it (MedScheduler.storedModelDays). */
-    data class Event(val reviewedAt: Long, val memoryRating: String, val logType: String, val storedElapsedDays: Double? = null)
+    data class Event(val reviewedAt: Long, val memoryRating: String, val logType: String,
+        val storedElapsedDays: Double? = null, val validationOrder: Long = reviewedAt)
 
     /**
      * A topic's history reconstructed EXACTLY as `MedReviewRepository.projectWithHistory` rebuilds its
@@ -167,6 +178,7 @@ object Fsrs6Optimizer {
         val grades = ArrayList<Int>(events.size)
         val deltas = ArrayList<Double>(events.size)
         val times = ArrayList<Long>(events.size)
+        val order = ArrayList<Long>(events.size)
         var prevTime = 0L
         for ((index, e) in events.withIndex()) {
             if (index > 0 && e.logType == "FIRST_STUDY") {
@@ -177,10 +189,11 @@ object Fsrs6Optimizer {
             deltas.add(if (grades.isEmpty()) 0.0 else MedScheduler.completedModelDays(e.storedElapsedDays ?: elapsedDays(prevTime, e.reviewedAt)))
             grades.add(g)
             times.add(e.reviewedAt)
+            order.add(e.validationOrder)
             prevTime = e.reviewedAt
         }
         if (grades.isEmpty()) return null
-        return History(grades.toIntArray(), deltas.toDoubleArray(), times.toLongArray())
+        return History(grades.toIntArray(), deltas.toDoubleArray(), times.toLongArray(), order.toLongArray())
     }
 
     private fun gradeOf(rating: String): Int? = when (rating) {
@@ -583,7 +596,7 @@ object Fsrs6Optimizer {
         /** The learner's retention target, at which [lengthening] compares the intervals. */
         retention: Double = 0.9,
     ): FitReport {
-        val times = histories.flatMap { h -> (1 until h.size).filter { h.inLoss(it) }.map { h.reviewedAt[it] } }.sorted()
+        val times = histories.flatMap { h -> (1 until h.size).filter { h.inLoss(it) }.map { h.validationOrder[it] } }.sorted()
         val allTrain = histories.sumOf { h -> (1 until minOf(h.size, cfg.maxStepsPerHistory)).count { h.inLoss(it) } }
         fun notEnough(test: Int, folds: Int) = FitReport(Verdict.NOT_ENOUGH_DATA, null, allTrain, test, null, null, 0.0, folds)
         if (times.size < MIN_REVIEWS_FOR_A_FIT) return notEnough(0, 0)
@@ -596,7 +609,7 @@ object Fsrs6Optimizer {
             val end = if (k == FOLDS) Long.MAX_VALUE else times[times.size * (k + 1) / (FOLDS + 1)]
             val earlier = histories.mapNotNull { it.before(start) }
             val candidate = train(earlier, cfg) ?: continue
-            val window: (History, Int) -> Boolean = { h, i -> h.inLoss(i) && h.reviewedAt[i] >= start && h.reviewedAt[i] < end }
+            val window: (History, Int) -> Boolean = { h, i -> h.inLoss(i) && h.validationOrder[i] >= start && h.validationOrder[i] < end }
             val b = evaluate(histories, current, window)
             val a = evaluate(histories, candidate, window)
             if (b.losses.isEmpty()) continue
