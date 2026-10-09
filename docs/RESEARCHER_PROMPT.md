@@ -226,7 +226,9 @@ the way the model assumes. That needs the literature, sound statistics and real 
 - Zimdahl & Undorf 2021 (Memory), on hindsight bias in metamemory;
 - Guilbault et al. 2004 and Christensen-Szalanski & Willham 1991, the hindsight-bias meta-analyses;
 - the open-spaced-repetition srs-benchmark;
-- Maye & Hurley 2026 (The Clinical Teacher): 13 studies, 21,415 learners, SMD 0.78 against standard studying;
+- Maye & Hurley 2026 (The Clinical Teacher): 14 studies in the systematic review, 13 in the meta-analysis,
+  21,415 learners, SMD 0.78 (95% CI 0.56–0.99) against standard studying
+  ([primary abstract](https://pubmed.ncbi.nlm.nih.gov/41601436/)); interventions were heterogeneous;
 - Price et al. 2025 (Academic Medicine), Sezgin & Bektaş 2026 (Nurse Education Today);
 - Bell et al. 2008, Ambler et al. 2025, Custers & ten Cate 2011, D'Eon 2006 (medical forgetting);
 - Rubin & Wenzel 1996, Radvansky et al. 2024 (the shape of forgetting);
