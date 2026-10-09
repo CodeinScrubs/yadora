@@ -123,4 +123,48 @@ class RecallCalibrationEvidenceTest {
         val recalled = BooleanArray(RecallCalibration.WINDOW) { true }
         assertEquals("the estimate is the window's alone", RecallCalibration.scale(predicted, recalled), repo.recallCalibrationScale(), 1e-12)
     }
+
+    @Test
+    fun `the most recent evidence follows saved ids after clock rollback`() = runBlocking {
+        val first = db.reviewLogDao().insertLog(
+            ReviewLogEntity(studyUnitId = unitId, reviewedAt = 1_000_000L,
+                memoryRating = "Good", understandingRating = "Clear", previousIntervalDays = 10.0,
+                nextIntervalDays = 10.0, previousState = "Building", nextState = "Building",
+                retrievabilityAtReview = 0.9, elapsedDays = 10.0,
+                logType = "RECALL", schedulerVersion = MedScheduler.CURRENT_MODEL.id)
+        )
+        val last = db.reviewLogDao().insertLog(
+            ReviewLogEntity(studyUnitId = unitId, reviewedAt = 1_000L,
+                memoryRating = "Forgot", understandingRating = "NotAsked", previousIntervalDays = 10.0,
+                nextIntervalDays = 1.0, previousState = "Building", nextState = "Learning",
+                retrievabilityAtReview = 0.9, elapsedDays = 10.0,
+                logType = "RECALL", schedulerVersion = MedScheduler.CURRENT_MODEL.id)
+        )
+        assertTrue(last > first)
+        val newest = db.reviewLogDao().getRecentRecallLogsOnce(
+            MedScheduler.CURRENT_MODEL.id, 0L, 0L, RecallCalibration.MIN_ELAPSED_DAYS,
+            RecallCalibration.EARLY_REVIEW_FRACTION, 1,
+        ).single()
+        assertEquals("clock rollback must not keep the older saved review", last, newest.id)
+    }
+
+    @Test
+    fun `newer failures displace an older full window even when their clock is earlier`() = runBlocking {
+        repeat(RecallCalibration.WINDOW) { log(at = 100_000L + it, recalled = true) }
+        repeat(RecallCalibration.WINDOW) { log(at = 1_000L + it, recalled = it % 100 < 80) }
+        val expected = RecallCalibration.scale(
+            DoubleArray(RecallCalibration.WINDOW) { 0.9 },
+            BooleanArray(RecallCalibration.WINDOW) { it % 100 < 80 },
+        )
+        assertEquals("calibration must use the latest saved window", expected, repo.recallCalibrationScale(), 1e-12)
+    }
+
+    @Test
+    fun `out of range predictions cannot displace valid evidence before the database limit`() = runBlocking {
+        repeat(RecallCalibration.WINDOW) { log(at = 1_000L + it, recalled = it % 100 < 80) }
+        val expected = repo.recallCalibrationScale()
+        repeat(RecallCalibration.WINDOW + 1) { log(at = 10_000L + it, recalled = true, predicted = 1.01) }
+        assertEquals("eligibility must be applied before LIMIT", expected, repo.recallCalibrationScale(), 1e-12)
+    }
+
 }

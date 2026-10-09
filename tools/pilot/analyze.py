@@ -362,6 +362,21 @@ def history_order(log: dict) -> Tuple[int, int]:
     return int(log.get("id", 0)), int(log["reviewedAt"])
 
 
+def calibration_window(rows: List[Row], participant: str, parameter_set: int, activated_at: int) -> List[Row]:
+    """The app's most recent eligible evidence, in saved order, independent of export/display clock order.
+
+    Select the participant and live set before limiting: ids are local to one phone. Recomputed predictions
+    and invalid/short/early observations never displace eligible ones. This does not change the activation
+    boundary: a prediction dated before a set began scheduling is still excluded as in the app.
+    """
+    eligible = [r for r in rows if r.participant == participant and r.parameter_set == parameter_set
+                and r.is_recall and r.scheduler_version == "FSRS-6" and not r.recomputed
+                and r.predicted is not None and 0 <= r.predicted <= 1
+                and r.elapsed_days is not None and r.at >= activated_at
+                and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
+    return sorted(eligible, key=lambda r: (r.log_id, r.at))[-ym.CAL_WINDOW:]
+
+
 def corrections(d: dict) -> Dict[int, List[Tuple[int, int, Optional[int]]]]:
     """RATING_CORRECTED events (export v14+) per topic: (corrected log id, when, the topic's last log id when it
     replayed). A correction replays the topic, so the stored prediction of every later log that existed then was
@@ -1581,9 +1596,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             if sid not in sets:
                 continue
             model = m0 if sid == 0 else ym.Fsrs6(sets[sid])
-            ev = [r for r in recalls_pred if r.participant == pid and r.parameter_set == sid and r.elapsed_days is not None
-                  and r.at >= starts.get(sid, 0) and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
-            ev = ev[-ym.CAL_WINDOW:]
+            ev = calibration_window(recalls_pred, pid, sid, starts.get(sid, 0))
             if not ev:
                 continue
             est = moment_scale_ci([r.predicted for r in ev], [r.success for r in ev], model)

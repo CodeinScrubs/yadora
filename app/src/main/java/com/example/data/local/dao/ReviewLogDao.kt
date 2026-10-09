@@ -42,7 +42,8 @@ interface ReviewLogDao {
 
     /**
      * The evidence the per-user calibration reads: the most recent real recall reviews under one
-     * memory model, newest first, with a stored prediction, at least [minElapsedDays] elapsed, and
+     * memory model, newest saved id first (a phone clock can move backwards), with a valid stored
+     * prediction, at least [minElapsedDays] elapsed, and
      * not brought forward by anything but the memory clock (at least [earlyFraction] of the interval
      * that was scheduled had passed). First-study rows are self-assessments, not recalls;
      * short-interval rows carry the whole-day rounding bias RecallCalibration.MIN_ELAPSED_DAYS
@@ -52,8 +53,8 @@ interface ReviewLogDao {
      */
     @Query(
         "SELECT * FROM review_logs WHERE logType = 'RECALL' AND schedulerVersion = :model AND parameterSetId = :parameterSetId " +
-            "AND reviewedAt >= :since AND retrievabilityAtReview >= 0.0 AND elapsedDays >= :minElapsedDays " +
-            "AND elapsedDays >= :earlyFraction * previousIntervalDays ORDER BY reviewedAt DESC, id DESC LIMIT :limit"
+            "AND reviewedAt >= :since AND retrievabilityAtReview BETWEEN 0.0 AND 1.0 AND elapsedDays >= :minElapsedDays " +
+            "AND elapsedDays >= :earlyFraction * previousIntervalDays ORDER BY id DESC LIMIT :limit"
     )
     suspend fun getRecentRecallLogsOnce(model: String, parameterSetId: Long, since: Long, minElapsedDays: Double, earlyFraction: Double, limit: Int): List<ReviewLogEntity>
 
