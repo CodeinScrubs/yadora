@@ -918,16 +918,24 @@ WITHIN_MIN = 10  # next reviews after each method, per learner, before that lear
 METHOD_MIN_CLUSTERS = 20  # heuristic floor for a normal-approximation interval, not proof of adequate power
 
 
+def _effective_cluster_count(counts):
+    """Kish weight-concentration index, NOT a power calculation or an independent sample count."""
+    counts = list(counts)
+    total = sum(counts)
+    return total * total / sum(x * x for x in counts) if total else 0.0
+
+
 def within_participant_difference(by_person: Dict[str, Dict[str, List[Tuple[float, object]]]]) -> Optional[dict]:
     """Questions minus Reading residual, compared inside each learner and weighted by nq*nr/(nq+nr).
 
     Uncertainty clusters on topic INSIDE each learner; a topic present in both methods keeps its covariance.
     Repeating the same topic cannot create independent evidence. This interval is conditional on these learners,
-    not a population/causal effect. With fewer than 20 topics overall, or a learner with only one topic, report
-    the point estimate but withhold the interval and let D7 wait. The floor is a diagnostic policy, not a power
+    not a population/causal effect. Require 20 effective topic clusters overall and at least two effective
+    topics per learner/method. Raw counts alone hide dominant topics/learners. Report the point estimate but
+    withhold the interval when this guard fails. The floor is a diagnostic policy, not a power
     calculation. Cluster-normal intervals remain approximate and no interval repairs method-choice confounding.
     """
-    num = den = var_num = 0.0
+    num = den = var_num = mass_sq = 0.0
     people = nq_total = nr_total = clusters = 0
     estimable = True
     for groups in by_person.values():
@@ -938,6 +946,22 @@ def within_participant_difference(by_person: Dict[str, Dict[str, List[Tuple[floa
         w = len(q) * len(r) / (len(q) + len(r))
         num += w * (mq - mr)
         den += w
+        qc = Counter(topic for _, topic in q)
+        rc = Counter(topic for _, topic in r)
+        eq = _effective_cluster_count(qc.values())
+        er = _effective_cluster_count(rc.values())
+        # Preserve the existing learner weights and point estimate. With only one influential
+        # topic in either arm, centred residuals can give a false zero-variance contrast.
+        estimable = estimable and eq + 1e-9 >= 2 and er + 1e-9 >= 2
+        # Combine absolute arm weights on shared topics before measuring concentration.
+        # Counting the arms separately overstates effective clusters when they share
+        # the same influential topics; signed cancellation is not new evidence either.
+        topic_mass = defaultdict(float)
+        for topic, n in qc.items():
+            topic_mass[topic] += n / len(q)
+        for topic, n in rc.items():
+            topic_mass[topic] += n / len(r)
+        mass_sq += w * w * sum(m * m for m in topic_mass.values())
         scores = defaultdict(float)
         for x, topic in q:
             scores[topic] += (x - mq) / len(q)
@@ -955,9 +979,12 @@ def within_participant_difference(by_person: Dict[str, Dict[str, List[Tuple[floa
     if not people:
         return None
     diff = num / den
-    se = math.sqrt(var_num) / den if estimable and clusters >= METHOD_MIN_CLUSTERS else None
+    # Absolute cluster masses sum to 2*den; each learner/topic occurs once, even
+    # across both methods. The cap absorbs floating-point drift above the raw count.
+    effective = min(float(clusters), 4 * den * den / mass_sq)
+    se = math.sqrt(var_num) / den if estimable and effective + 1e-9 >= METHOD_MIN_CLUSTERS else None
     return dict(diff=diff, se=se, ci=None if se is None else (diff - 1.96 * se, diff + 1.96 * se),
-                participants=people, clusters=clusters, n_questions=nq_total, n_reading=nr_total,
+                participants=people, clusters=clusters, effective_clusters=effective, n_questions=nq_total, n_reading=nr_total,
                 uncertainty="topic-clustered, conditional on observed learners")
 
 
@@ -987,7 +1014,8 @@ def clustered_gap(items: Sequence[Tuple[float, bool, object]]) -> Optional[dict]
     cluster-robust variance). Reviews of one topic can move together, for instance a topic harder than its prediction
     failing several times in a row, and an interval that treats them as independent is then too narrow.
     design_effect is the clustered variance over the independent one (1 = the reviews behave as independent).
-    Added 2026-10-03, when outside researchers asked whether the pilot's review counts overstate its certainty."""
+    Added 2026-10-03. Intervals also require 20 effective topic clusters (a weight-concentration
+    guard, not a power calculation); many tiny topics must not conceal one dominant topic."""
     n = len(items)
     if n < 2:
         return None
@@ -997,12 +1025,15 @@ def clustered_gap(items: Sequence[Tuple[float, bool, object]]) -> Optional[dict]
     for (_, _, c), d in zip(items, gaps):
         sums[c] += d - g
     k = len(sums)
+    effective = _effective_cluster_count(Counter(c for _, _, c in items).values())
     if k < 2:
-        return dict(gap=g, gap_ci=None, design_effect=None, clusters=k)
+        return dict(gap=g, gap_ci=None, design_effect=None, clusters=k, effective_clusters=effective)
     naive = sum((d - g) ** 2 for d in gaps) / (n * (n - 1))
     clustered = k / (k - 1) * sum(s * s for s in sums.values()) / (n * n)
     half = 1.96 * math.sqrt(clustered)
-    return dict(gap=g, gap_ci=(g - half, g + half), design_effect=clustered / naive if naive > 0 else None, clusters=k)
+    ci = (g - half, g + half) if effective + 1e-9 >= METHOD_MIN_CLUSTERS else None
+    return dict(gap=g, gap_ci=ci, design_effect=clustered / naive if naive > 0 else None,
+                clusters=k, effective_clusters=effective)
 
 
 def moment_scale_ci(predicted: Sequence[float], recalled: Sequence[bool], model: ym.Fsrs6) -> dict:
@@ -1563,6 +1594,10 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                   f"cluster ({cl['clusters']} topics; design effect {fmt(cl['design_effect'], 2)}: 1 means the reviews "
                   "behave as independent, 2 means the review count overstates the evidence twofold). The intervals above "
                   "treat every review as independent.")
+        elif cl:
+            rep.p(f"Reported minus predicted: **{100 * cl['gap']:+.1f} points**; clustered interval withheld "
+                  f"({cl['clusters']} topics; {cl['effective_clusters']:.1f} effective topic clusters, "
+                  f"needs {METHOD_MIN_CLUSTERS}). D2 waits. Intervals above treat each review as independent.")
         summary.setdefault("calibration", {})[f"{model}/{sid}" + (f"@{owner}" if owner else "")] = dict(raw=c, calibrated=cc)
     bins = [(0, .5), (.5, .7), (.7, .8), (.8, .85), (.85, .9), (.9, .95), (.95, 1.0001)]
     rows_b = []
@@ -1762,10 +1797,11 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     wp = summary["method_within_participant"]
     if wp:
         interval = (f"95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}" if wp["ci"] else
-                    f"interval withheld: fewer than {METHOD_MIN_CLUSTERS} topics overall or a learner has only one topic")
+                    f"interval withheld: fewer than {METHOD_MIN_CLUSTERS} effective topic clusters overall or fewer than two effective topics per learner/method")
         rep.p(f"Inside each learner (Questions minus Reading, at least {WITHIN_MIN} next reviews per method): "
               f"**{wp['diff']:+.3f}** ({interval}), {wp['participants']} learner(s), {wp['clusters']} topics, "
-              f"{wp['n_questions']}/{wp['n_reading']} reviews. Topic-clustered and conditional on these learners. "
+              f"{wp['effective_clusters']:.1f} effective topic clusters, {wp['n_questions']}/{wp['n_reading']} reviews. "
+              "Topic-clustered and conditional on these learners. "
               "D7 reads this interval; no interval means WAIT. This is an observational association, not a causal "
               "method effect or a population-level confidence interval.")
     else:
@@ -1860,9 +1896,9 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         gap = c["observed"] - c["predicted"]
         ci_gap = (c.get("clustered") or {}).get("gap_ci")
         sure = ci_gap is not None and (ci_gap[0] > 0 or ci_gap[1] < 0)
-        judged.append("OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT"))
+        judged.append("WAIT" if ci_gap is None else ("OK" if abs(gap) <= 0.05 else ("LOOK" if sure else "WAIT")))
         notes.append(f"{key}: reported {fmt_p(c['observed'])} vs predicted {fmt_p(c['predicted'])} (n={c['n']}"
-                     + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else ")"))
+                     + (f"; clustered 95% CI of the gap {100 * ci_gap[0]:+.1f} to {100 * ci_gap[1]:+.1f} points)" if ci_gap else "; interval withheld: insufficient effective topic evidence)"))
     q2 = "Does reported recall match the (calibrated) prediction within 5 points?"
     if judged:
         add("D2", q2, "; ".join(notes), "LOOK" if "LOOK" in judged else ("WAIT" if "WAIT" in judged else "OK"))
@@ -1919,7 +1955,7 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         sure = wp["ci"] is not None and (wp["ci"][0] > 0 or wp["ci"][1] < 0)
         add("D7", "After a Questions review, does the next review go better than after a Reading one (by 5+ points)?",
             (f"{wp['diff']:+.3f} (topic-clustered 95% CI {wp['ci'][0]:+.3f} to {wp['ci'][1]:+.3f}) "
-             if wp["ci"] else f"{wp['diff']:+.3f} (too few independent topics for an interval) ") +
+             if wp["ci"] else f"{wp['diff']:+.3f} (insufficient effective topic evidence for an interval) ") +
             f"within learners ({wp['participants']}); "
             f"pooled {q['mean'] - rd['mean']:+.3f} (n={q['n']}/{rd['n']})",
             "WAIT" if wp["ci"] is None else ("OK" if abs(wp["diff"]) < 0.05 else ("LOOK" if sure else "WAIT")))

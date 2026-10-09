@@ -1556,6 +1556,19 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - Snooze is REAL: `reminder_snoozed_until` pref suppresses the whole chain until
   the target; colliding primary/secondary slots (±5 min) are coalesced to one.
 
+## Pilot evidence guards (2026-10-09)
+
+- Preserve the owner's mixed subjective **post-study** ratings. No separate pre-study estimate or quiz is
+  required. Broad and narrow topics are valid; recording a review means the named scope was covered.
+  `docs/PILOT.md` and `docs/PILOT_GUIDE_FA.md` now state this actual contract rather than interpreting the
+  grades as objective pre-study recall.
+- Pilot uncertainty also checks concentration of review weights. Require at least 20 effective topic
+  clusters, and for a within-learner method comparison at least two effective topics per learner/method.
+  Combine the absolute weights of topics shared across methods before measuring concentration. The Kish
+  concentration index is a diagnostic guard, not a power calculation or an independent sample count.
+  Many tiny clusters cannot lend nominal certainty to one dominant topic/learner. Retain point estimates;
+  withhold unsupported intervals and make D2/D7 WAIT. Scheduler decisions are unchanged.
+
 ## Testing
 
 Unit tests: `app/src/test/java/com/example/...` (JUnit; Robolectric where a

@@ -53,6 +53,73 @@ class MethodUncertaintyTest(unittest.TestCase):
         self.assertAlmostEqual(0, out["se"], places=12)
         self.assertEqual(20, out["clusters"])
 
+    def test_one_dominant_topic_does_not_gain_confidence_from_many_tiny_topics(self):
+        q = [(.2, 0)] * 1000 + [(-.8, i) for i in range(1, 40)]
+        r = [(-.8, 40)] * 1000 + [(.2, i) for i in range(41, 80)]
+        out = analyze.within_participant_difference({"A": {"Questions only": q, "Reading only": r}})
+        self.assertAlmostEqual(961 / 1039, out["diff"])
+        self.assertEqual(80, out["clusters"])
+        self.assertIsNone(out["ci"])
+        self.assertLess(out["effective_clusters"], 3)
+
+    def test_shared_topics_cannot_count_twice_in_the_concentration_guard(self):
+        # Both methods share eleven influential topics and 29 tiny topics.
+        # Counting arm masses separately would invent ~22 effective clusters.
+        base = [(i / 40, i) for i in range(11) for _ in range(100)]
+        base += [(i / 40, i) for i in range(11, 40)]
+        out = analyze.within_participant_difference({"A": {"Questions only": base,
+                                                          "Reading only": base}})
+        self.assertEqual(40, out["clusters"])
+        self.assertAlmostEqual(1129 ** 2 / (11 * 100 ** 2 + 29), out["effective_clusters"])
+        self.assertIsNone(out["ci"])
+
+    def test_each_learner_method_needs_more_than_one_effective_topic(self):
+        groups = {str(i): {"Questions only": [(.2, 1)] * 20,
+                           "Reading only": [(-.8, 2)] * 20} for i in range(20)}
+        out = analyze.within_participant_difference(groups)
+        self.assertEqual(40, out["clusters"])
+        self.assertIsNone(out["ci"])
+
+    def test_a_dominant_learner_with_few_topics_cannot_borrow_other_learners_clusters(self):
+        groups = {"A": {"Questions only": [(i / 5, i) for i in range(5)] * 100,
+                        "Reading only": [(i / 5 - .1, i + 5) for i in range(5)] * 100},
+                  "B": {"Questions only": [(i / 5, i) for i in range(5)] * 2,
+                        "Reading only": [(i / 5 - .1, i + 5) for i in range(5)] * 2}}
+        out = analyze.within_participant_difference(groups)
+        self.assertEqual(20, out["clusters"])
+        self.assertIsNone(out["ci"])
+        self.assertLess(out["effective_clusters"], 12)
+
+    def test_a_concentrated_calibration_gap_withholds_confidence(self):
+        rows = [(.8, False, 0)] * 1000 + [(.8, True, i) for i in range(1, 40)]
+        out = analyze.clustered_gap(rows)
+        self.assertEqual(40, out["clusters"])
+        self.assertIsNone(out["gap_ci"])
+        self.assertAlmostEqual(1039 ** 2 / (1000 ** 2 + 39), out["effective_clusters"])
+
+    def test_dominant_topic_null_simulation_withholds_instead_of_inventing_evidence(self):
+        rng = random.Random(9876)
+        guarded_looks = withheld = 0
+        for _ in range(1000):
+            q = [(int(rng.random() < .8) - .8, i) for i in range(40)]
+            r = [(int(rng.random() < .8) - .8, i + 40) for i in range(40)]
+            q += [q[0]] * 999
+            r += [r[0]] * 999
+            out = analyze.within_participant_difference({"A": {"Questions only": q, "Reading only": r}})
+            withheld += out["ci"] is None
+            guarded_looks += (abs(out["diff"]) > .05 and out["ci"] is not None
+                              and (out["ci"][0] > 0 or out["ci"][1] < 0))
+        self.assertEqual(1000, withheld)
+        self.assertEqual(0, guarded_looks)
+
+    def test_calibration_without_estimable_uncertainty_waits_even_when_the_point_gap_is_small(self):
+        summary = dict(integrity=dict(mismatched=0, consistency_issues=0), participants={},
+                       calibration={"FSRS-6/0": dict(calibrated=dict(n=400, observed=.91, predicted=.9,
+                                                                  clustered=dict(gap_ci=None)))})
+        rule = next(r for r in analyze.decide(summary, []) if r["id"] == "D2")
+        self.assertEqual("WAIT", rule["verdict"])
+        self.assertIn("interval withheld", rule["result"])
+
     @staticmethod
     def row(log, at, method, success=True, recalled=True, recomputed=False, model="FSRS-6"):
         return SimpleNamespace(participant="A", unit_id=7, log_id=log, at=at, methods=(method,),

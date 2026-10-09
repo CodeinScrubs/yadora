@@ -51,14 +51,17 @@ separate decision.
 
 Everything is in the Persian guide. The essentials:
 
-- **One topic = one chunk studied in one sitting**: a lecture, a chapter or a UWorld block's subject. Give
-  it a one-line scope ("What does this topic cover?"). Very large topics make "remembered most of it" vague.
+- **One topic = the scope the learner names**, whether broad (asthma) or narrow (asthma treatment).
+  Record a review after covering that whole scope. A scope line is optional; topics need not have equal
+  size or take one sitting. Larger scopes make a single memory rating harder to interpret.
 - **Rate the first study the same day**, ideally straight after studying ("Save and rate now"). The
   schedule counts from that moment.
-- **Review when Yadora says**, by any method. Then answer **how much you still had before you reread or
-  checked answers**, not how the session felt.
+- **Choose a topic and review it outside the app**, by any method, then record memory and understanding.
+  The owner uses a mixed subjective post-study rating: remembered material, perceived mastery after study
+  and topic difficulty may all affect it. No separate pre-study estimate or quiz is required. A recalled
+  pre-study impression can inform the answer, but these grades are not an objective recall test.
 - **"Forgot" is not failure.** It is the most useful answer the model gets. Rating a lost topic "Hard"
-  quietly stretches its intervals (RESEARCH.md §2.2).
+  can mislead the schedule (RESEARCH.md §2.2). Do not turn a subjective answer into a claim of measured recall.
 - Optionally tick how you reviewed, and if you did questions, the score. Ten seconds; it is what lets the
   pilot tell methods apart and check the ratings.
 - "Not today" and missed days are fine. Deleting and re-adding a topic is not: it throws away its history.
@@ -132,12 +135,12 @@ settled decision in CLAUDE.md stays settled unless the owner reopens it.
 | id | question | threshold | if LOOK |
 |---|---|---|---|
 | D1 | Did every phone schedule exactly what the rules say? | 0 replay mismatches, 0 self-check issues | BUG. Find the phone, the build and the log in `report.md` §2. A time-zone change is the one benign cause. |
-| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300; past 5 points it is LOOK only if the topic-clustered 95% interval of the gap excludes 0, otherwise WAIT (amended 2026-10-03). Judged for the published defaults pooled and for each learner's personal set on its own: a set's id is local to one phone (2026-10-03) | The per-user calibration is not keeping up. Check D4 before touching it. |
+| D2 | Does reported recall match the calibrated prediction? | within 5 points, n ≥ 300 and ≥ 20 effective topic clusters; without a clustered interval WAIT, even for a small point gap; past 5 points it is LOOK only if the topic-clustered 95% interval of the gap excludes 0, otherwise WAIT (amended 2026-10-03). Judged for the published defaults pooled and for each learner's personal set on its own: a set's id is local to one phone (2026-10-03) | The per-user calibration is not keeping up. Check D4 before touching it. |
 | D3 | First review after a Hard / Medium / Easy first rating: close to predicted? | n ≥ 60 per rating; LOOK when more than 7 points below, or more than 5 points above AND over 95% recalled | Compare "implied S0" with the default. Simulate a first-study prior for topics, or a different cap, before changing either. |
 | D4 | Do most learners forget systematically faster or slower than the defaults? | most raw scales inside 0.8–1.25, ≥ 3 participants | A population prior for the calibration, or a Yadora default weight set (see D5). |
 | D5 | Does the pooled refit beat the defaults on held-out reviews? | one-sided paired z ≥ 2.33 (the app's own bar), with the first-rating grades in order and intervals no longer than the defaults' (the app's two other conditions, added 2026-10-03) | A candidate Yadora default set. It ships only under a new parameter-set id, after the goldens and replay tests, and never overwrites FSRS-6's published defaults. |
 | D6 | Do memory ratings follow question scores? | rank correlation ≥ 0.3, n ≥ 50 | Ratings are noisy or inflated. Change the rating copy first (the cheapest fix). Consider suggesting a rating from the score, never overriding it. |
-| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each; a topic-clustered interval is required (≥ 20 topics overall, ≥ 2 in each eligible learner). At 5+ points it is LOOK only if the interval excludes 0; with no interval it is WAIT. | Investigate source, timing, topic and rating differences. This is an observational association. A method-specific gain needs a separate prospective validation; refitting these same observations cannot establish causality. |
+| D7 | After a Questions review, does the next one go better than after a Reading one? | difference < 5 points within learners, n ≥ 100 each; a topic-clustered interval is required (≥ 20 effective topic clusters overall, ≥ 2 effective topics per learner/method). At 5+ points it is LOOK only if the interval excludes 0; with no interval it is WAIT. | Investigate source, timing, topic and rating differences. This is an observational association. A method-specific gain needs a separate prospective validation; refitting these same observations cannot establish causality. |
 | D8 | Are fewer than 25% of reviews more than 3 days late? | < 25%, n ≥ 100 | Adherence or reminder problem, not a model problem. Check the reminder events per phone. |
 | D9 | Are at least 80% of first ratings given on the study day? | ≥ 80%, n ≥ 50 | The first-rating flow is being skipped. Look at "Save and rate now" and the Today prompt. |
 | D10 | Are fewer than 40% of successful reviews answered Partial/Confused? | < 40%, n ≥ 100 | The repair clock is adding a lot of load. Check its backoff in simulation. |
@@ -212,8 +215,9 @@ few learners, silence is not proof that nothing is wrong.
 
 The D7 interval now also clusters on topic **inside each learner**, preserving covariance when a topic
 appears under both methods. This is conditional uncertainty for the observed learners, not inference
-about the population of students. The minimum of 20 topics is a heuristic for the approximate normal
-interval, not an 80%-power calculation. `test_method_uncertainty.py` simulates 1,000 null comparisons:
+about the population of students. The minimum of 20 effective topic clusters is a heuristic for the approximate normal
+interval, not an 80%-power calculation. It uses the concentration of absolute cluster weights, combining
+both methods when a topic is shared; signed score cancellation cannot create extra evidence. `test_method_uncertainty.py` simulates 1,000 null comparisons:
 40 topics per method, 10 identical repeats per topic, both methods with the same 80% outcome probability.
 Treating reviews as independent produces 508 false LOOK results; clustering on topic produces 48.
 These are controlled synthetic checks of the uncertainty calculation, not evidence of a learning benefit.
@@ -268,3 +272,10 @@ file, with this prompt:
 | week 2 | first export from everyone → `analyze.py` → fix any D1 bug, fix the settings of any phone the reminder table in §3 flags, reply to confusion |
 | weeks 3–8 | normal use; no setting changes |
 | week 8 | final export, optional retention check, full analysis, simulation on fitted weights |
+
+Weight concentration matters as well as raw cluster count: 40 topics in each method can still mean only about
+1.08 effective topics per arm if one topic contributes 1,000 reviews and the others one each. A fixed-seed
+1,000-run null experiment produced 298 false LOOK results with the raw-count guard; the concentration guard
+withholds all those intervals (zero LOOK). This is refusal of insufficient evidence, not demonstrated 95% coverage.
+The Kish index (sum weights)^2 / sum weights^2 is a concentration diagnostic, not a power/sample-size estimate.
+The same guard protects the calibration-gap interval; observed point estimates remain unchanged.

@@ -35,8 +35,10 @@ The method comparison uses the next **saved** event of the topic, never timestam
 bridges a first-study exposure or a legacy-model event. Recomputed predictions are excluded.
 Its within-learner interval now clusters on topic: repeated reviews of the same topic do not provide
 independent evidence, and a topic used under both methods retains its covariance. The interval is
-conditional on these learners, with an approximate normal distribution. Below 20 topics overall,
-or with only one topic inside an eligible learner, it is withheld and D7 waits. The 20-topic floor
+conditional on these learners, with an approximate normal distribution. Below 20 effective topic clusters overall,
+or below two effective topics per learner/method, it is withheld and D7 waits. The concentration index
+combines the absolute weights of shared topics across both methods before measuring concentration;
+raw topic counts cannot hide a dominant topic or learner. The 20-topic floor
 is a conservative diagnostic heuristic, not a claim of adequate power. The comparison remains
 observational: differing topics, elapsed time, grade semantics, source quality and self-selected
 methods can confound it. A significant gap is a reason to investigate, never an automatic change
