@@ -44,3 +44,36 @@ these learners; the approximate interval is withheld below 20 effective topic cl
 are checked so many tiny topics cannot hide one dominant topic; this is a concentration guard, not
 a power calculation or an independent sample count. That floor is a diagnostic
 heuristic, not a sample-size or power calculation. No app schedule or calibration estimate reads it.
+
+
+### Compare immutable forecasts with a past-only reference
+
+`forecast_audit.py` also compares raw FSRS predictions with a fixed simple reference on the same reviews.
+No additional app input, network service, dependency, refit or schedule change is needed:
+
+```sh
+python3 tools/pilot/test_forecast_baselines.py
+python3 tools/pilot/forecast_audit.py exports/ --out prospective_report
+```
+
+The reference uses the last 50 **retained valid original delayed-review outcomes** in saved-id order,
+not wall-clock order. Before observing the current answer, it predicts `(past_successes + 1) / (n + 2)`.
+The first 20 outcomes of each learner/model/set/policy/session/due-context stream are warm-up only.
+These are fixed diagnostic choices, not validated optimal constants. Missing forecasts, first studies,
+same-day ratings and orphaned/invalid snapshots are excluded by the existing audit. Corrected answers
+cannot change the original learning signal. Purged history cannot be reconstructed: this is a
+counterfactual reference calculated at analysis time, not an assertion that it was deployed or logged.
+
+`forecasts.csv` includes `baseline_p` and `baseline_history_n`. The JSON includes paired log loss and
+Brier scores, sample counts and `log_loss_advantage` = baseline loss minus raw FSRS loss. For example,
++0.01 means raw FSRS predicts these binary post-study ratings better by 0.01 natural-log loss units per
+scored review; it is **not** a 1% learning or exam improvement. Warm-up rows are excluded from **both**
+models' paired scores. Results remain separated by learner, set, policy, session and due context.
+
+Approximate 95% intervals for the review-weighted mean loss difference use topic-cluster sandwich
+variance, conditional on the observed learner, and are withheld below 20 effective topics (weight
+concentration). That is an uncertainty safeguard, not a power calculation; day effects, model fitting,
+review-selection confounding and repeated checks remain limitations. A predictor of mostly successful
+ratings can win log loss without identifying which topic needs review. **Do not replace a scheduler or
+claim educational benefit from this comparison alone.** Combine these diagnostics with separately
+collected assessment results and study time when deciding the next experiment.

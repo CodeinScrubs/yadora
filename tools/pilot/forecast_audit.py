@@ -11,7 +11,7 @@ import json
 import math
 import os
 import statistics
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 import analyze
 
@@ -108,6 +108,66 @@ def observations(export):
     return rows, dict(excluded), issues
 
 
+# Fixed diagnostics, not fitted on the export or a prescription for review scheduling.
+BASELINE_WINDOW = 50
+BASELINE_MIN_HISTORY = 20
+MIN_EFFECTIVE_TOPICS = 20
+
+
+def with_past_baseline(rows):
+    """Counterfactual reference on retained, valid ORIGINAL observations, with no current/future outcome.
+
+    Each learner/model/set/policy/session/due-context stream resets independently. Order is the saved log id,
+    never the editable/rollback-prone wall clock. Laplace smoothing prevents certainty after all successes
+    or failures. The fixed 50-review window and 20-review warm-up are diagnostics, not validated optima.
+    """
+    histories = defaultdict(lambda: deque(maxlen=BASELINE_WINDOW))
+    result = []
+    for row in sorted(rows, key=lambda r: (r["participant"], r["log"])):
+        key = (row["participant"], row["model"], row["set"], row["policy"], row["session"], row["dueContext"])
+        past = histories[key]
+        probability = (sum(past) + 1.) / (len(past) + 2.) if len(past) >= BASELINE_MIN_HISTORY else None
+        result.append(dict(row, baseline_p=probability, baseline_history_n=len(past)))
+        past.append(int(row["original_success"]))
+    return result
+
+
+def baseline_comparison(rows):
+    """Paired raw-model vs past-only reference scores on EXACTLY the same reviews.
+
+    Topic-cluster sandwich SE for the review-weighted mean loss difference, conditional on this learner.
+    Positive advantage means lower raw-FSRS log loss. The approximate 95% interval is withheld for sparse
+    or concentrated topics; it is not a learning-effect interval, a causal test or a sequential test.
+    """
+    paired = [r for r in rows if r.get("baseline_p") is not None]
+    out = dict(n=len(paired), warmup_excluded=len(rows) - len(paired),
+               baseline="past 50 comparable original ratings, Laplace smoothing, 20-review warm-up",
+               log_loss_advantage=None, log_loss_advantage_ci=None, effective_topics=0., topics=0)
+    if not paired:
+        return out
+    model_pairs = [(r["p"], r["original_success"]) for r in paired]
+    baseline_pairs = [(r["baseline_p"], r["original_success"]) for r in paired]
+    differences = [analyze.ym.log_loss([b]) - analyze.ym.log_loss([m]) for b, m in zip(baseline_pairs, model_pairs)]
+    average = statistics.fmean(differences)
+    clusters = defaultdict(list)
+    for row, delta in zip(paired, differences):
+        clusters[(row["participant"], row["topic"])].append(delta)
+    counts = [len(values) for values in clusters.values()]
+    effective = len(paired) ** 2 / sum(n * n for n in counts)
+    interval = None
+    if len(clusters) > 1 and effective + 1e-9 >= MIN_EFFECTIVE_TOPICS:
+        variance = len(clusters) / (len(clusters) - 1.) * sum(
+            (sum(values) - len(values) * average) ** 2 for values in clusters.values()) / len(paired) ** 2
+        se = math.sqrt(variance)
+        interval = [average - 1.96 * se, average + 1.96 * se]
+    out.update(topics=len(clusters), effective_topics=effective,
+               raw_model_log_loss=analyze.ym.log_loss(model_pairs), baseline_log_loss=analyze.ym.log_loss(baseline_pairs),
+               raw_model_brier=statistics.fmean((p - int(y)) ** 2 for p, y in model_pairs),
+               baseline_brier=statistics.fmean((p - int(y)) ** 2 for p, y in baseline_pairs),
+               log_loss_advantage=average, log_loss_advantage_ci=interval)
+    return out
+
+
 def metrics(rows):
     if not rows:
         return dict(n=0)
@@ -124,6 +184,7 @@ def metrics(rows):
         if effective + 1e-9 < 20:
             gap["gap_ci"] = None
     return dict(n=len(rows), topics=len({(r["participant"], r["topic"]) for r in rows}),
+                baseline_comparison=baseline_comparison(rows),
                 reported_success=statistics.fmean(int(y) for _, y in pairs),
                 mean_forecast=statistics.fmean(p for p, _ in pairs), brier=brier, log_loss=loss,
                 answer_changed=sum(r["answer_changed"] for r in rows), gap=gap)
@@ -133,16 +194,17 @@ def audit(exports):
     all_rows, people, issues = [], {}, []
     for export in exports:
         rows, excluded, errors = observations(export)
+        rows = with_past_baseline(rows)
         all_rows.extend(rows)
         issues.extend(errors)
         people[export.participant] = dict(metrics=metrics(rows), excluded=excluded)
     groups = defaultdict(list)
     for row in all_rows:
         # Parameter set ids are phone-local. Never pool two learners' distinct "set 7" as one model.
-        groups[(row["participant"], row["model"], row["set"], row["policy"], row["dueContext"])].append(row)
+        groups[(row["participant"], row["model"], row["set"], row["policy"], row["dueContext"], row["session"])].append(row)
     summary = dict(version=1, semantics="subjective post-study rating, original answer, prospective raw forecast",
                    participants=people, issues=issues, groups=[dict(participant=k[0], model=k[1], set=k[2], policy=k[3],
-                                                                 due_context=k[4], **metrics(v)) for k, v in sorted(groups.items())])
+                                                                 due_context=k[4], session=k[5], **metrics(v)) for k, v in sorted(groups.items())])
     return summary, sorted(all_rows, key=lambda r: (r["participant"], r["log"]))
 
 
@@ -153,7 +215,7 @@ def write(summary, rows, out):
     with open(os.path.join(out, "forecasts.csv"), "w", newline="", encoding="utf-8-sig") as stream:
         fields = ["participant", "topic", "log", "at", "zone", "model", "set", "policy", "p", "elapsed", "stability",
                   "difficulty", "previousInterval", "memoryDue", "repairDue", "effectiveDue", "deferredUntil", "dueContext",
-                  "memory", "understanding", "current_memory", "current_understanding", "answer_changed", "original_success"]
+                  "session", "memory", "understanding", "current_memory", "current_understanding", "answer_changed", "original_success", "baseline_p", "baseline_history_n"]
         writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
@@ -176,7 +238,32 @@ def write(summary, rows, out):
         else:
             report.append(f"| {pid} | 0 | 0 | — | — | — | — | 0 |")
         report.extend(["", f"Excluded for {pid}: `{json.dumps(info['excluded'], sort_keys=True)}`", ""])
-    report.extend(["", "Group results are in summary.json, separated by learner, memory model, weight set, policy and due context.",
+    report.extend(["", "## Past-only predictive baseline", "",
+                   "The reference uses the last 50 retained valid original delayed-review ratings, with Laplace smoothing "
+                   "and a 20-review warm-up. It resets for each learner/model/set/policy/session/due-context stream. "
+                   "Its probability is computed before adding this review's outcome, in saved-id order even when the "
+                   "clock moved backwards. These constants are fixed diagnostics, not a validated optimal predictor.", "",
+                   "Raw FSRS and the reference are scored on exactly the same post-warm-up reviews. A positive log-loss "
+                   "advantage favours raw FSRS. The approximate topic-cluster interval is conditional on the observed learner, "
+                   "withheld below 20 effective topics and does not adjust for repeated checks or day-level dependence. "
+                   "A low log loss can result from predicting mostly successful ratings without distinguishing weak topics. "
+                   "It cannot prove that a review policy improves learning, saves study time or raises exam scores.", "",
+                   "This baseline is reconstructed only from retained valid forecasts, not logged by the app. Purged/missing "
+                   "history cannot be recovered; it is not presented as a historical deployed prediction. No model is replaced "
+                   "and no LOOK/pass/fail threshold is inferred from the score.", "",
+                   "| Learner | Paired reviews | Raw FSRS loss | Past-only loss | FSRS advantage | Approx. 95% topic interval | Effective topics |",
+                   "|---|---:|---:|---:|---:|---|---:|"])
+    for pid, info in summary["participants"].items():
+        comparison = info["metrics"].get("baseline_comparison", {})
+        if not comparison.get("n"):
+            report.append(f"| {pid} | 0 | — | — | — | withheld | 0 |")
+            continue
+        ci = comparison["log_loss_advantage_ci"]
+        interval = f"{ci[0]:+.5f} to {ci[1]:+.5f}" if ci else "withheld"
+        report.append(f"| {pid} | {comparison['n']} | {comparison['raw_model_log_loss']:.5f} | "
+                      f"{comparison['baseline_log_loss']:.5f} | {comparison['log_loss_advantage']:+.5f} | "
+                      f"{interval} | {comparison['effective_topics']:.2f} |")
+    report.extend(["", "Group results are in summary.json, separated by learner, memory model, weight set, policy, session and due context.",
                    "Malformed/duplicate snapshots: " + str(len(summary["issues"]))])
     report.extend("- " + error for error in summary["issues"])
     with open(os.path.join(out, "report.md"), "w", encoding="utf-8") as stream:
