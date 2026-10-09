@@ -40,5 +40,7 @@ the events produce a coverage report with zero prospective forecasts. They are n
 The original mixed post-study ratings are a **subjective proxy**, not objective recall. A good Brier
 or log-loss result does not prove a review policy improved exam performance. Groups stay separate
 by learner, weight set, policy and due context. Topic-clustered gap intervals are conditional on
-these learners; the approximate interval is withheld below 20 topics. That floor is a diagnostic
+these learners; the approximate interval is withheld below 20 effective topic clusters. Topic weights
+are checked so many tiny topics cannot hide one dominant topic; this is a concentration guard, not
+a power calculation or an independent sample count. That floor is a diagnostic
 heuristic, not a sample-size or power calculation. No app schedule or calibration estimate reads it.

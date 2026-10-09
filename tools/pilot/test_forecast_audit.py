@@ -81,6 +81,16 @@ class ForecastAuditTest(unittest.TestCase):
         self.assertEqual(1, len(issues))
         self.assertIn("duplicate saved review log 1", issues[0])
 
+    def test_one_dominant_topic_withholds_interval_despite_many_nominal_topics(self):
+        rows = [dict(p=.8, original_success=False, participant="A", topic=0, answer_changed=False)] * 1000
+        rows += [dict(p=.8, original_success=True, participant="A", topic=i, answer_changed=False) for i in range(1, 40)]
+        metrics = fa.metrics(rows)
+        self.assertEqual(40, metrics["topics"])
+        self.assertEqual(1039, metrics["n"])
+        self.assertLess(metrics["gap"]["effective_clusters"], 2)
+        self.assertIsNone(metrics["gap"]["gap_ci"])
+        self.assertAlmostEqual((1000 * .8 ** 2 + 39 * .2 ** 2) / 1039, metrics["brier"])
+
     def test_small_clusters_withhold_interval_and_personal_sets_stay_separate(self):
         summary, rows = fa.audit([export(participant="A"), export(participant="B")])
         self.assertEqual(2, len(summary["groups"]))

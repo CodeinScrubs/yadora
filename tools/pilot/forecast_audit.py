@@ -115,9 +115,14 @@ def metrics(rows):
     loss = analyze.ym.log_loss(pairs)
     brier = statistics.fmean((p - int(y)) ** 2 for p, y in pairs)
     gap = analyze.clustered_gap([(r["p"], r["original_success"], (r["participant"], r["topic"])) for r in rows])
-    # Suppress an approximate cluster-normal interval when the number of topics is too small.
-    if gap and gap["clusters"] < 20:
-        gap["gap_ci"] = None
+    # Count weight concentration too: many one-review topics cannot hide one dominant topic.
+    # Keep this guard in the standalone forecast tool as well as #27's shared gap helper.
+    if gap:
+        counts = Counter((r["participant"], r["topic"]) for r in rows)
+        effective = len(rows) ** 2 / sum(n * n for n in counts.values())
+        gap["effective_clusters"] = effective
+        if effective + 1e-9 < 20:
+            gap["gap_ci"] = None
     return dict(n=len(rows), topics=len({(r["participant"], r["topic"]) for r in rows}),
                 reported_success=statistics.fmean(int(y) for _, y in pairs),
                 mean_forecast=statistics.fmean(p for p, _ in pairs), brier=brier, log_loss=loss,
@@ -159,7 +164,7 @@ def write(summary, rows, out):
               "and orphaned events are excluded. Missing study days are not failures. Forecasts are joined by saved log id, "
               "including after merges and clock rollback. Current corrected answers appear beside the originals in the CSV.", "",
               "Intervals for the mean rating-minus-forecast gap cluster on topics, conditional on the observed learner. "
-              "They are approximate and withheld below 20 topics. They do not account for a new learner population, "
+              "They are approximate and withheld below 20 effective topic clusters. Effective clusters measure weight concentration, not power or an independent sample count. They do not account for a new learner population, "
               "method-choice confounding or repeated significance checks. Review times are selected by the policy/user.", "",
               "| Learner | Reviews | Topics | Predicted | Reported proxy | Brier | Log loss | Changed answers |",
               "|---|---:|---:|---:|---:|---:|---:|---:|"]
