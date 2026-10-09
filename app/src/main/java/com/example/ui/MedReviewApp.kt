@@ -35,8 +35,17 @@ import com.example.ui.settings.SettingsScreen
 import com.example.ui.settings.ThemeSettingsScreen
 import com.example.ui.today.TodayScreen
 
+/** A tap on one topic's notification ([com.example.notifications.TopicNotifications]); [seq] tells two taps apart. */
+data class OpenTopic(val unitId: Long, val seq: Int)
+
 @Composable
-fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> Unit = {}, onThemeChange: (String, String) -> Unit = { _, _ -> }, openReviewSignal: Int = 0) {
+fun MedReviewApp(
+    repository: MedReviewRepository,
+    onLanguageChange: (String) -> Unit = {},
+    onThemeChange: (String, String) -> Unit = { _, _ -> },
+    openReviewSignal: Int = 0,
+    openTopic: OpenTopic? = null,
+) {
     val navController = rememberNavController()
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -55,6 +64,13 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                 popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
                 launchSingleTop = true
             }
+        }
+    }
+
+    // A topic's own notification opens that topic to rate. It is in today's share, so its log says PLAN.
+    androidx.compose.runtime.LaunchedEffect(openTopic) {
+        if (openTopic != null) {
+            navController.navigate(Screen.ReviewSession(openTopic.unitId, kind = "PLAN")) { launchSingleTop = true }
         }
     }
 

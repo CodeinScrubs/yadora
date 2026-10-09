@@ -517,6 +517,9 @@ object BackupManager {
         }
         // The scheduler must see the restored weight sets before anything schedules again.
         runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }
+        // The topic notifications named the old library: a restored file can give one of their ids to another topic, so
+        // a tap would open the wrong one. They come back, from the restored library, at the next reminder time.
+        runCatching { com.example.notifications.TopicNotifications.cancelAll(context) }
         // The event log was just replaced, so today's load, this phone's build and its time zone are recorded again from
         // the restored data when the app next starts (DailySnapshot, AppVersionLog, TimeZoneLog). Their "already recorded" marks are device-local
         // and would otherwise keep a phone restored onto from logging either until tomorrow, or its build at all.
@@ -642,7 +645,7 @@ object BackupManager {
         runCatching { context.filesDir.resolve("last_before_restore_backup.json.tmp").delete() }
         // The last research export written for sharing (subject names, device model, every review's timing).
         runCatching { context.cacheDir.resolve("exports").deleteRecursively() }
-        runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
+        runCatching { com.example.notifications.TodayRefresh.afterChange(context) }
     }
 
     /** A section that holds records must be a list: null or anything else is a damaged file, never "none". */

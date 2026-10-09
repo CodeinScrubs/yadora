@@ -71,7 +71,7 @@ class ReminderSafetyWorker(ctx: Context, params: WorkerParameters) : CoroutineWo
         val app = ctx as? com.example.MedReviewApplication ?: return Result.success()
         // Today's plan, not the raw due count: nothing to nag about once the daily limit is done.
         if (app.todayPlan().size > 0) {
-            NotificationScheduler.showReviewNotification(ctx, source = "safety_worker")
+            if (NotificationScheduler.showReviewNotification(ctx, source = "safety_worker")) TopicNotifications.postAll(ctx)
         }
         return Result.success()
     }

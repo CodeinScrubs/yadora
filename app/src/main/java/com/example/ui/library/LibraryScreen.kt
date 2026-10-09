@@ -323,7 +323,7 @@ fun LibraryScreen(
                         val others = selectedIds - keep
                         viewModel.mergeUnits(keep, others) { merged ->
                             if (merged) {
-                                com.example.widget.DueWidgetProvider.updateAll(libContext)
+                                com.example.notifications.TodayRefresh.afterChange(libContext)
                                 selectedIds = emptySet()
                                 showMergeDialog = false
                             } else {
@@ -375,7 +375,7 @@ fun LibraryScreen(
                     onClick = {
                         val ids = selectedIds
                         viewModel.softDeleteUnits(ids) {
-                            com.example.widget.DueWidgetProvider.updateAll(libContext)
+                            com.example.notifications.TodayRefresh.afterChange(libContext)
                             selectedIds = emptySet()
                             showBatchPurgeConfirm = false
                         }
@@ -411,7 +411,7 @@ fun LibraryScreen(
                     onClick = {
                         val ids = selectedIds
                         viewModel.archiveUnits(ids) {
-                            com.example.widget.DueWidgetProvider.updateAll(libContext) // due count changed
+                            com.example.notifications.TodayRefresh.afterChange(libContext) // due count changed
                             selectedIds = emptySet()
                             showBatchDeleteConfirm = false
                         }
@@ -467,7 +467,7 @@ fun LibraryScreen(
                             IconButton(onClick = { 
                                 val ids = selectedIds
                                 viewModel.unarchiveUnits(ids) {
-                                    com.example.widget.DueWidgetProvider.updateAll(libContext)
+                                    com.example.notifications.TodayRefresh.afterChange(libContext)
                                     selectedIds = emptySet()
                                 }
                             }) {
@@ -690,7 +690,7 @@ fun LibraryScreen(
                                 TextButton(
                                     onClick = {
                                         val done = {
-                                            com.example.widget.DueWidgetProvider.updateAll(libContext)
+                                            com.example.notifications.TodayRefresh.afterChange(libContext)
                                             showDeleteConfirm = false
                                         }
                                         if (showArchived) {
@@ -835,7 +835,7 @@ fun LibraryScreen(
                             )
                             TextButton(onClick = {
                                 viewModel.restoreDeleted(del.id)
-                                com.example.widget.DueWidgetProvider.updateAll(libContext)
+                                com.example.notifications.TodayRefresh.afterChange(libContext)
                             }) {
                                 Text(when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" })
                             }

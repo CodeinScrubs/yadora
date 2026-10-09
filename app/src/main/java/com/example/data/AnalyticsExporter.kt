@@ -73,7 +73,10 @@ object AnalyticsExporter {
             "(the notification's 'Not today'), REDISTRIBUTE ('Spread out'), SNOOZE, MERGE, NOTIF_SHOWN (a reminder posted; " +
             "source=alarm, snooze, safety_worker or boot_catchup, the last two being catch-ups for an alarm that did not come), " +
             "MISSED_REMINDER_REPORT (the learner's own report, with a snapshot), REMINDER_FIRED, REMINDERS_ON / REMINDERS_OFF " +
-            "(the Settings switch), APP_OPENED (from=notification, alarm or widget: a tap that opened the app), " +
+            "(the Settings switch), APP_OPENED (from=notification, alarm or widget: a tap that opened the app; since " +
+            "2026-10-09 also topic, a topic's own notification, and topics, their group), TOPIC_NOTIFICATION_HIDDEN (unitId: " +
+            "a topic's notification swiped away, so it stays away until the next chosen reminder time; not a review, not a " +
+            "deferral), " +
             "RATING_CORRECTED (log=<id> memory=<before>><after> understanding=<before>><after>: the log itself holds the " +
             "corrected answer, and every later log of that topic was recomputed), DAILY_SNAPSHOT (dailySnapshot below), " +
             "APP_VERSION (code=<new> name=<name> previous=<old code> installed=<epoch ms>, 0 = a fresh install or the first " +
@@ -113,7 +116,8 @@ object AnalyticsExporter {
         put("reminderFired", "REMINDER_FIRED: one per reminder alarm that reached the app. detail: slot (primary = the set time " +
             "and its ~3-hourly repeats, secondary, snooze, test), scheduled (epoch ms it was armed for), late_s (seconds after " +
             "that), exact (1 = exact alarm), idle (Doze), saver (battery saver), bucket (standby: 10 active, 20 working set, " +
-            "30 frequent, 40 rare, 45 restricted), outcome (posted, nothing_due, just_shown, not_posted, error, test) and due. " +
+            "30 frequent, 40 rare, 45 restricted), outcome (posted, nothing_due, just_shown, not_posted, error, test; since " +
+            "2026-10-09 also repeat: a ~3-hourly repeat of the chain, which posts nothing new and makes no sound) and due. " +
             "A day with reminders on and no fire at all is a reminder the phone never delivered.")
         put("reminderHealth", "Read at export: notifications allowed, the reminder channel on, exact alarms allowed, full-screen " +
             "alarm allowed, battery optimization ignored, background restricted, standby bucket, battery saver, the second " +

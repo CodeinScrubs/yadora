@@ -15,12 +15,24 @@ import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
   companion object {
-    /** Which tap opened the app: "notification", "alarm" or "widget" ([logOpen]). */
+    /** Which tap opened the app: "notification", "alarm", "widget", "topic" or "topics" ([logOpen]). */
     const val EXTRA_OPENED_FROM = "opened_from"
+    /** The topic whose own notification was tapped ([com.example.notifications.TopicNotifications]): it opens to rate. */
+    const val EXTRA_OPEN_TOPIC = "open_topic"
   }
 
   // Bumped when the app is opened from a "Review now" notification/alarm, so Compose jumps to review.
   private val openReviewSignal = androidx.compose.runtime.mutableStateOf(0)
+
+  /** A topic notification's tap: the topic, and a count so the same topic tapped twice opens twice. */
+  private val openTopicSignal = androidx.compose.runtime.mutableStateOf<com.example.ui.OpenTopic?>(null)
+
+  /** Consumed, like open_review, so a recreated activity does not open the topic again. */
+  private fun takeOpenTopic(intent: android.content.Intent?) {
+    val id = intent?.getLongExtra(EXTRA_OPEN_TOPIC, -1L) ?: -1L
+    intent?.removeExtra(EXTRA_OPEN_TOPIC)
+    if (id > 0) openTopicSignal.value = com.example.ui.OpenTopic(id, (openTopicSignal.value?.seq ?: 0) + 1)
+  }
 
   /**
    * One APP_OPENED event per tap on a reminder, the alarm or the widget. With REMINDER_FIRED and NOTIF_SHOWN it
@@ -56,6 +68,7 @@ class MainActivity : ComponentActivity() {
       androidx.core.app.NotificationManagerCompat.from(this).cancel(com.example.notifications.NotificationScheduler.NOTIFICATION_ID)
     }
     intent.removeExtra("open_review") // consume it, so a later recreate doesn't re-navigate
+    takeOpenTopic(intent)
     setIntent(intent)
   }
 
@@ -72,13 +85,14 @@ class MainActivity : ComponentActivity() {
       com.example.data.DailySnapshot.recordOnce(app, source = com.example.data.DailySnapshot.SOURCE_APP)
     }
     runCatching { com.example.notifications.AlarmRingActivity.dismissActive() } // opening the app silences a ringing alarm
-    com.example.widget.DueWidgetProvider.updateAll(this) // keep the home-screen count fresh on open
+    com.example.notifications.TodayRefresh.afterChange(this) // keep the home-screen count and the topic notifications fresh
     if (intent?.getBooleanExtra("open_review", false) == true) {
       openReviewSignal.value++
       intent?.removeExtra("open_review") // consume it, so rotation/recreate doesn't re-navigate
       // Opening review from the reminder/alarm dismisses the (possibly ongoing) reminder notification.
       androidx.core.app.NotificationManagerCompat.from(this).cancel(com.example.notifications.NotificationScheduler.NOTIFICATION_ID)
     }
+    if (savedInstanceState == null) takeOpenTopic(intent)
     setContent {
       val sharedPrefs = androidx.compose.runtime.remember { getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE) }
       val initialLanguage = sharedPrefs.getString("app_language", "en") ?: "en"
@@ -167,7 +181,8 @@ class MainActivity : ComponentActivity() {
                         themeMode = mode
                         accentHex = hex
                     },
-                    openReviewSignal = openReviewSignal.value
+                    openReviewSignal = openReviewSignal.value,
+                    openTopic = openTopicSignal.value,
                 )
                 }
             }

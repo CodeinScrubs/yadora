@@ -22,10 +22,12 @@ import java.util.Calendar
  * Local, offline reminder scheduling on **AlarmManager** (not WorkManager), because reminders are
  * time-critical and a missed reminder defeats the whole app.
  *
- * Persistence model (the product requirement): the reminder NAGS until the user acts.
- * - It first fires at the user's set time, then **re-fires every ~3h through the waking window**
- *   (08:00–22:00) for as long as topics are still due — so missing it (or a silent phone) doesn't
- *   lose the nudge. Past the waking window it resumes at the next day's set time.
+ * Persistence model: the reminder comes at the user's set time and at a second daily slot, and the alarm chain
+ * **re-fires every ~3h through the waking window** (08:00–22:00) for as long as topics are still due, so a phone
+ * that slept through a slot still catches up. Since 2026-10-09 (the owner's decision: sound and vibration at most
+ * once per chosen reminder time) a ~3h repeat is SILENT: it keeps what is showing in step with today's share and
+ * brings back nothing the learner put away ([isChosenSlot], [TopicNotifications]). Past the waking window it resumes
+ * at the next day's set time.
  * - Overdue topics carry over day to day automatically (their due date stays in the past), so the
  *   nag continues on later days too.
  * - It goes quiet only when nothing is due — i.e. the user reviewed everything OR **procrastinated**
@@ -319,6 +321,9 @@ object NotificationScheduler {
     fun cancelAll(context: Context) {
         cancelReminder(context)
         (context.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(firePendingIntent(context, REQ_TEST, ACTION_TEST))
+        // What is showing goes too: its topics no longer exist.
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        TopicNotifications.cancelAll(context)
     }
 
     fun cancelReminder(context: Context) {
@@ -499,6 +504,50 @@ object NotificationScheduler {
     }
 
     /**
+     * True for a reminder time the learner chose, false for a ~3h repeat of the chain. The second slot, a snooze ending
+     * and a test are chosen; a "primary" alarm is the set time only when it was armed for exactly that time of day (its
+     * repeats were armed for "now + 3 hours"). An alarm armed before the arming time was recorded counts as chosen.
+     */
+    fun isChosenSlot(slot: String?, scheduledAt: Long, hour: Int, minute: Int, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): Boolean =
+        when (slot) {
+            "primary" -> scheduledAt <= 0L || java.time.Instant.ofEpochMilli(scheduledAt).atZone(zone).toLocalTime()
+                .let { it.hour == hour && it.minute == minute && it.second == 0 && it.nano == 0 }
+            else -> true
+        }
+
+    fun isChosenSlot(context: Context, intent: Intent): Boolean {
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        return isChosenSlot(
+            intent.getStringExtra(EXTRA_SLOT), intent.getLongExtra(EXTRA_SCHEDULED_AT, 0L),
+            sp.getInt("reminder_hour", 20), sp.getInt("reminder_minute", 0),
+        )
+    }
+
+    /** True when the reminder itself is up in the notification shade. */
+    fun reminderShowing(context: Context): Boolean = runCatching {
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications
+            .any { it.id == NOTIFICATION_ID && it.tag == null }
+    }.getOrDefault(false)
+
+    /**
+     * The reminder's count kept true after a change or at a ~3h repeat, silently: re-posted without a sound when it is
+     * up, taken away when today's share is empty. In alarm mode it is left as it is, so a re-post cannot bring the
+     * full-screen ringer back. Never brings back a reminder the learner put away. Call it off the main thread.
+     */
+    fun refreshIfShowing(context: Context) {
+        if (!reminderShowing(context)) return
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        val alarmMode = sp.getBoolean("alarm_enabled", false) && !sp.getBoolean("alarm_silenced", false)
+        val app = context.applicationContext as? com.example.MedReviewApplication ?: return
+        val size = runCatching { kotlinx.coroutines.runBlocking { app.todayPlan().size } }.getOrNull() ?: return
+        if (size == 0) {
+            NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+            return
+        }
+        if (!alarmMode) showReviewNotification(context, markShown = false, source = "refresh", silent = true)
+    }
+
+    /**
      * True when [armed], the nudge instant saved when it was armed, is still the one to keep: in the future, and no
      * further ahead than one repeat, which is how far it was when it was saved. Anything further means the clock was
      * set back since; keeping it would silence the intra-day nudges until the old date comes round again.
@@ -510,6 +559,8 @@ object NotificationScheduler {
         context: Context,
         markShown: Boolean = true,
         source: String = "alarm",
+        /** A refresh of the count: no sound, no vibration, no ringer, nothing logged ([refreshIfShowing]). */
+        silent: Boolean = false,
     ): Boolean {
         createNotificationChannel(context)
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
@@ -525,6 +576,11 @@ object NotificationScheduler {
         // The receiver first counts due rows, then this function fetches them again. A review can land
         // between those operations. Never post/log a real "Time to review" notification with zero due.
         if (markShown && count == 0) return false
+        // A silent refresh with nothing left to do takes the reminder away instead of showing the test text below.
+        if (silent && count == 0) {
+            NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+            return false
+        }
 
         val isDe = (sp.getString("app_language", "en") ?: "en") == "de"
         val title = when {
@@ -588,7 +644,7 @@ object NotificationScheduler {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
         // On Android 14+, Play/system policy can revoke full-screen access. Fall back to an ordinary
         // audible reminder instead of selecting the silent alarm channel without launching the ringer.
-        val alarmMode = alarmModeRequested && canUseFullScreen
+        val alarmMode = !silent && alarmModeRequested && canUseFullScreen
         val channel = if (alarmMode) { createAlarmChannel(context); ALARM_CHANNEL_ID } else channelId(context)
 
         // Professional presentation: the sprout brand glyph as the (system-tinted) status-bar icon,
@@ -647,6 +703,7 @@ object NotificationScheduler {
         }
         if (!alarmMode && !soundEnabled) builder.setSound(null)
         if (!alarmMode && !vibrationEnabled) builder.setVibrate(longArrayOf(0L))
+        if (silent) builder.setSilent(true).setOnlyAlertOnce(true)
 
         val canPost = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
