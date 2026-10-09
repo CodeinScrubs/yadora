@@ -1637,3 +1637,14 @@ This is checked at a due refit, not continuously or on every app launch; it is a
 not a promise that each topic's interval is shorter or that exam scores improve. The default ceiling is
 intentionally distinct from the previously calibrated intervals. `ActiveModelSafetyTest` reproduces the
 rejected-candidate gap with real Room and tests safe baselines and discard paths.
+
+### Calibration evidence uses saved order (2026-10-09)
+
+The latest `RecallCalibration.WINDOW` eligible reviews are selected by log id, like memory replay and
+personal-fit validation, rather than the phone's wall clock. A clock rollback must not keep an older
+600-review sample in use or make the Progress card disagree with the repository. Predictions outside
+0..1 are excluded in SQL before LIMIT. `calibrationStatsOf` sorts before taking the window, and the
+pilot analyzer's `calibration_window` applies the same scope and order. The set's activation timestamp
+and exclusion of rating-correction replays are unchanged. Historical logged scales are not rewritten.
+The Room and Progress regression tests fail on the prior implementation; `test_analyze.py` also checks
+saved order, participant/set isolation and eligibility before limiting.

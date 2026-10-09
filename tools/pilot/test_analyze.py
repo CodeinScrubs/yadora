@@ -13,6 +13,7 @@ Regenerate the fixture after changing the export format:
       open('tools/pilot/fixtures/sample_export.json', 'w'), separators=(',', ':'), ensure_ascii=False)"
 """
 import copy
+from dataclasses import replace
 import csv
 import json
 import math
@@ -763,7 +764,32 @@ def test_each_learner_s_personal_set_is_its_own_calibration_group():
     print("each learner's personal set is its own calibration group; D2 flags one 25 points off")
 
 
+def test_calibration_window_follows_saved_ids_and_filters_before_limiting():
+    # Use the real export's Row type and replay, then deliberately reverse its wall-clock order.
+    row = next(r for r in rows_of(fixture()) if r.is_recall and r.predicted is not None)
+    old = [replace(row, participant="owner", log_id=i + 1, at=100_000 + i, parameter_set=0,
+                   scheduler_version="FSRS-6", predicted=.9, elapsed_days=10., previous_interval=10.,
+                   rating="Good", recomputed=False) for i in range(analyze.ym.CAL_WINDOW)]
+    recent = [replace(r, log_id=r.log_id + analyze.ym.CAL_WINDOW, at=1_000 + i,
+                      rating="Good" if i % 100 < 80 else "Forgot") for i, r in enumerate(old)]
+    invalid = [replace(recent[0], log_id=10_000 + i, **kw) for i, kw in enumerate([
+        dict(participant="another phone"), dict(parameter_set=7), dict(log_type="FIRST_STUDY"),
+        dict(scheduler_version="FSRS-5"), dict(recomputed=True), dict(predicted=None),
+        dict(predicted=1.01), dict(predicted=-.1), dict(predicted=float("nan")),
+        dict(elapsed_days=None), dict(elapsed_days=1.), dict(previous_interval=100.), dict(at=0),
+    ])]
+    rows = old + recent + invalid
+    for ordered in (rows, rows[::-1], sorted(rows, key=lambda r: r.at)):
+        selected = analyze.calibration_window(ordered, "owner", 0, 1_000)
+        assert [r.log_id for r in selected] == [r.log_id for r in recent]
+        scale = analyze.ym.calibration_scale([r.predicted for r in selected], [r.success for r in selected])
+        expected = analyze.ym.calibration_scale([.9] * len(recent), [r.success for r in recent])
+        assert abs(scale - expected) < 1e-12 and scale < 1., scale
+    print("calibration uses the latest 600 saved eligible ids after clock rollback, in every display order")
+
+
 if __name__ == "__main__":
+    test_calibration_window_follows_saved_ids_and_filters_before_limiting()
     test_real_export_replays_exactly()
     test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
     test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed()

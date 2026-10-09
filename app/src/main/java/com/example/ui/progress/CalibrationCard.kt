@@ -1,12 +1,13 @@
 package com.example.ui.progress
 
+import com.example.data.local.entity.REVIEW_HISTORY_ORDER
 import com.example.data.local.entity.ReviewLogEntity
 import com.example.domain.srs.Fsrs6Parameters
 import com.example.domain.srs.MedScheduler
 import com.example.domain.srs.RecallCalibration
 
 /**
- * The Progress screen's calibration card, from the review logs (ascending, as `getLogsSince` returns them).
+ * The Progress screen's calibration card, from the review logs in any display order.
  *
  * Every number comes from the SAME rows the scheduler's correction is fitted on — real recall reviews
  * on the live model and weight set, made since that set began scheduling, that pass
@@ -41,6 +42,7 @@ internal fun calibrationStatsOf(
                 it.retrievabilityAtReview in 0.0..1.0 &&
                 RecallCalibration.isEvidence(it.elapsedDays, it.previousIntervalDays)
         }
+        .sortedWith(REVIEW_HISTORY_ORDER)
         .takeLast(RecallCalibration.WINDOW)
     if (evidence.size < 10) return null // too little to say anything
     val predicted = DoubleArray(evidence.size) { evidence[it].retrievabilityAtReview }
