@@ -76,6 +76,21 @@ def test_kotlin_random():
     print(f"kotlin RNG: {len(data)} fuzz factors match kotlin-stdlib bit for bit")
 
 
+def test_versioned_fuzz_matches_independent_kotlin_cases():
+    with open(os.path.join(os.path.dirname(__file__), "kotlin_fuzz_policy_reference.json"), encoding="utf-8") as f:
+        data = json.load(f)
+    assert data["policy"] == ym.POLICY_VERSION
+    for r in data["cases"]:
+        actual = ym.fuzzed_interval(r["interval"], r["base"], int(r["unit_id"]), r["review_count"],
+                                   r["first_study"], r["policy"], r["model"])
+        assert actual == r["expected"], (r, actual)
+    for uid in range(1, 201):
+        for count in range(8):
+            values = [ym.fuzzed_interval(2.9+i*.005, 2.9+i*.005, uid, count, False) for i in range(81)]
+            assert all(a <= b for a, b in zip(values, values[1:])), (uid, count)
+    print(f"versioned fuzz: {len(data['cases'])} Kotlin cases agree exactly; 129600 boundary samples stay monotone")
+
+
 def test_calibration_recovers_planted_scale():
     rnd = random.Random(7)
     m = ym.Fsrs6()
@@ -116,6 +131,7 @@ def test_intervals_match_app_ladder():
 if __name__ == "__main__":
     test_goldens()
     test_kotlin_random()
+    test_versioned_fuzz_matches_independent_kotlin_cases()
     test_calibration_recovers_planted_scale()
     test_intervals_match_app_ladder()
     print("all checks passed")
