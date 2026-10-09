@@ -545,12 +545,13 @@ REMINDER_OPEN_WINDOW_MS = 3 * 3_600_000  # a tap on the reminder or the alarm wi
 
 def reminder_funnel(d: dict, tz) -> dict:
     """What each posted reminder led to (export v14+): a tap on it or the alarm within three hours (APP_OPENED), and a
-    review logged later the same local day. Test reminders are left out."""
+    review logged later the same local day. Since 2026-10-09 a tap on one of its topics' own notifications (from=topic)
+    or on their group (from=topics) counts as a tap on the reminder. Test reminders are left out."""
     events = d.get("eventLogs") or []
     posted = sorted(int(e.get("at") or 0) for e in events if e.get("type") == "NOTIF_SHOWN"
                     and parse_detail(e.get("detail")).get("source") != "test")
     taps = sorted(int(e.get("at") or 0) for e in events if e.get("type") == "APP_OPENED"
-                  and parse_detail(e.get("detail")).get("from") in ("notification", "alarm"))
+                  and parse_detail(e.get("detail")).get("from") in ("notification", "alarm", "topic", "topics"))
     reviews = sorted(int(l["reviewedAt"]) for l in d.get("reviewLogs") or [])
     opened = sum(1 for t in posted if any(t <= a <= t + REMINDER_OPEN_WINDOW_MS for a in taps))
     same_day = sum(1 for t in posted if any(r >= t and local_day(r, tz) == local_day(t, tz) for r in reviews))

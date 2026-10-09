@@ -508,7 +508,7 @@ class ReviewViewModel(
                     }
                     return@launch
                 }
-                com.example.widget.DueWidgetProvider.updateAll(getApplication()) // undo changes the due count
+                com.example.notifications.TodayRefresh.afterChange(getApplication()) // undo changes the due count
 
                 // Counters adjust only AFTER the undo transaction succeeds (mirror of rateCurrentUnit).
                 canUndo = ratedStack.isNotEmpty()
@@ -615,7 +615,7 @@ class ReviewViewModel(
             canUndo = ratedStack.isNotEmpty()
             // (The growth event is inserted inside commitReview's transaction, keyed to the log id,
             // so a committed review and its growth can never disagree — and undo removes both.)
-            com.example.widget.DueWidgetProvider.updateAll(getApplication())
+            com.example.notifications.TodayRefresh.afterChange(getApplication())
             // Both clocks: the memory prediction AND the date actually written to the row, so the
             // message can never announce an interval the schedule did not use. Counted from today, so a review saved for
             // an earlier day says when the topic comes back from now.
@@ -669,7 +669,7 @@ class ReviewViewModel(
                 // audit event atomic with the schedule change).
                 repository.procrastinateUnit(currentId, tomorrow)
                 com.example.notifications.NotificationScheduler.scheduleDailyReminder(getApplication())
-                com.example.widget.DueWidgetProvider.updateAll(getApplication())
+                com.example.notifications.TodayRefresh.afterChange(getApplication())
                 advanceUnit()
             } catch (t: Throwable) {
                 // Same contract as rating: a failed write leaves the card in place and tells the user.

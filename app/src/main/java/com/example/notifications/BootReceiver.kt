@@ -65,7 +65,9 @@ class BootReceiver : BroadcastReceiver() {
                 if (NotificationScheduler.isSnoozed(appContext)) return@Thread
                 // Only fire the catch-up during waking hours and only if today's time already passed.
                 if (due > 0 && !alreadyShownToday && now.after(reminderToday) && now.get(Calendar.HOUR_OF_DAY) in 8..21) {
-                    NotificationScheduler.showReviewNotification(appContext, source = "boot_catchup")
+                    if (NotificationScheduler.showReviewNotification(appContext, source = "boot_catchup")) {
+                        kotlinx.coroutines.runBlocking { TopicNotifications.postAll(appContext) }
+                    }
                 }
                 com.example.widget.DueWidgetProvider.updateAll(appContext) // refresh count after reboot
             } catch (t: Throwable) {

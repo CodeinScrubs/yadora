@@ -149,6 +149,19 @@ complete (Android's own storage provider renames; the file parsed as backup v9 w
 "Back up now" left one file for the day and no staged file, and a tap on a test reminder logged APP_OPENED
 `from=notification`.
 
+Verified 2026-10-09 on an emulator (Android 16, a temporary AVD on F:; the Samsung was not connected), with the redesign
+and the per-topic notifications, after a restore of `DeviceSeedBackupTest`'s library. Today listed "TODAY'S SHARE" (2
+first ratings, then 12 reviews) with no session button. A test reminder posted the reminder (three actions, the bell)
+and a "Today's share" group of 14 topic notifications in the share's order, all on the silent topic channel, in the
+normal section of the shade; `dumpsys notification` named the reminder as the only one that made a sound or vibrated.
+A tap on "Diuretics" opened its rating screen at once (APP_OPENED from=topic); rating it took only its notification away
+and re-posted the reminder silently as "13 topics to review"; Undo put both back. A swipe on another topic hid it (in
+the transient prefs, TOPIC_NOTIFICATION_HIDDEN logged); rating a third topic from Today kept the hidden one away; the
+next test reminder brought it back and cleared the list, again with one sound. After a switch to Persian, topics
+posted before the switch kept their English words, which is why a language change now takes the group away; with
+that build, 16 topics up in English left none after a switch to Persian, and the reminder read "۱۶ مبحث برای مرور". A
+"Done" on a review opened from a notification returns to whatever screen was underneath (Settings there).
+
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
 nothing. After a reboot wait up to two minutes past `sys.boot_completed` before judging whether reminders
@@ -1689,10 +1702,26 @@ These were decided deliberately. Re-suggesting them wastes a session:
     never in the future (`ReviewDay`, REVIEW_DATE_CORRECTED; the moved review's own prediction leaves the calibration too).
     A first rating moved to before the study date takes the study date with it (`ReviewDayAndMinutesTest`). Reviews keep
     `loggedAt`, when they were saved, beside `reviewedAt`, when they happened (DB v11, backup v10, export v16).
-  - Notifications: one per topic, for the topics above today's line (at most 40: Android shows about 50 per app and stacks
-    them under the app's name); a tap opens that topic; once it is rated the next one comes in silently; sound and
-    vibration at most once per chosen reminder time. Swiping one away hides it until the next reminder time: not a
-    review, not a deferral.
+  - BUILT (2026-10-09): notifications, one per topic, for the topics above today's line (at most 40: Android keeps
+    about 50 per app); a tap opens that topic; once it is rated the next one comes in silently; sound and vibration at
+    most once per chosen reminder time. Swiping one away hides it until the next reminder time: not a review, not a
+    deferral (`notifications/TopicNotifications`).
+    - **How:** the reminder stays one notification with its actions and the ringer, and it is the only one that sounds.
+      Beside it a group ("Today's share", its own silent summary) holds the topics, on their own channel without sound
+      or vibration (`yadora_topics_v1`; turning it off keeps the reminder), each posted silent, lock screen private, no
+      auto-cancel (a tap that ends without a rating leaves it up), in the share's order (sort key).
+    - **When:** a CHOSEN reminder time (the set time, the second slot, a snooze ending, the boot catch-up, the safety
+      net, a test) clears the hidden list and posts the share; a ~3-hour repeat of the alarm chain is silent
+      (`NotificationScheduler.isChosenSlot`: a "primary" alarm is the set time only when armed for exactly that time of
+      day; REMINDER_FIRED outcome `repeat`) and only keeps what is up in step; so does every change
+      (`TodayRefresh.afterChange`, called wherever the widget used to be refreshed), and the reminder's own count is
+      re-posted silently when it is up (`refreshIfShowing`; not in alarm mode, where a re-post could ring again).
+    - **Why only the new ones are posted:** Android throttles UPDATES of a notification to about five a second, not new
+      ones, so a sync posts what is missing and cancels what left the share; it never re-posts what is up. So the
+      notifications keep the words they were posted with: a language change takes the group away (it comes back at the
+      next reminder time in the new language), and so does a restore, whose topics may reuse an old topic's id.
+    - **Logged:** APP_OPENED from=topic (one topic) or topics (the group), TOPIC_NOTIFICATION_HIDDEN (a swipe);
+      `analyze.py` counts a topic tap as a tap on its reminder. `TopicNotificationsTest`.
   - BUILT (2026-10-09): Review ahead becomes a section under today's list (next up, weakest predicted recall first; a
     tap reviews early); Spread out goes: the share line does its job, and a backlog is not hidden on later days.
   - The Important switch stays, off by default. The exam date stays display-only. No automatic same-day re-suggestion

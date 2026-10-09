@@ -11,8 +11,10 @@ import java.util.Calendar
 /**
  * Handles every reminder alarm fire. The DB work runs off the main thread via goAsync().
  *
- * - ACTION_FIRE: show the reminder if something is due today, then re-arm the next nudge (the ~3h
- *   repeat cycle in [NotificationScheduler]). This is what makes the reminder keep nagging.
+ * - ACTION_FIRE: at a chosen reminder time, show the reminder (it sounds once) and one silent notification per topic of
+ *   today's share ([TopicNotifications]); at a ~3h repeat of the chain, only keep what is showing in step, silently.
+ *   Then re-arm the next alarm (the repeat cycle in [NotificationScheduler]).
+ * - [TopicNotifications.ACTION_HIDE]: a topic's notification was swiped away; it stays away until the next chosen time.
  * - ACTION_SNOOZE ("This evening" / "Tomorrow"): dismiss, then re-remind at 18:00 today (when snoozed
  *   before 17:00) or at the reminder time tomorrow, without changing any topic's schedule.
  * - ACTION_TEST: always show, so the pipeline can be verified.
@@ -26,9 +28,12 @@ class ReviewReminderReceiver : BroadcastReceiver() {
         // swallow it here (and disarm) instead of showing a reminder the user opted out of.
         // ACTION_TEST is exempt: the user explicitly tapped "send a test reminder".
         val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-        if (!sp.getBoolean("daily_reminder", true) && intent.action != NotificationScheduler.ACTION_TEST) {
+        if (!sp.getBoolean("daily_reminder", true) && intent.action != NotificationScheduler.ACTION_TEST &&
+            intent.action != TopicNotifications.ACTION_HIDE
+        ) {
             NotificationScheduler.cancelReminder(context)
             NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
+            TopicNotifications.cancelAll(context)
             return
         }
         // A dedicated snooze fire consumes the persisted suppression state before normal handling,
@@ -45,6 +50,8 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 Thread {
                     try {
                         NotificationScheduler.showReviewNotification(appContext, markShown = false, source = "test")
+                        // A test shows what a reminder looks like: the topics of today's share as well.
+                        runBlocking { TopicNotifications.postAll(appContext) }
                     } catch (t: Throwable) {
                         android.util.Log.w("Yadora", "test reminder failed", t)
                     } finally {
@@ -56,13 +63,39 @@ class ReviewReminderReceiver : BroadcastReceiver() {
             }
             NotificationScheduler.ACTION_DISMISS -> {
                 // "Dismiss" (alarm mode): silence the ringing screen + clear the notification.
-                // No schedule change, no snooze — the daily chain stays armed for the next slot.
+                // No schedule change, no snooze — the daily chain stays armed for the next slot. The silent topic
+                // notifications stay: they are the list to work from, not the alarm.
                 AlarmRingActivity.dismissActive()
                 NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
             }
+            TopicNotifications.ACTION_HIDE -> {
+                // Swiped away: not a review and not a deferral. It comes back at the next chosen reminder time if it is still
+                // in today's share; until then a sync leaves it away, and an empty list takes its summary away.
+                val unitId = intent.getLongExtra(TopicNotifications.EXTRA_UNIT_ID, -1L)
+                if (unitId > 0) {
+                    TopicNotifications.hide(context, unitId)
+                    val pending = goAsync()
+                    val appContext = context.applicationContext
+                    Thread {
+                        try {
+                            runBlocking {
+                                TopicNotifications.sync(appContext)
+                                (appContext as? com.example.MedReviewApplication)?.database?.eventLogDao()?.insert(
+                                    com.example.data.local.entity.EventLogEntity(type = "TOPIC_NOTIFICATION_HIDDEN", unitId = unitId)
+                                )
+                            }
+                        } catch (t: Throwable) {
+                            android.util.Log.w("Yadora", "background work failed", t)
+                        } finally {
+                            pending.finish()
+                        }
+                    }.start()
+                }
+            }
             NotificationScheduler.ACTION_SNOOZE -> {
-                // Re-remind later WITHOUT changing any topic's schedule.
+                // Re-remind later WITHOUT changing any topic's schedule. The topics go too, and come back with it.
                 NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
+                TopicNotifications.cancelAll(context)
                 NotificationScheduler.scheduleSnooze(context)
                 // Log it: snooze frequency is a key adherence signal in the exported data.
                 val pending = goAsync()
@@ -113,7 +146,9 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                         }
                         NotificationManagerCompat.from(appContext).cancel(NotificationScheduler.NOTIFICATION_ID)
                         NotificationScheduler.scheduleNextDayReminder(appContext)
-                        com.example.widget.DueWidgetProvider.updateAll(appContext) // only first ratings are left today
+                        // Only first ratings are left today: the deferred reviews' notifications go, theirs stay.
+                        runBlocking { TopicNotifications.sync(appContext) }
+                        com.example.widget.DueWidgetProvider.updateAll(appContext)
                     } catch (t: Throwable) {
                         // Best-effort background work: an exception here would reach the thread's uncaught
                         // handler, which chains to the app's global handler and takes the whole app down —
@@ -138,6 +173,21 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                                 // do not post and alert a second time.
                                 outcome = "just_shown"
                                 NotificationScheduler.scheduleDailyReminder(appContext)
+                            } else if (!NotificationScheduler.isChosenSlot(appContext, intent)) {
+                                // A ~3h repeat of the chain: silent (the owner, 2026-10-09: sound and vibration at most
+                                // once per chosen reminder time). It keeps what is showing in step with today's share,
+                                // brings back nothing the learner put away, and keeps the chain going while topics are due.
+                                val count = dueCountToday(appContext)
+                                due = count
+                                runBlocking { TopicNotifications.sync(appContext) }
+                                NotificationScheduler.refreshIfShowing(appContext)
+                                if (count > 0) {
+                                    outcome = "repeat"
+                                    NotificationScheduler.scheduleDailyReminder(appContext)
+                                } else {
+                                    outcome = "nothing_due"
+                                    NotificationScheduler.scheduleNextDayReminder(appContext)
+                                }
                             } else {
                                 val count = dueCountToday(appContext)
                                 due = count
@@ -145,8 +195,10 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                                     val source = if (intent.action == NotificationScheduler.ACTION_SNOOZE_FIRE) "snooze" else "alarm"
                                     val posted = NotificationScheduler.showReviewNotification(appContext, source = source)
                                     if (posted) {
-                                        // Still due: keep nagging through the day (re-arm the next ~3h nudge).
+                                        // Still due: the topics of today's share, each its own silent notification, and
+                                        // the chain's next alarm.
                                         outcome = "posted"
+                                        runCatching { runBlocking { TopicNotifications.postAll(appContext) } }
                                         NotificationScheduler.scheduleDailyReminder(appContext)
                                     } else {
                                         // Due count changed between the count and the richer fetch, or the OS

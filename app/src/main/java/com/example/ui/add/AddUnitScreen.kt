@@ -436,7 +436,7 @@ fun AddUnitScreen(
         viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
             onSaved = { newId ->
                 com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
-                com.example.widget.DueWidgetProvider.updateAll(reminderContext) // new topic changes today's count
+                com.example.notifications.TodayRefresh.afterChange(reminderContext) // new topic changes today's count
                 when {
                     rateNowAfterSave && newId != null -> onRateNow(newId)
                     reviewNowAfterSave && unitId != null -> onReviewNow(unitId)
@@ -499,7 +499,7 @@ fun AddUnitScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         viewModel.restoreArchived(arch.id) {
-                            com.example.widget.DueWidgetProvider.updateAll(reminderContext)
+                            com.example.notifications.TodayRefresh.afterChange(reminderContext)
                             archivedDuplicate = null
                             onBack()
                         }
@@ -515,7 +515,7 @@ fun AddUnitScreen(
                             viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
                                 onSaved = { newId ->
                                     com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
-                                    com.example.widget.DueWidgetProvider.updateAll(reminderContext)
+                                    com.example.notifications.TodayRefresh.afterChange(reminderContext)
                                     if (rateNowAfterSave && newId != null) onRateNow(newId) else onBack()
                                 },
                                 onError = { saving = false },
@@ -1249,7 +1249,7 @@ fun AddUnitScreen(
                             // Replay can move the due date → keep the reminder + widget in sync only
                             // after the database transaction has completed.
                             com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
-                            com.example.widget.DueWidgetProvider.updateAll(reminderContext)
+                            com.example.notifications.TodayRefresh.afterChange(reminderContext)
                             editingLog = null
                         } else {
                             editingLogError = true

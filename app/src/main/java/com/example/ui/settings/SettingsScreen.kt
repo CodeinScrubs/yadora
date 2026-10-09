@@ -328,7 +328,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 }
                                 if (restored.isSuccess) {
                                     runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
-                                    runCatching { com.example.widget.DueWidgetProvider.updateAll(context) }
+                                    runCatching { com.example.notifications.TodayRefresh.afterChange(context, topicsToo = false) }
                                 }
                                 restored
                             }
@@ -556,9 +556,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         when (strings.languageCode) {
-                            "fa" -> "یادآور دومی هم ساعت ${com.example.ui.i18n.PersianDate.faDigits(secText)} می‌آید — فقط وقتی مبحثی منتظر مرور است."
-                            "de" -> "Eine zweite Erinnerung kommt um $secText — nur solange Themen zur Wiederholung anstehen."
-                            else -> "A second reminder arrives at $secText — only while topics are waiting."
+                            "fa" -> "یادآور دومی هم ساعت ${com.example.ui.i18n.PersianDate.faDigits(secText)} می‌آید — فقط وقتی مبحثی منتظر مرور است. هر یادآور یک بار صدا می‌دهد و زیرش هر مبحثِ سهم امروز اعلان بی‌صدای خودش را دارد: با زدن رویش همان مبحث برای ارزیابی باز می‌شود، و اگر کنارش بزنی تا یادآور بعدی پنهان می‌ماند."
+                            "de" -> "Eine zweite Erinnerung kommt um $secText — nur solange Themen zur Wiederholung anstehen. Jede Erinnerung klingt einmal, und darunter hat jedes Thema des heutigen Anteils eine eigene stille Benachrichtigung: Antippen öffnet das Thema zum Bewerten, Wegwischen blendet es bis zur nächsten Erinnerung aus."
+                            else -> "A second reminder arrives at $secText — only while topics are waiting. Each reminder sounds once, and under it each topic of today's share has its own silent notification: tap one to rate that topic, swipe it away to hide it until the next reminder."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -797,18 +797,27 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 language = "en"
                                 sharedPrefs.edit { putString("app_language", "en") }
                                 langExpanded = false
+                                // The topic notifications come back in the new language at the next reminder time;
+                                // the reminder itself is re-worded now (TopicNotifications.languageChanged).
+                                com.example.notifications.TopicNotifications.languageChanged(context)
                                 onLanguageChange(language)
                             })
                             DropdownMenuItem(text = { Text(strings.persianLanguage) }, onClick = {
                                 language = "fa"
                                 sharedPrefs.edit { putString("app_language", "fa") }
                                 langExpanded = false
+                                // The topic notifications come back in the new language at the next reminder time;
+                                // the reminder itself is re-worded now (TopicNotifications.languageChanged).
+                                com.example.notifications.TopicNotifications.languageChanged(context)
                                 onLanguageChange(language)
                             })
                             DropdownMenuItem(text = { Text(strings.germanLanguage) }, onClick = {
                                 language = "de"
                                 sharedPrefs.edit { putString("app_language", "de") }
                                 langExpanded = false
+                                // The topic notifications come back in the new language at the next reminder time;
+                                // the reminder itself is re-worded now (TopicNotifications.languageChanged).
+                                com.example.notifications.TopicNotifications.languageChanged(context)
                                 onLanguageChange(language)
                             })
                         }
