@@ -790,7 +790,7 @@ def check_row(row: Row, log: dict, rp: Optional[dict], weights) -> None:
     if row.desired_retention > 0:
         ivl, base = ym.memory_interval(m, rp["after"], grade, row.desired_retention, rp["first"],
                                        row.calibration_scale if row.calibration_scale > 0 else 1.0)
-        ivl = ym.fuzzed_interval(ivl, base, row.unit_id, rp["graded_before"], rp["first"])
+        ivl = ym.fuzzed_interval(ivl, base, row.unit_id, rp["graded_before"], rp["first"], row.policy, row.scheduler_version)
         row.replayed_interval = ivl
         if abs(ivl - row.next_interval) > 1e-6 * max(1.0, ivl):
             row.mismatch.append(f"interval {row.next_interval:.6f} stored vs {ivl:.6f} replayed")

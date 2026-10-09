@@ -38,12 +38,13 @@ D_MIN, D_MAX = 1.0, 10.0
 AGAIN, HARD, GOOD, EASY = 1, 2, 3, 4
 GRADE_OF = {"Forgot": AGAIN, "Hard": HARD, "Good": GOOD, "Easy": EASY}
 
-# MedScheduler policy constants (POLICY_VERSION YADORA-7).
+# MedScheduler policy constants (POLICY_VERSION YADORA-8).
 MIN_INTERVAL_DAYS = 1.0
 MAX_INTERVAL_DAYS = 365.0
 RELEARN_STEP_DAYS = 1.0
 FIRST_STUDY_MAX_DAYS = 5.0
 FUZZ_MIN_BASE_DAYS = 3.0
+POLICY_VERSION = "YADORA-8"
 REPAIR_BACKOFF_FACTOR = 2.0
 
 # RecallCalibration constants.
@@ -205,13 +206,15 @@ class KotlinRandom:
 
 
 def fuzzed_interval(interval: float, base_interval: float, unit_id: int, review_count: int,
-                    first_study: bool) -> float:
-    """MedScheduler.fuzzedInterval: deterministic +-5% per (unitId, prior review count), base >= 3 days only."""
+                    first_study: bool, policy: str = POLICY_VERSION, model: str = "FSRS-6") -> float:
+    """MedScheduler.fuzzedInterval, including the YADORA-8 FSRS-6 floor; old policies replay unchanged."""
     if base_interval < FUZZ_MIN_BASE_DAYS:
         return interval
     rng = KotlinRandom(unit_id * 31 + review_count)
     factor = 1.0 + rng.next_double_range(-0.05, 0.05)
-    fuzzed = min(max(interval * factor, MIN_INTERVAL_DAYS), MAX_INTERVAL_DAYS)
+    old_policy = policy in tuple(f"YADORA-{n}" for n in range(1, 8))
+    minimum = FUZZ_MIN_BASE_DAYS if model == "FSRS-6" and not old_policy else MIN_INTERVAL_DAYS
+    fuzzed = min(max(interval * factor, minimum), MAX_INTERVAL_DAYS)
     return min(fuzzed, FIRST_STUDY_MAX_DAYS) if first_study else fuzzed
 
 

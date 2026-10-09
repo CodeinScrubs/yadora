@@ -1281,6 +1281,7 @@ class MedReviewRepository(
             val interval = MedScheduler.fuzzedInterval(
                 outcome.intervalDays, outcome.baseIntervalDays, unit.id, reviewCount,
                 isFirstStudy = reviewNumber == 0,
+                policyVersion = policyForThisLog, model = replayModel,
             )
             val nextStateName = MedScheduler.masteryState(outcome.state.stability, mem == MemoryRating.Forgot).name
 

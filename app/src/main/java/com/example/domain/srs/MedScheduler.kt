@@ -402,7 +402,9 @@ object MedScheduler {
     // by the per-user calibration scale, which every log now records.
     // YADORA-7 (2026-10-04): a repair deadline is kept when it beats the memory interval as finally scheduled, fuzz
     // included (repairDays); YADORA-6 compared it with the interval before the fuzz.
-    const val POLICY_VERSION = "YADORA-7"
+    // YADORA-8 (2026-10-09): on FSRS-6, fuzz may not cross below its three-day eligibility boundary.
+    // The old policies and frozen FSRS-5 retain their exact factors/intervals for replay.
+    const val POLICY_VERSION = "YADORA-8"
 
     /**
      * Did the policy that produced a given log damp the first-study prior? Only YADORA-3 onward does.
@@ -828,7 +830,9 @@ object MedScheduler {
      *  - Never fuzzes short BASE intervals (< 3 days): relearn-tomorrow and other tight early
      *    reviews stay precisely where the science put them. Eligibility is decided from
      *    [baseIntervalDays] (pre-understanding), NOT the final interval — otherwise near the 3-day
-     *    boundary Clear would fuzz while Partial wouldn't, breaking the exact-ratio invariant.
+     *    boundary Clear would fuzz while Partial wouldn't, breaking the exact-ratio invariant on
+     *    frozen FSRS-5. FSRS-6 has no understanding multiplier; YADORA-8 floors eligible fuzz at three
+     *    days so an otherwise longer memory interval cannot jump below an unfuzzed shorter interval.
      *
      * NOTE: first-study intervals are NOT categorically exempt, and that is deliberate. A Good or
      * Easy first rating lands on a base interval of ~3–5 days (the [FIRST_STUDY_MAX_DAYS] cap), which
@@ -845,6 +849,8 @@ object MedScheduler {
         // merge the earliest log in a combined history can be a RECALL, so the counter is 0 while the
         // event is not a first study — clamping that to five days would corrupt a mature schedule.
         isFirstStudy: Boolean = false,
+        policyVersion: String = POLICY_VERSION,
+        model: MemoryModel = CURRENT_MODEL,
     ): Double {
         if (baseIntervalDays < 3.0) return intervalDays
         val rng = kotlin.random.Random(unitId * 31L + reviewCount)
@@ -852,11 +858,20 @@ object MedScheduler {
         // Fuzz is the LAST step before a due date is written, so it must not be able to nudge an
         // interval past the ceiling review() just enforced — the same MAX_INTERVAL_DAYS both
         // parameter classes default to.
-        val fuzzed = (intervalDays * factor).coerceIn(MIN_INTERVAL_DAYS, MAX_INTERVAL_DAYS)
+        // Without this floor, a 3.10-day Good can fuzz below an unfuzzed 2.99-day Hard on the
+        // same state and seed. FSRS-5 has an understanding multiplier: its interval can legitimately
+        // be below its base, so its frozen replay does not use the FSRS-6 boundary rule.
+        val minimum = if (model == MemoryModel.FSRS_6 && preservesFuzzBoundary(policyVersion)) 3.0 else MIN_INTERVAL_DAYS
+        val fuzzed = (intervalDays * factor).coerceIn(minimum, MAX_INTERVAL_DAYS)
         // FIRST_STUDY_MAX_DAYS is a PROMISE ("your first check-in lands within five days"), not a
         // suggestion. review() capped the interval before the understanding multiplier, but fuzz runs
         // afterwards and could add up to +5% on top — turning an advertised 5.0-day ceiling into 5.25.
         return if (isFirstStudy) fuzzed.coerceAtMost(FIRST_STUDY_MAX_DAYS) else fuzzed
+    }
+
+    private fun preservesFuzzBoundary(policyVersion: String): Boolean = when (policyVersion) {
+        "YADORA-1", "YADORA-2", "YADORA-3", "YADORA-4", "YADORA-5", "YADORA-6", "YADORA-7" -> false
+        else -> true // Unstamped rows are backfilled under the current policy, like the other replay rules.
     }
 
     /** Convenience for the rating-button preview; identical math to [review]. */

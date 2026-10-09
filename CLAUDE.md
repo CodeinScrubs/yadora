@@ -1567,3 +1567,18 @@ run the suite — those invariants are load-bearing.
 
 - `DESIGN.md` — full product/design write-up and rationale.
 - `plans/` — advisor-generated implementation plans (if present).
+
+
+### YADORA-8: monotone FSRS-6 fuzz boundary (2026-10-09)
+
+Eligible FSRS-6 fuzz (base interval >= 3 days) is floored at three days. Previously a negative fuzz factor
+could put a longer 3.10-day Good before an unfuzzed 2.99-day Hard. New decisions record `YADORA-8`;
+correction replay passes each row's stored policy AND memory model. YADORA-1..7 and frozen FSRS-5 keep
+their exact old fuzz, including FSRS-5's understanding multiplier. The deterministic seed is unchanged:
+its linear collisions are real but not evidence of educational harm, and changing every eligible review's
+factor has no demonstrated learning benefit. No FSRS equation or parameter-set version changes.
+`FuzzPolicyTest` reproduces the old boundary inversion, sweeps ordered intervals, tests old policies/caps
+and writes `app/build/fuzz-policy/kotlin_fuzz_policy_reference.json`. Its 72 independent Kotlin cases are
+committed in tools/pilot and checked bit-for-bit by `test_yadora_model.py`. First-study (five-day) and
+long-term (365-day) caps and next-day relearning stay intact. Fresh Kotlin exports must replay exactly in
+the toolkit, with old and new policies coexisting.
