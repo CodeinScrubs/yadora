@@ -716,6 +716,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
   chosen by the keyboard, not the writer, and visually identical — produced two topics with no
   duplicate warning. That is precisely the "same material added twice, often in two languages" case
   merge exists for. Comparison only; stored titles stay exactly as typed.
+- **Related topics while adding (2026-10-07).**
+  The new-topic title field shows live normalized matches across subjects, including archived topics and excluding
+  trash. This uses a Room projection of id/title/subject/archive state, indexed off the main thread when the library
+  changes; a keystroke does not reload notes or run a full-entity database query. Up to five matches are shown, with
+  an explicit remaining-match count and a prompt to refine the title. Persian/Arabic letter variants, digits and
+  spacing use the existing `TopicTitle` normalization. Exact titles and the selected subject rank first.
+
+  An active match opens that topic's review screen; an archived match opens its details without restoring it.
+  The Add draft stays on the navigation back stack. Suggestions are advisory: distinct scopes keep independent
+  histories and nothing is merged or saved by selecting a match. Existing duplicate checks still run at save time.
+  `RelatedTopicsTest` covers matching, ordering and a 2,000-topic index; `RelatedTopicEntryTest` covers live UI
+  updates, opening without creating a duplicate, archive labels and trash exclusion.
 - **One memory seed per history.** `Fsrs.initialState` may only be re-applied for the
   chronologically FIRST review log of a topic. A merged topic legitimately carries
   several `logType = "FIRST_STUDY"` rows (one per absorbed copy), and treating each
