@@ -400,7 +400,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and this one only touches a topic reviewed twice on one calendar day and rated Hard, where it cuts
   stability by more than half, 100 days to 45. The app almost never produces that: the daily plan offers
   a topic again only on a later day, Review ahead leaves out topics reviewed today (2026-09-28), and the
-  soak's 24,631 reviews contain none. What remains is a deliberate second review from the Library and the
+  two-year soak's 23,601 reviews contain none (the owner-year soak's 14,647, with its same-day second looks, hold 11).
+  What remains is a deliberate second review from the Library and the
   fall-back-night hour in the due-date entry above); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
   stability at a MAXIMUM of 3650 days, which the reference does not do. Testing the internal
@@ -930,13 +931,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Asserted at the end:** nothing overdue by more than two weeks and no gap over 400 days; the export has zero
     self-check issues; backup → restore → backup is the identity; a pure replay of EVERY topic reproduces its
     live row; and the twin claim holds on the real schedule.
-  - **Measured:** exam-day recall 96.8% against 91.0% for a random-review twin at equal time (the twin's time
+  - **Measured:** exam-day recall 96.8% against 89.6% for a random-review twin at equal time (the twin's time
     matches Yadora's to within one review since 2026-09-27; before, it got a few percent more and scored 90.1%);
-    100% of topics at 90%+; weakest tenth 93.1%; 24,631 reviews. (Before the calibration stopped lengthening
+    100% of topics at 90%+; weakest tenth 93.0%; 23,601 reviews. (Before the calibration stopped lengthening
     intervals, 2026-09-28: 96.6%, 92.7% and 22,804 reviews. The 2026-09-29 queue order changed neither figure at
     this limit, which rarely binds; it changed which random draw each review gets, and the count, from 24,335. YADORA-7,
-    2026-10-04, did the same: 96.9%, 90.6% and 24,673 before it.)
-  - **CI:** `analyze.py` replays the export (27,063 logs, all exact) in the "Pilot toolkit agrees with the app"
+    2026-10-04, did the same: 96.9%, 90.6% and 24,673 before it; YADORA-8, 2026-10-09, again: 96.8%, 91.0%, 93.1% and
+    24,631 before it.)
+  - **CI:** `analyze.py` replays the export (26,033 logs, all exact) in the "Pilot toolkit agrees with the app"
     step, and exits non-zero on a single mismatch. Runtime is about 65 s.
   - **Thresholds:** do not loosen them to get a change through. If a deliberate scheduling change moves the
     measured numbers, re-measure and record why.
@@ -1514,11 +1516,12 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Measured on the real code** (`OwnerYearSoakTest`: Asia/Tehran, 365 days, the default limit of 50; 10% of days
     off, 15% light, 0–10 new topics on the rest; Not today, Spread out, Review more anyway, review-now including
     same-day second looks, Review ahead on spare evenings and a last-month push, rating corrections, a mid-year phone
-    change, a refit every 20 days): 1,935 topics, 14,989 reviews; exam day 97.1% against 90.7% for random review and
-    93.3% oldest-first at equal time, which is measured (each twin spent what Yadora spent, to within one review); 100%
-    of topics at 90%+, weakest tenth 93.6%, nothing overdue on exam day; every refit refused (the simulated learner is
-    the defaults' learner); the export replays all 16,924 logs exactly (YADORA-7, 2026-10-04; before it 14,764 reviews,
-    96.9%). CI runs
+    change, a refit every 20 days): 1,958 topics, 14,647 reviews; exam day 96.9% against 90.9% for random review and
+    92.6% oldest-first at equal time, which is measured (each twin spent what Yadora spent, to within one review); 100%
+    of topics at 90%+, weakest tenth 93.2%, nothing overdue on exam day; every refit refused (the simulated learner is
+    the defaults' learner); the export replays all 16,605 logs exactly. (YADORA-8, 2026-10-09, changed which random
+    draw each step gets, so the days, the new topics and the reviews differ: before it 1,935 topics, 14,989 reviews,
+    97.1%, 90.7%, 93.3%, 93.6%; YADORA-7, 2026-10-04: before it 14,764 reviews, 96.9%.) CI runs
     it and replays its export.
   - **The simulation's finding** (§2.8, model-based): with a fixed daily budget and a finite syllabus, the split of the
     day between new material and reviews decides the exam score when time is tight (20–45 points at 20 units a day),

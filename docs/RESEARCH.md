@@ -339,17 +339,18 @@ the defaults misjudge) and the final push, which a plain FSRS app has no feature
 
 **Checked on the real code.** `TwoYearSoakTest` runs the same case through the app itself:
 
-- **What it runs:** 730 days, 2,432 topics and 24,631 reviews, through the review screen's own commit path, with
+- **What it runs:** 730 days, 2,432 topics and 23,601 reviews, through the review screen's own commit path, with
   today's plan, the daily limit, the queue order, the calibration refresh, deferrals, a holiday and 40 Review ahead
   topics a day in the last four weeks.
-- **Exam day:** 96.8% recall, with every topic at 90%+ and the weakest tenth at 93.1%. The twin who spent the same
-  time on random reviews reaches 91.0%. (Before the calibration stopped lengthening intervals: 96.6%, 92.7% and
+- **Exam day:** 96.8% recall, with every topic at 90%+ and the weakest tenth at 93.0%. The twin who spent the same
+  time on random reviews reaches 89.6%. (Before the calibration stopped lengthening intervals: 96.6%, 92.7% and
   22,804 reviews. The 2026-09-29 queue order left recall and the weakest tenth where they were, 96.9% and 93.1%; it
   changed which random draw each review gets, and the run did 1.4% more reviews, 24,673 against 24,335. Policy
   YADORA-7, 2026-10-04, which keeps a repair date inside the fuzz band, changed the draws again: 96.9% and 90.6%
-  before it.)
+  before it. So did YADORA-8, 2026-10-09, which keeps a fuzzed interval from falling under three days: 96.8%, 91.0%
+  and 24,631 reviews before it.)
 - **Every invariant held** on every day.
-- **Independent replay:** the export replays 27,063 of 27,063 logs exactly in `analyze.py`. CI runs that replay on
+- **Independent replay:** the export replays 26,033 of 26,033 logs exactly in `analyze.py`. CI runs that replay on
   every change.
 
 ### 2.6 What the simulation cannot tell
@@ -382,7 +383,8 @@ a topic reviewed twice on one calendar day and rated Hard. Intervals are whole d
 topic again on a later day (the one exception: a review in the first hour of a daylight-saving fall-back day,
 where a one-day interval comes due that evening; Iran has no DST). Since 2026-09-28 Review ahead leaves out
 topics reviewed today too, so in practice only a deliberate second review from the Library reaches it (none in
-the 24,631 reviews of `TwoYearSoakTest`). The pin stays at 6.3.1.
+the 23,601 reviews of `TwoYearSoakTest`; `OwnerYearSoakTest`, whose learner also takes same-day second looks, has 11
+in 14,647). The pin stays at 6.3.1.
 
 **Headroom.** An ORACLE twin schedules from the learner's true memory (true stability, true curve, true speed
 of forgetting) under the same product rules and the same scheduling rule, one fixed target. No model can know
