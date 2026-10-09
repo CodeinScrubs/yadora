@@ -293,6 +293,8 @@ class MedReviewRepository(
                             it.reviewedAt, it.memoryRating, it.logType,
                             // Merged topics are left out above, so every stored count runs from this topic's own reviews.
                             MedScheduler.storedModelDays(it.elapsedDays, it.schedulerVersion, it.logType, MedScheduler.MemoryModel.FSRS_6),
+                            // Folds follow the order the app recorded reviews, independently of a phone clock rollback.
+                            validationOrder = it.id,
                         )
                     },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
@@ -306,16 +308,24 @@ class MedReviewRepository(
      * the fit began (a higher id) does not. Read inside a transaction, where the fit captures its inputs and where
      * it would adopt the result.
      */
-    internal suspend fun fitIdentity(maxLogId: Long): String {
+    internal suspend fun fitIdentity(
+        maxLogId: Long,
+        retention: Double = MedScheduler.effectiveRetention(highYield = false),
+    ): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         reviewLogDao.getAllLogsOnce().asSequence().filter { it.id <= maxLogId }.sortedBy { it.id }.forEach { l ->
             digest.update(
-                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}\n"
+                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}|${l.elapsedDays}\n"
                     .toByteArray(Charsets.UTF_8)
             )
         }
         val active = database.memoryParameterSetDao().getActive()
         digest.update("active|${active?.id ?: 0L}|${active?.weights.orEmpty()}".toByteArray(Charsets.UTF_8))
+        // These also change training or its adoption test without changing a log's id, rating or time:
+        // merging an unrated duplicate excludes the survivor, legacy logs use the current zone, and
+        // the retention target controls the candidate's interval-lengthening check.
+        digest.update("\nmerged|${mergedUnitIds().sorted().joinToString(",")}".toByteArray(Charsets.UTF_8))
+        digest.update("\nzone|${java.time.ZoneId.systemDefault().id}|retention|$retention".toByteArray(Charsets.UTF_8))
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
@@ -357,9 +367,11 @@ class MedReviewRepository(
         var histories: List<com.example.domain.srs.Fsrs6Optimizer.History> = emptyList()
         var latest: com.example.data.local.entity.MemoryParameterSetEntity? = null
         var activeRow: com.example.data.local.entity.MemoryParameterSetEntity? = null
+        var retention = 0.9
         database.withTransaction {
             maxLogId = reviewLogDao.maxLogId()
-            identity = fitIdentity(maxLogId)
+            retention = MedScheduler.effectiveRetention(highYield = false)
+            identity = fitIdentity(maxLogId, retention)
             histories = trainingHistories()
             latest = dao.getLatest()
             activeRow = dao.getActive()
@@ -374,7 +386,7 @@ class MedReviewRepository(
         val activeWeights = activeRow?.let { com.example.domain.srs.Fsrs6Optimizer.decode(it.weights) }
         val current = activeWeights ?: com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS
         val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(
-            histories, current, retention = com.example.domain.srs.MedScheduler.effectiveRetention(highYield = false),
+            histories, current, retention = retention,
         )
         if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return report
 

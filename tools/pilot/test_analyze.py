@@ -651,6 +651,31 @@ def test_history_missing_from_the_newest_export_is_reported():
     print("history missing from the newest export is counted and reported; a complete newer export says so")
 
 
+def test_pooled_validation_follows_saved_order_after_clock_rollback():
+    """A later rating must stay held out even when the phone records an earlier wall time.
+    Stored elapsed days keep model inputs identical; only the split is being challenged."""
+    origin, day = 1_790_000_000_000, 86_400_000
+    logs = [dict(id=i + 1, studyUnitId=1, reviewedAt=origin + i * 2 * day,
+                 memoryRating=rating, logType="FIRST_STUDY" if i == 0 else "RECALL",
+                 schedulerVersion="FSRS-6", elapsedDays=float(i * 2))
+            for i, rating in enumerate(["Good", "Good", "Hard", "Good", "Forgot"])]
+    export = analyze.Export("synthetic", dict(studyUnits=[dict(id=1, studiedAt=origin)], reviewLogs=logs),
+                            "learner", origin + 10 * day, analyze.dt.timezone.utc, "UTC")
+
+    def partition(e):
+        cuts = analyze.split_review_ids([e])
+        hist = [(p, u, l, un, tz, cuts[p]) for p, u, l, un, tz in analyze.histories([e])]
+        return analyze.predictions(hist, analyze.ym.DEFAULT_WEIGHTS)
+
+    before = partition(export)
+    assert len(before[0]) == 3 and [y for _, y in before[1]] == [False]
+    changed = copy.deepcopy(export)
+    changed.data["reviewLogs"][-1]["reviewedAt"] -= 30 * day
+    after = partition(changed)
+    assert after == before, "clock rollback moved a later rating into training and exposed a future state to the fit"
+    print("pooled validation keeps later saved reviews held out despite a clock rollback")
+
+
 def test_the_pooled_refit_must_meet_the_app_s_conditions():
     # The pooled refit used to be judged on z alone. The app also refuses a set whose first-rating grades are out of
     # order, or that would schedule longer than the published defaults (Fsrs6Optimizer.keepsGradeOrder, .lengthening).
@@ -760,6 +785,7 @@ if __name__ == "__main__":
     test_the_summary_prints_on_a_console_that_cannot_encode_it()
     test_a_malformed_export_is_set_aside_and_the_others_are_analysed()
     test_history_missing_from_the_newest_export_is_reported()
+    test_pooled_validation_follows_saved_order_after_clock_rollback()
     test_the_pooled_refit_must_meet_the_app_s_conditions()
     test_each_learner_s_personal_set_is_its_own_calibration_group()
     print("all checks passed")

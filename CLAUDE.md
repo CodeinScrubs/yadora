@@ -1055,7 +1055,16 @@ These were decided deliberately. Re-suggesting them wastes a session:
       refused before anything is replaced; an unreviewed library without the section still restores
       (`BackupRoundTripTest`). A missing section used to restore topics that claimed reviews and had none.
     - The personal fit's "did the history change while it ran?" check is a SHA-256 over every log the fit learned
-      from (id, topic, time, both ratings, type, model, set) plus the active set (`MedReviewRepository.fitIdentity`).
+      from (id, topic, time, both ratings, type, model, set, stored elapsed days), the active set, merged-topic
+      exclusions, current time zone and retention target (`MedReviewRepository.fitIdentity`). These are captured
+      with the training snapshot and checked again before adoption: a restore, merge or settings change can
+      invalidate a fit without adding or deleting any review ids.
+    - Validation folds use saved review ids, not wall-clock timestamps. A phone clock rollback must not put a
+      later review into the training prefix for an earlier held-out review. Actual timestamps and stored elapsed
+      days still determine memory gaps. The pooled pilot fit uses the same saved-order split per learner;
+      `pooled_fit.validation_order` states that choice in the analysis output. This changes validation and stale
+      result detection, not the FSRS equations or the adoption thresholds (`PersonalFitSnapshotTest`,
+      `OptimizerValidationOrderTest`, and the pilot clock-rollback regression).
       The old fingerprint (count and sum of times) missed a changed rating at the same time, a merge re-pointing
       logs, and a restore of the same times with other ratings, so a fit begun on one history could be adopted
       after another. A review added after the fit began changes nothing (`AuditFindingsTest`).
