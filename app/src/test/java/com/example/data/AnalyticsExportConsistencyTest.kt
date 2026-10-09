@@ -5,6 +5,7 @@ import com.example.MedReviewApplication
 import com.example.data.local.entity.ReviewLogEntity
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.domain.model.MemoryRating
+import com.example.domain.model.SessionKind
 import com.example.domain.model.UnderstandingRating
 import com.example.domain.srs.MedScheduler
 import kotlinx.coroutines.runBlocking
@@ -85,7 +86,14 @@ class AnalyticsExportConsistencyTest {
         repo.softDeleteUnit(id2)
 
         // Topic 3: deferred ("not today") — deferral must be visible in the export.
-        val id3 = repo.insertUnit(newUnit("Deferred topic"))
+        // An unrated topic has no review to defer: first check-ins remain due. Use a real reviewed
+        // topic here, so this test still checks a successful deferral and its exported audit event.
+        val id3 = repo.insertUnit(newUnit("Deferred topic").copy(
+            studiedAt = now - 10 * day, nextReviewAt = now - 10 * day, modelDueAt = now - 10 * day,
+        ))
+        repo.rateUnit(id3, now - 10 * day, MemoryRating.Good, UnderstandingRating.Clear,
+            sessionKind = SessionKind.TOPIC, reviewDurationMs = -1)!!
+        val modelDueBeforeDeferral = repo.getUnitById(id3)!!.modelDueAt
         repo.procrastinateUnit(id3, now + day)
 
         val json = JSONObject(AnalyticsExporter.buildJson(app))
@@ -201,7 +209,7 @@ class AnalyticsExportConsistencyTest {
                 "PROCRASTINATE" -> procrastinations++
             }
         }
-        assertEquals("one growth event per committed review", 2, studyActions)
+        assertEquals("one growth event per committed review", 3, studyActions)
         assertEquals("deferral event recorded", 1, procrastinations)
 
         // The v5 honest-scheduling fields must be present per topic; the deferred topic must show it.
@@ -217,7 +225,7 @@ class AnalyticsExportConsistencyTest {
             assertTrue("never the title, notes or source themselves", !u.has("title") && !u.has("notes") && !u.has("source"))
             if (u.getLong("id") == id3) {
                 assertEquals("deferredUntil visible in export", now + day, u.getLong("deferredUntil"))
-                assertEquals("model's date untouched by deferral", now, u.getLong("modelDueAt"))
+                assertEquals("model's date untouched by deferral", modelDueBeforeDeferral, u.getLong("modelDueAt"))
                 sawDeferred = true
             }
         }

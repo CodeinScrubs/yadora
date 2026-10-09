@@ -839,6 +839,10 @@ class MedReviewRepository(
     suspend fun procrastinateUnit(id: Long, until: Long) {
         database.withTransaction {
             val unit = studyUnitDao.getUnitById(id) ?: return@withTransaction
+            // A stale screen may outlive archive, delete or merge. Deferring it must not change
+            // inactive material or invent an adherence event. First check-ins log study already done,
+            // so they stay due, just as the bulk notification action leaves them due.
+            if (unit.archived || unit.deletedAt != null || unit.reviewCount == 0) return@withTransaction
             // "Not today" means LATER, never sooner. The Library's review-now opens a topic weeks
             // before its date, and writing [until] unconditionally pulled a topic due in a month
             // forward to tomorrow — and recorded that as the user's own choice. A topic not due
