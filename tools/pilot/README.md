@@ -16,6 +16,7 @@ simulation results.
 | `test_analyze.py` | Runs `analyze.py` on `fixtures/sample_export.json`, a real app export, and checks every log replays exactly and that tampering is caught. |
 | `forecast_audit.py` | Scores immutable `REVIEW_FORECAST v1` events. Keeps original predictions and subjective answers separate from mutable replay/corrected answers; never invents forecasts for legacy rows. |
 | `test_forecast_audit.py` | Checks corrections, merged log ownership, exclusions, invalid/duplicate snapshots, finite scores and small-cluster uncertainty. |
+| `test_method_uncertainty.py` | Checks repeated-topic uncertainty, covariance across methods, clock rollback and exposure boundaries in the observational method comparison. |
 
 ```
 python3 tools/pilot/analyze.py exports/ --out pilot_report
@@ -26,6 +27,7 @@ python3 tools/pilot/residency.py --seeds 6            # ~30-40 minutes; --quick,
 python3 tools/pilot/test_yadora_model.py && python3 tools/pilot/test_analyze.py
 python3 tools/pilot/test_forecast_audit.py
 python3 tools/pilot/forecast_audit.py exports/ --out prospective_report
+python3 tools/pilot/test_method_uncertainty.py
 ```
 
 `yadora_model.py` must change whenever `Fsrs6.kt`, `MedScheduler.kt` or `RecallCalibration.kt` change a
@@ -77,3 +79,16 @@ review-selection confounding and repeated checks remain limitations. A predictor
 ratings can win log loss without identifying which topic needs review. **Do not replace a scheduler or
 claim educational benefit from this comparison alone.** Combine these diagnostics with separately
 collected assessment results and study time when deciding the next experiment.
+
+The method comparison uses the next **saved** event of the topic, never timestamp order, and never
+bridges a first-study exposure or a legacy-model event. Recomputed predictions are excluded.
+Its within-learner interval now clusters on topic: repeated reviews of the same topic do not provide
+independent evidence, and a topic used under both methods retains its covariance. The interval is
+conditional on these learners, with an approximate normal distribution. Below 20 effective topic clusters overall,
+or below two effective topics per learner/method, it is withheld and D7 waits. The concentration index
+combines the absolute weights of shared topics across both methods before measuring concentration;
+raw topic counts cannot hide a dominant topic or learner. The 20-topic floor
+is a conservative diagnostic heuristic, not a claim of adequate power. The comparison remains
+observational: differing topics, elapsed time, grade semantics, source quality and self-selected
+methods can confound it. A significant gap is a reason to investigate, never an automatic change
+to scheduling or proof that one study method caused better retention.
