@@ -1689,8 +1689,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
   - **Superseded:** the rating definition these PRs wrote into PILOT.md, the participant guide and the export field guide
     ("a mixed subjective post-study judgement") predates the owner's Forgot anchor of 2026-10-04 (next entry); those
     texts are rewritten with the rating copy.
-- **The owner's redesign, decided 2026-10-04 and 10-09 (being built; update each entry it touches as its part lands).**
-  From the owner's own answers in a requirements chat with another assistant, then two rounds of questions here:
+- **The owner's redesign, decided 2026-10-04 and 10-09, built 2026-10-09 and 10-10 (PRs #37 to #40).**
+  From the owner's own answers in a requirements chat with another assistant, then three rounds of questions here:
   - A topic's scope is its title ("آسم" is all of asthma, "درمان آسم" only its treatment); a logged review means that
     whole scope was covered, from any source; one history per topic.
   - BUILT (2026-10-09): the owner picks topics, studies outside the app and rates each one afterwards: no "Start review"
