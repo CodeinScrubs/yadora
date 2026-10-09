@@ -96,7 +96,7 @@ class ButtonEstimateTest {
                         val what = "topic $id, $m + $u, scale $scale"
                         assertEquals("$what: the button's date is the committed date", preview, written, 1e-6)
                         assertTrue("$what: the memory estimate ($estimate) is never shorter than the real return ($written)", estimate >= written - 1e-6)
-                        repo.undoReview(rated.before, rated.logId)
+                        repo.undoReview(rated)
                         assertEquals("$what: undo restores the row as it was when the rating began", rated.before, repo.getUnitById(id))
                         checked++
                     }

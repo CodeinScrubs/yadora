@@ -807,11 +807,12 @@ class ReplayEqualsLiveTest {
             )
         )
         val before = repo.getUnitById(unitId)!!
-        val logId = liveReview(unitId, now, MemoryRating.Good, UnderstandingRating.Clear)
+        val rated = repo.rateUnit(unitId, now, MemoryRating.Good, UnderstandingRating.Clear,
+            sessionKind = com.example.domain.model.SessionKind.TOPIC, reviewDurationMs = 1000)!!
         assertEquals("commit creates exactly one growth event", 1,
             db.eventLogDao().getAll().count { it.type == "STUDY_ACTION" })
 
-        repo.undoReview(before, logId)
+        assertTrue(repo.undoReview(rated))
         assertEquals("undo removes the growth event with the review", 0,
             db.eventLogDao().getAll().count { it.type == "STUDY_ACTION" })
     }
