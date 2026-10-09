@@ -43,16 +43,16 @@ class PilotExportFixtureTest {
         methods: Set<ReviewMethod>,
         score: Pair<Int?, Int?>,
         kind: SessionKind,
+        minutes: Int = com.example.domain.model.StudyMinutes.NOT_GIVEN,
+        loggedAt: Long = now,
     ) = runBlocking {
-        val reviewNumber = MedScheduler.effectiveReviewNumber(repo.getUnitById(unitId)!!.reviewCount)
-        val understandingAsked = memory != MemoryRating.Forgot || reviewNumber == 0
-        // A review rated Forgot commits at once with Partial as a placeholder, exactly as the screen does.
+        // Every answer, Forgot included, is followed by the understanding question, as the screen does since 2026-10-09.
         repo.rateUnit(
             unitId = unitId, now = now, memoryRating = memory,
-            understandingRating = if (understandingAsked) understanding else UnderstandingRating.Partial,
-            understandingAsked = understandingAsked, methods = methods,
+            understandingRating = understanding, understandingAsked = true, methods = methods,
             questionsCorrect = score.first, questionsTotal = score.second,
             sessionKind = kind, reviewDurationMs = 90_000,
+            studyMinutes = minutes, loggedAt = loggedAt,
         )!!
     }
 
@@ -116,9 +116,25 @@ class PilotExportFixtureTest {
                     val total = 10 + rnd.nextInt(11)
                     (total * (if (recalled) 0.6 + 0.35 * rnd.nextDouble() else 0.2 + 0.3 * rnd.nextDouble())).toInt() to total
                 } else null to null
-                commit(repo, p.id, evening, memory, understanding, methods, score, SessionKind.PLAN)
+                // The learner's rough minutes: given on about half the reviews (it is optional and often skipped).
+                val minutes = if (rnd.nextBoolean()) com.example.domain.model.StudyMinutes.CHOICES[rnd.nextInt(5)]
+                    else com.example.domain.model.StudyMinutes.NOT_GIVEN
+                commit(repo, p.id, evening, memory, understanding, methods, score, SessionKind.PLAN, minutes)
             }
         }
+        // A review logged the next morning for the evening before ("Reviewed: yesterday"): it happened at 20:30, it was
+        // saved at 08:30, and the schedule counts from when it happened.
+        val late = repo.insertUnit(
+            StudyUnitEntity(
+                title = "Logged the next morning", studyType = "Topic", subjectId = subjectIds[1],
+                stability = 1.0, difficulty = 5.0, retrievability = 1.0, state = "New",
+                studiedAt = day0 + 31 * day, nextReviewAt = day0 + 31 * day, modelDueAt = day0 + 31 * day,
+                currentIntervalDays = 0.0, reviewCount = 0, lapseCount = 0, createdAt = day0 + 31 * day,
+            )
+        )
+        commit(repo, late, day0 + 31 * day + 60_000L, MemoryRating.Good, UnderstandingRating.Clear, emptySet(), null to null, SessionKind.TOPIC, 45)
+        commit(repo, late, day0 + 35 * day + 30 * 60_000L, MemoryRating.Hard, UnderstandingRating.Partial, setOf(ReviewMethod.Reading),
+            null to null, SessionKind.TOPIC, 20, loggedAt = day0 + 35 * day + 12 * 3_600_000L + 30 * 60_000L)
         // A topic reviewed once with the phone's clock set back: its third review carries an EARLIER time than its
         // second. The app and the toolkit walk a history in saved order (REVIEW_HISTORY_ORDER), so the file must still
         // replay exactly (2026-10-03).
@@ -140,6 +156,19 @@ class PilotExportFixtureTest {
         val second = app.database.reviewLogDao().getLogsForUnitOnce(corrected).sortedWith(com.example.data.local.entity.REVIEW_HISTORY_ORDER)[1]
         val fixedRating = if (second.memoryRating == MemoryRating.Forgot.name) MemoryRating.Good else MemoryRating.Forgot
         repo.editReviewRating(corrected, second.id, fixedRating, null)
+
+        // One review's day corrected from the topic's history (REVIEW_DATE_CORRECTED): the middle review of a topic
+        // moved one day earlier, inside its neighbours. The toolkit must replay the corrected history exactly too.
+        val moved = topics.first { p ->
+            p.id != corrected && app.database.reviewLogDao().getLogsForUnitOnce(p.id).size >= 3
+        }.id
+        val history = app.database.reviewLogDao().getLogsForUnitOnce(moved).sortedWith(com.example.data.local.entity.REVIEW_HISTORY_ORDER)
+        val (before, middle, after) = Triple(history[0], history[1], history[2])
+        val newTime = com.example.domain.model.ReviewDay.timeForCorrection(
+            com.example.domain.model.ReviewDay.day(middle.reviewedAt, zone).minusDays(1),
+            middle.reviewedAt, before.reviewedAt, after.reviewedAt, now, zone,
+        )
+        repo.editReviewRating(moved, middle.id, MemoryRating.valueOf(middle.memoryRating), null, newReviewedAt = newTime, now = now)
 
         // One deferral, so the export carries one.
         repo.procrastinateUnit(topics.last().id, now + 2 * day)

@@ -18,6 +18,14 @@ object ReviewForecast {
     const val EVENT = "REVIEW_FORECAST"
     const val VERSION = 1
 
+    /**
+     * Which meaning the memory rating had when this answer was given (`ratingDef`, added 2026-10-09; an extra field, so
+     * v1 readers ignore it). 1: "what you still knew before rereading or checking answers" (2026-09-23 until this build;
+     * a snapshot without the field). 2: the owner's definition: Forgot = most of it was gone when the learner came back
+     * to the topic, even if they know it well now; Hard, Good and Easy are their overall judgement after the review.
+     */
+    const val RATING_DEFINITION = 2
+
     /** Versioned, locale-independent key=value fields. `log=<id> ` is prepended after Room assigns the id. */
     fun detail(before: StudyUnitEntity, log: ReviewLogEntity, zone: ZoneId): String = buildString {
         append("v=$VERSION at=${log.reviewedAt} type=${log.logType} model=${log.schedulerVersion} set=${log.parameterSetId}")
@@ -30,7 +38,7 @@ object ReviewForecast {
         append(" dueContext=${dueContext(before, log, zone)}")
         append(" retention=${log.desiredRetentionAtReview} scale=${log.calibrationScaleAtReview}")
         append(" memory=${log.memoryRating} understanding=${log.understandingRating} session=${log.sessionKind ?: "UNKNOWN"}")
-        append(" outcome=SUBJECTIVE_POST_STUDY")
+        append(" outcome=SUBJECTIVE_POST_STUDY ratingDef=$RATING_DEFINITION")
     }
 
     /** Status against the same end-of-local-day boundary as Today; describes availability, not why the user chose it. */

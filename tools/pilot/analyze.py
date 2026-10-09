@@ -377,26 +377,62 @@ def calibration_window(rows: List[Row], participant: str, parameter_set: int, ac
     return sorted(eligible, key=lambda r: (r.log_id, r.at))[-ym.CAL_WINDOW:]
 
 
-def corrections(d: dict) -> Dict[int, List[Tuple[int, int, Optional[int]]]]:
+CORRECTION_EVENTS = ("RATING_CORRECTED", "REVIEW_DATE_CORRECTED")
+
+
+def corrections(d: dict) -> Dict[int, List[Tuple[int, int, Optional[int], bool]]]:
     """RATING_CORRECTED events (export v14+) per topic: (corrected log id, when, the topic's last log id when it
-    replayed). A correction replays the topic, so the stored prediction of every later log that existed then was
-    recomputed, not made at the review. Since 2026-10-04 the event records that last id (`upto`), so saved order
-    decides; an older event falls back to the clock, which misses the rewritten logs when it was set back between the
-    reviews and the correction (an outside audit, 2026-10-04). The app applies the same rule (RecomputedPredictions)."""
-    out: Dict[int, List[Tuple[int, int, Optional[int]]]] = defaultdict(list)
+    replayed, whether the corrected log itself was recomputed). A correction replays the topic, so the stored prediction
+    of every later log that existed then was recomputed, not made at the review. Since 2026-10-04 the event records that
+    last id (`upto`), so saved order decides; an older event falls back to the clock, which misses the rewritten logs
+    when it was set back between the reviews and the correction (an outside audit, 2026-10-04). REVIEW_DATE_CORRECTED
+    (export v16) moves a review to another day, which recomputes that review's own prediction as well. The app applies
+    the same rule (RecomputedPredictions)."""
+    out: Dict[int, List[Tuple[int, int, Optional[int], bool]]] = defaultdict(list)
     for e in d.get("eventLogs") or []:
-        if e.get("type") == "RATING_CORRECTED" and e.get("unitId") is not None:
+        if e.get("type") in CORRECTION_EVENTS and e.get("unitId") is not None:
             kv = parse_detail(e.get("detail"))
             log_id = as_int(kv.get("log"))
             if log_id is not None:
-                out[int(e["unitId"])].append((log_id, int(e.get("at") or 0), as_int(kv.get("upto"))))
+                out[int(e["unitId"])].append((log_id, int(e.get("at") or 0), as_int(kv.get("upto")),
+                                              e.get("type") == "REVIEW_DATE_CORRECTED"))
     return out
 
 
-def recomputed_by(log: dict, fixes: List[Tuple[int, int, Optional[int]]]) -> bool:
+def recomputed_by(log: dict, fixes: List[Tuple[int, int, Optional[int], bool]]) -> bool:
     """Did one of these corrections recompute this log's stored prediction? See `corrections`."""
     lid, at = int(log["id"]), int(log["reviewedAt"])
-    return any(lid > cid and (lid <= upto if upto is not None else at < cat) for cid, cat, upto in fixes)
+    return any((lid >= cid if inclusive else lid > cid) and (lid <= upto if upto is not None else at < cat)
+               for cid, cat, upto, inclusive in fixes)
+
+
+SAVED_LATER_H = 12  # a review saved this long after the time it happened at was logged for an earlier day
+
+
+def review_time(d: dict) -> dict:
+    """The learner's own rough minutes per review (studyMinutes, export v16; -1 = not given, NOT zero) and when reviews
+    were saved (loggedAt) against when they happened (reviewedAt). Minutes are optional and the owner said they will often
+    skip them, so coverage comes first: an estimate on a quarter of the reviews says nothing about the rest until the
+    reviews with and without one are compared. Descriptive only; no decision rule reads it."""
+    logs = [l for l in d.get("reviewLogs") or [] if l.get("logType") in ("RECALL", "FIRST_STUDY")]
+    given = [l for l in logs if (as_int(l.get("studyMinutes")) or -1) > 0]
+
+    def med(xs):
+        return statistics.median(xs) if xs else None
+
+    by_type = {t: [int(l["studyMinutes"]) for l in given if l.get("logType") == t] for t in ("FIRST_STUDY", "RECALL")}
+    by_method: Dict[str, List[int]] = defaultdict(list)
+    for l in given:
+        if l.get("logType") == "RECALL":
+            by_method[method_group(tuple(l.get("reviewMethods") or []))].append(int(l["studyMinutes"]))
+    saved = [l for l in logs if (as_int(l.get("loggedAt")) or -1) > 0]
+    later = [l for l in saved if int(l["loggedAt"]) - int(l["reviewedAt"]) >= SAVED_LATER_H * 3_600_000]
+    moved = sum(1 for e in d.get("eventLogs") or [] if e.get("type") == "REVIEW_DATE_CORRECTED")
+    return dict(logs=len(logs), given=len(given), first_study_median=med(by_type["FIRST_STUDY"]),
+                first_studies_given=len(by_type["FIRST_STUDY"]), review_median=med(by_type["RECALL"]),
+                reviews_given=len(by_type["RECALL"]),
+                by_method={k: dict(n=len(v), median=med(v)) for k, v in sorted(by_method.items())},
+                with_save_time=len(saved), saved_later=len(later), date_corrections=moved)
 
 
 def merged_units(d: dict) -> set:
@@ -1418,7 +1454,10 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             reminder_days=rd["days"], days_without_reminder=len(rd["missed_days"]), reminder_fires=rd["fires"],
             late_reminders=rd["late"], safety_net_reminders=rd["safety_net"],
             reminder_health_problems="; ".join(rd["health_problems"]),
-            rating_corrections=sum(len(v) for v in corrections(d).values()),
+            rating_corrections=sum(1 for v in corrections(d).values() for c in v if not c[3]),
+            date_corrections=sum(1 for v in corrections(d).values() for c in v if c[3]),
+            minutes_given=review_time(d)["given"], minutes_median=review_time(d)["review_median"],
+            saved_later=review_time(d)["saved_later"],
             opened_from_reminder=rd["opened"], reviewed_after_reminder=rd["reviewed_same_day"],
             older_exports=len(e.older_files), logs_missing_from_newest=e.missing_logs, topics_missing_from_newest=e.missing_topics,
             snapshot_days=ld["days"], median_overdue=ld.get("overdue_median"), max_overdue=ld.get("overdue_max"),
@@ -1573,6 +1612,27 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     else:
         rep.p("**Daily load:** no snapshots in these files. One is written each day the app opens or its 6-hourly "
               "worker runs.")
+
+    times = {e.participant: review_time(e.data) for e in exports}
+    summary["review_time"] = times
+    if any(t["given"] or t["with_save_time"] for t in times.values()):
+        rep.p("**Review time: the learner's own minutes.** From export version 16 a rating can carry a rough estimate "
+              "(10, 20, 30, 45 or 60+ minutes), optional and often skipped, so the coverage column comes first: before "
+              "reading a median as the cost of a review, compare the reviews with an estimate to those without (topic, "
+              "method, stage). It is what decides whether a syllabus fits the study time (RESEARCH.md §2.8). Saved later "
+              f"counts reviews logged {SAVED_LATER_H}+ hours after the time they happened at (\"Reviewed: yesterday\"), and "
+              "day corrections the logged reviews moved to another day from the topic's history.")
+        rep.table(["participant", "reviews and first studies", "with minutes", "median: first study / review",
+                   "review median by method (n)", "saved later", "day corrections"],
+                  [[pid, t["logs"], f"{t['given']} ({fmt_p(t['given'] / t['logs'] if t['logs'] else None)})",
+                    f"{fmt(t['first_study_median'], 0)} / {fmt(t['review_median'], 0)}",
+                    "; ".join(f"{k} {fmt(v['median'], 0)} ({v['n']})" for k, v in t["by_method"].items()) or "–",
+                    t["saved_later"], t["date_corrections"]]
+                   for pid, t in times.items()])
+    elif all((e.data.get("exportVersion") or 0) < 16 for e in exports):
+        rep.p("**Review time:** no estimates. The learner's minutes are recorded from export version 16.")
+    else:
+        rep.p("**Review time:** no review in these files carries the learner's minutes.")
 
     # ---- calibration -----------------------------------------------------------------------------------
     rep.h("4. Calibration: does predicted recall match reported recall?")
@@ -2054,7 +2114,7 @@ def write_csvs(out_dir: str, rows: List[Row], topics: List[dict], summary: dict)
                 "reminder_days", "days_without_reminder", "reminder_fires", "late_reminders", "safety_net_reminders",
                 "reminder_health_problems", "opened_from_reminder", "reviewed_after_reminder", "rating_corrections",
                 "snapshot_days", "median_overdue", "max_overdue", "days_held_back", "overdue_trend_per_30d", "app_builds",
-                "time_zones", "settings_changes"]
+                "time_zones", "settings_changes", "date_corrections", "minutes_given", "minutes_median", "saved_later"]
         w = csv.writer(f)
         w.writerow(keys)
         for pid, i in summary["participants"].items():

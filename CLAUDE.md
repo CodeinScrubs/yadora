@@ -218,12 +218,17 @@ These were decided deliberately. Re-suggesting them wastes a session:
   study a topic again; it is not a flashcard app and not a recall test. A review can be rereading,
   doing questions, a lecture, a video — done anywhere, usually outside the app. So the review screen
   has NO reveal step and NO "recall first" gate: title, scope, notes and source are all visible, and
-  the learner rates afterwards. The memory question is "How much did you still remember?" — what they
-  still had when they came back to the topic, BEFORE rereading or checking answers — because that is
-  the recall outcome FSRS models; each button states its meaning (Forgot: most of it was gone; Hard:
-  the core was there, with real gaps; Good: remembered most of it; Easy: knew it thoroughly). Rating
-  how hard the session FELT would feed the model the wrong quantity. Then "How well do you understand it
-  now?" drives the repair clock as before. The Settings guide says the same, and that doing questions
+  the learner rates afterwards. The memory question is "How much did you still remember?", and since 2026-10-09 (the
+  owner's definition; ratingDef=2 in each REVIEW_FORECAST) the answer is their OVERALL judgement after the review, with
+  ONE fixed point: Forgot = most of it was gone when they came back to the topic, even if they know it well now after
+  reading. That is the one distinction FSRS learns from (Forgot or not; the app schedules each topic so that about one
+  answer in ten is Forgot at the 0.90 target), so it must be given whenever it is true; Hard, Good and Easy only change
+  how fast an interval grows, and Hard also covers a heavy, memorization-dense topic that was still there (it comes back
+  sooner, which is what the owner wants). The buttons: Forgot "most of it was gone when I came back", Hard "real gaps, or
+  a heavy topic", Good "I remembered most of it", Easy "I knew it thoroughly". Until 2026-10-09 the hint asked for what
+  was still there BEFORE rereading or checking answers, which the owner said they do not separately estimate. Then "How
+  well do you understand it now?" drives the repair clock as before, after Forgot too since 2026-10-09 (the date stays
+  tomorrow; the log records the answer instead of NotAsked). The Settings guide says the same, and that doing questions
   usually sticks better than rereading alone. Re-confirmed 2026-10-03, when a recall-first review was put to the
   owner: the learner may rate whenever they like, but the aim is a rating after the review.
 - **The review screen's topic card never shrinks below 200 dp** (`ReviewCardLayout` in `ReviewSessionScreen`,
@@ -239,7 +244,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   exact figure as before. Both come from ONE function, `previewReturnDays` in `ReviewSessionScreen`: the same
   `MedScheduler.review`, fuzz and two clocks as `MedReviewRepository.rateUnit`. The memory estimate is computed for Clear
   understanding, because Partial/Confused can only bring a topic back SOONER (the repair clock), so the "~" figure is the
-  latest the topic can return; Forgot is exact (tomorrow) and is printed without "~". Checked by hand on the phone: an
+  latest the topic can return; Forgot is exact (tomorrow) and is printed without "~". Since 2026-10-09 the understanding
+  step also carries the review's day ("Reviewed: today", or an earlier day) and the optional minutes; its buttons compute
+  from the time the review will be saved with and show the figure counted from today ("today" when already due), so
+  preview == commit still holds for a backdated review. Checked by hand on the phone: an
   easy topic (S 13.8 d, D 2.1, 12 days since the last review) previewed 55/78/128 d for Hard/Good/Easy = FSRS-6's
   37/52/86 d × 1.906 (a 0.85 target) × 0.81 (the learner's calibration) × the topic's −4% fuzz. `ButtonEstimateTest` rates every answer on
   topics in six states at two calibration scales and pins preview == commit and "estimate >= actual". Never compute a
@@ -281,7 +289,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   its study date; the first rating there is review #0, and the schedule counts from the moment of that
   rating (the user's model: "when I rate it, that is when I studied it"). The Add screen's "Save and
   rate now" (new topics studied today or earlier) opens that first rating straight away, so the anchor
-  does not drift to whenever the learner next opens Today.
+  does not drift to whenever the learner next opens Today. Since 2026-10-09 the rating can say it happened on an earlier
+  day ("Studied: yesterday"; `domain/model/ReviewDay`): the anchor is then that day at the current hour, kept after any
+  earlier review and never after now, and `loggedAt` records when it was saved.
 - **Day-granularity due model** (date-only). Not a bug; intervals are whole days.
   Due dates are `reviewedAt + intervalDays * 86_400_000` — ELAPSED milliseconds, not calendar
   addition. That is required: forgetting is physical, so FSRS must be fed true elapsed time, and a
@@ -331,7 +341,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Interval fuzz** is deterministic per (unitId, reviewCount), multiplicative
   ±5%, and never applied when the BASE interval < 3 days. Preview == commit ==
   replay is an invariant; `ReplayEqualsLiveTest` guards it bit-for-bit.
-- **Room migrations are additive only** (`MIGRATION_1_2/…/9_10`, currently DB v10,
+- **Room migrations are additive only** (`MIGRATION_1_2/…/10_11`, currently DB v11 (2026-10-09: review_logs.studyMinutes
+  and loggedAt, -1 for older rows),
   `exportSchema=true`, schemas 2–10 committed; every builder adds `AppDatabase.ALL_MIGRATIONS`).
   Never `fallbackToDestructiveMigration`.
 - **DB v5 honest-scheduling model**: `nextReviewAt` = the effective date every
@@ -588,8 +599,12 @@ These were decided deliberately. Re-suggesting them wastes a session:
 - **Today shows NO time estimate** (2026-09-23). It used to print "about N min" from the median of the
   last 50 measured review durations. A review is done however the learner likes, mostly outside the
   app, so the seconds a card sits open measure nothing, and the estimate would be invented.
-  `reviewDurationMs` is still logged as research data. Nor does a review ask how long it took (the owner,
-  2026-10-03): the time a student spends depends on how much time they have that day, not on the topic.
+  `reviewDurationMs` is still logged as research data. A review asks how long it took only as an OPTIONAL rough
+  estimate since 2026-10-09 (`studyMinutes`, quick chips 10/20/30/45/60+ under the understanding question; none = not
+  known, never 0): the owner had declined a time question on 2026-10-03 (the time a student spends depends on how much
+  time they have that day), then chose the optional estimate, because the time a review takes decides whether about
+  2,000 topics fit one year (RESEARCH.md §2.8). Today still shows no time estimate: a median of rough, often skipped
+  answers is not one either.
 - **The daily limit is a limit per DAY** (`ui/today/DailyPlan`, 2026-09-23). It used to cap each
   session: finishing N and starting again loaded the next N, while Today claimed the rest were "held for
   later by your daily limit". Now the reviews already done today (`logType != FIRST_STUDY` since local
@@ -1357,10 +1372,12 @@ These were decided deliberately. Re-suggesting them wastes a session:
     - a recall-first review (the memory rating before the notes and answers). The learner may rate whenever they
       like; the aim stays a rating AFTER the review, and the 2026-09-23 decision stands;
     - an optional time-spent answer per review. How long a student spends depends on how much time they have that
-      day, so it would not measure the topic;
+      day, so it would not measure the topic; REVERSED by the owner 2026-10-09 (the optional minutes chips, the
+      redesign entry below);
     - a research-grade DB v11 (original predictions beside replayed ones, a per-log zone, merge checkpoints): only if
       an analysis turns out to need it. The pilot runs in one zone, and corrections are already logged and left out
-      of the evidence;
+      of the evidence; since 2026-10-09 the original predictions are REVIEW_FORECAST events (#28, approved by the
+      owner) and DB v11 holds the minutes and the save time (the redesign), still without zones or merge checkpoints;
     - an exam hint on Today: the exam date stays purely cosmetic.
   - **Later, no decision needed:** the repair-vs-fuzz fix at the next policy bump; an equal-time randomised study
     after the pilot. Its design is one of the questions in `docs/RESEARCHER_PROMPT.md` (next entry).
@@ -1647,15 +1664,17 @@ These were decided deliberately. Re-suggesting them wastes a session:
     ALL due topics in the queue's urgency order (the priority score, not the due date), with a line after the first N
     (N = the daily limit): today's suggested share, the rest of the time for new material. In the one-year simulation the
     split between new material and reviews is the largest lever (RESEARCH.md §2.8), and the limit is what protects it.
-  - The memory rating: "Forgot" = when I came back to it, most of it was gone, even if I know it well now after reading.
+  - BUILT (2026-10-09): the memory rating: "Forgot" = when I came back to it, most of it was gone, even if I know it well now after reading.
     Hard, Good and Easy stay the owner's overall judgement after the review (what was still there, current mastery, how
     heavy the topic is); the hint text says exactly this. The understanding question stays, and is asked after Forgot
     too (the date stays tomorrow; the log records the answer instead of the skipped -1).
-  - Optional review minutes as quick chips (10 / 20 / 30 / 45 / 60+); none chosen = unknown, never 0. This reverses the
+  - BUILT (2026-10-09): optional review minutes as quick chips (10 / 20 / 30 / 45 / 60+); none chosen = unknown, never 0. This reverses the
     2026-10-03 decline: the time a review takes decides whether about 2,000 topics fit one year (RESEARCH.md §2.8).
-  - The review day: a "Reviewed: today" chip on the rating screen (yesterday, another day), and changing the day of a
+  - BUILT (2026-10-09): the review day: a "Reviewed: today" chip on the rating screen (yesterday, another day), and changing the day of a
     logged review from the topic's history, replayed like a rating correction, only between its neighbouring reviews and
-    never in the future.
+    never in the future (`ReviewDay`, REVIEW_DATE_CORRECTED; the moved review's own prediction leaves the calibration too).
+    A first rating moved to before the study date takes the study date with it (`ReviewDayAndMinutesTest`). Reviews keep
+    `loggedAt`, when they were saved, beside `reviewedAt`, when they happened (DB v11, backup v10, export v16).
   - Notifications: one per topic, for the topics above today's line (at most 40: Android shows about 50 per app and stacks
     them under the app's name); a tap opens that topic; once it is rated the next one comes in silently; sound and
     vibration at most once per chosen reminder time. Swiping one away hides it until the next reminder time: not a

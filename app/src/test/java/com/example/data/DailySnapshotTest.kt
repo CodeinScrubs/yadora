@@ -187,7 +187,7 @@ class DailySnapshotTest {
         DailySnapshot.recordOnce(app)
         AppVersionLog.recordIfChanged(app)
         val json = JSONObject(AnalyticsExporter.buildJson(app))
-        assertEquals(15, json.getInt("exportVersion"))
+        assertEquals(16, json.getInt("exportVersion"))
         val types = json.getJSONArray("eventLogs").let { a -> (0 until a.length()).map { a.getJSONObject(it).getString("type") } }
         assertTrue("$types", DailySnapshot.EVENT in types && AppVersionLog.EVENT in types)
         val guide = json.getJSONObject("fieldGuide")

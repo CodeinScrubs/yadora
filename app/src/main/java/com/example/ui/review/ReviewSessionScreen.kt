@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Edit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -432,9 +433,17 @@ class ReviewViewModel(
         val d = Math.round(effectiveIntervalDays).toInt().coerceAtLeast(1)
         val memoryDays = Math.round(intervalDays).toInt().coerceAtLeast(1)
         val repairWon = memoryDays > d
-        val days = if (fa) "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر" else if (de) (if (d <= 1) "in 1 Tag" else "in $d Tagen") else if (d <= 1) "in 1 day" else "in $d days"
+        // A review saved for an earlier day can already be due again (counted from today, as the caller passes it).
+        val dueNow = effectiveIntervalDays < 0.5
+        val days = when {
+            dueNow -> if (fa) "امروز" else if (de) "heute" else "today"
+            fa -> "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر"
+            de -> if (d <= 1) "in 1 Tag" else "in $d Tagen"
+            else -> if (d <= 1) "in 1 day" else "in $d days"
+        }
         val core = when {
             firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
+            memory == MemoryRating.Forgot && dueNow -> if (fa) "فراموش شده بود — از امروز دوباره مرورش می‌کنی." else if (de) "Vergessen — ab heute wieder zum Neulernen dran." else "Forgot — it's due again from today to relearn."
             memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else if (de) "Vergessen — morgen kommt es zum Neulernen zurück." else "Forgot — it's back tomorrow to relearn."
             memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es gab Lücken, also blieb der Abstand kurz — nächste $days." else "There were gaps, so it comes back soon — next $days."
             memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — weiter hinausgeschoben, nächste $days." else "Easy — pushed out, next $days."
@@ -533,14 +542,25 @@ class ReviewViewModel(
         methods: Set<com.example.domain.model.ReviewMethod> = emptySet(),
         questionsCorrect: Int? = null,
         questionsTotal: Int? = null,
+        // The learner's rough minutes (StudyMinutes) and the day the review happened (an epoch day; null = today).
+        studyMinutes: Int = com.example.domain.model.StudyMinutes.NOT_GIVEN,
+        reviewedOnEpochDay: Long? = null,
     ) {
         if (isProcessing) return
         val currentId = _currentUnit.value?.id ?: return
+        val lastReviewedAt = _currentUnit.value?.lastReviewedAt
         isProcessing = true
 
         viewModelScope.launch {
           try {
-            val now = System.currentTimeMillis()
+            val wallClock = System.currentTimeMillis()
+            // When the review happened: now, or the chosen earlier day at this hour (after the topic's last review). The
+            // schedule counts from it; the wall clock goes in as the time it was saved.
+            val now = reviewedOnEpochDay?.let {
+                com.example.domain.model.ReviewDay.timeForRating(
+                    java.time.LocalDate.ofEpochDay(it), wallClock, lastReviewedAt, java.time.ZoneId.systemDefault(),
+                )
+            } ?: wallClock
             // The one commit path (MedReviewRepository.rateUnit): reload, project onto the current model,
             // schedule with the same MedScheduler.review() the buttons previewed, and write the row and its
             // log in one transaction. The tests that pin what a rating writes call the same function.
@@ -554,7 +574,9 @@ class ReviewViewModel(
                 questionsCorrect = questionsCorrect,
                 questionsTotal = questionsTotal,
                 sessionKind = sessionKind,
-                reviewDurationMs = (now - unitShownAt).coerceIn(0L, 30 * 60 * 1000L),
+                reviewDurationMs = (wallClock - unitShownAt).coerceIn(0L, 30 * 60 * 1000L),
+                studyMinutes = studyMinutes,
+                loggedAt = wallClock,
             )
             if (rated == null) {
                 // The topic was deleted (from the Edit screen, say) while it sat on screen: there is nothing to
@@ -579,11 +601,12 @@ class ReviewViewModel(
             // so a committed review and its growth can never disagree — and undo removes both.)
             com.example.widget.DueWidgetProvider.updateAll(getApplication())
             // Both clocks: the memory prediction AND the date actually written to the row, so the
-            // message can never announce an interval the schedule did not use.
-            val effectiveIntervalDays = (rated.effectiveDueAt - now) / 86400000.0
+            // message can never announce an interval the schedule did not use. Counted from today, so a review saved for
+            // an earlier day says when the topic comes back from now.
+            val effectiveIntervalDays = (rated.effectiveDueAt - wallClock) / 86400000.0
             lastReason = buildReasonText(
                 memoryRating, understandingRating, rated.before.highYield,
-                intervalDays = rated.memoryIntervalDays,
+                intervalDays = rated.memoryIntervalDays - (wallClock - now) / 86400000.0,
                 effectiveIntervalDays = effectiveIntervalDays,
                 firstStudy = reviewNumber == 0,
                 repairPending = rated.repairPending,
@@ -705,6 +728,11 @@ fun ReviewSessionScreen(
     ) { mutableStateOf(emptySet<com.example.domain.model.ReviewMethod>()) }
     var questionsRight by rememberSaveable(currentTopicKey) { mutableStateOf("") }
     var questionsTotal by rememberSaveable(currentTopicKey) { mutableStateOf("") }
+    // The learner's rough minutes for THIS topic (StudyMinutes.NOT_GIVEN = none chosen) and the day it was reviewed on
+    // (null = today, saved as "finished just now"; otherwise an epoch day, ReviewDay). Reset for every topic, like the
+    // method row: a remembered choice would record an estimate nobody gave. Saved across rotation.
+    var studyMinutes by rememberSaveable(currentTopicKey) { androidx.compose.runtime.mutableIntStateOf(com.example.domain.model.StudyMinutes.NOT_GIVEN) }
+    var reviewedOnEpochDay by rememberSaveable(currentTopicKey) { mutableStateOf<Long?>(null) }
     // Only a Questions review carries a score; unticking Questions drops what was typed.
     fun scoreOrNull(field: String): Int? =
         if (com.example.domain.model.ReviewMethod.Questions in reviewMethods) field.trim().toIntOrNull() else null
@@ -1203,21 +1231,10 @@ fun ReviewSessionScreen(
                             // Warm→cool rating ramp; "Forgot" is calm sienna, never alarm-red.
                             val tone = com.example.ui.theme.ratingTone(rating)
                             Button(
-                                onClick = {
-                                    if (rating == MemoryRating.Forgot) {
-                                        // Forgot → relearn tomorrow regardless of understanding, so commit
-                                        // now and skip that moot second question (less friction on a miss).
-                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        viewModel.rateCurrentUnit(
-                                            MemoryRating.Forgot, UnderstandingRating.Partial, understandingAsked = false,
-                                            methods = reviewMethods,
-                                            questionsCorrect = scoreOrNull(questionsRight),
-                                            questionsTotal = scoreOrNull(questionsTotal),
-                                        )
-                                    } else {
-                                        selectedMemory = rating
-                                    }
-                                },
+                                // Every answer, Forgot included, goes on to the understanding question (the owner's
+                                // decision, 2026-10-09). After Forgot the date is tomorrow whatever the answer, but the
+                                // log then tells "forgot, clear now" from "forgot and still confused".
+                                onClick = { selectedMemory = rating },
                                 enabled = !viewModel.isProcessing,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = tone.container,
@@ -1276,8 +1293,30 @@ fun ReviewSessionScreen(
                             Text(strings.notToday)
                         }
                     } else {
+                        // Before the last answer, two optional things about the review itself, for a first study and a
+                        // review alike: the day it happened (today unless the learner says otherwise) and about how long
+                        // it took. Neither is ever required (the owner's decisions, 2026-10-09).
+                        val zone = java.time.ZoneId.systemDefault()
+                        val reviewTime = reviewedOnEpochDay?.let {
+                            com.example.domain.model.ReviewDay.timeForRating(java.time.LocalDate.ofEpochDay(it), now, currentUnit.lastReviewedAt, zone)
+                        } ?: now
+                        ReviewDayChip(
+                            languageCode = strings.languageCode,
+                            firstStudy = isFreshFirstStudy,
+                            chosenEpochDay = reviewedOnEpochDay,
+                            earliest = com.example.domain.model.ReviewDay.earliestForRating(currentUnit.lastReviewedAt, currentUnit.studiedAt, now, zone),
+                            today = com.example.domain.model.ReviewDay.day(now, zone),
+                            useJalali = com.example.ui.i18n.LocalUseJalali.current,
+                            onChoose = { reviewedOnEpochDay = it },
+                        )
+                        StudyMinutesPicker(
+                            languageCode = strings.languageCode,
+                            selected = studyMinutes,
+                            onSelect = { studyMinutes = it },
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            // Asked after a first study and after a review alike: understanding is about now.
+                            // Asked after a first study and after a review alike, Forgot included: understanding is about now.
                             strings.understandingNowQuestion,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
@@ -1291,9 +1330,14 @@ fun ReviewSessionScreen(
                             val chosenMemory = selectedMemory ?: MemoryRating.Good
                             UnderstandingRating.entries.forEach { rating ->
                                 // Both answers are known here, so this is exactly when the topic comes back: the
-                                // earlier of the memory date and the repair deadline, with the commit's own fuzz.
-                                val effectiveInterval = previewReturnDays(currentUnit, now, chosenMemory, rating, viewModel.currentUnrepairedStreak)
-                                val intervalStr = localizedIntervalLabel(effectiveInterval, strings.languageCode)
+                                // earlier of the memory date and the repair deadline, with the commit's own fuzz, from
+                                // the time the review is saved with. Shown counted from today: a review saved for an
+                                // earlier day comes back that much sooner, or is due now.
+                                val effectiveInterval = previewReturnDays(currentUnit, reviewTime, chosenMemory, rating, viewModel.currentUnrepairedStreak)
+                                val fromToday = effectiveInterval - (now - reviewTime) / 86_400_000.0
+                                val intervalStr = if (fromToday < 0.5) {
+                                    when (strings.languageCode) { "fa" -> "امروز"; "de" -> "heute"; else -> "today" }
+                                } else localizedIntervalLabel(fromToday, strings.languageCode)
                                 Button(
                                     onClick = {
                                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
@@ -1305,6 +1349,8 @@ fun ReviewSessionScreen(
                                                 methods = reviewMethods,
                                                 questionsCorrect = scoreOrNull(questionsRight),
                                                 questionsTotal = scoreOrNull(questionsTotal),
+                                                studyMinutes = studyMinutes,
+                                                reviewedOnEpochDay = reviewedOnEpochDay,
                                             )
                                         }
                                     },
@@ -1376,6 +1422,94 @@ private fun ReviewCardLayout(
                 cardPlaced.forEach { it.place(0, 0) }
                 var y = cardHeight + gapPx
                 controlsPlaced.forEach { it.place(0, y); y += it.height }
+            }
+        }
+    }
+}
+
+/**
+ * "Reviewed: today ▾": the day the review (or the first study) happened (the owner's decision, 2026-10-09). The rating is
+ * saved as finished just now unless the learner says it was yesterday or an earlier day, back to the topic's previous
+ * review ([com.example.domain.model.ReviewDay]). A week at most here; an older slip is corrected from the topic's history.
+ */
+@Composable
+private fun ReviewDayChip(
+    languageCode: String,
+    firstStudy: Boolean,
+    chosenEpochDay: Long?,
+    earliest: java.time.LocalDate,
+    today: java.time.LocalDate,
+    useJalali: Boolean,
+    onChoose: (Long?) -> Unit,
+) {
+    val fa = languageCode == "fa"
+    val de = languageCode == "de"
+    var open by remember { mutableStateOf(false) }
+    fun label(day: java.time.LocalDate): String = when (java.time.temporal.ChronoUnit.DAYS.between(day, today)) {
+        0L -> if (fa) "امروز" else if (de) "heute" else "today"
+        1L -> if (fa) "دیروز" else if (de) "gestern" else "yesterday"
+        else -> com.example.ui.i18n.AppDate.weekdayDate(
+            useJalali, day.atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(), fa,
+        )
+    }
+    val chosen = chosenEpochDay?.let { java.time.LocalDate.ofEpochDay(it) } ?: today
+    val prefix = when {
+        firstStudy -> if (fa) "مطالعه شده:" else if (de) "Gelernt:" else "Studied:"
+        else -> if (fa) "مرور شده:" else if (de) "Wiederholt:" else "Reviewed:"
+    }
+    androidx.compose.foundation.layout.Box {
+        androidx.compose.material3.AssistChip(
+            onClick = { open = true },
+            label = { Text("$prefix ${label(chosen)}") },
+            trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
+        )
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            var day = today
+            var shown = 0
+            while (day >= earliest && shown < 7) {
+                val option = day
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(label(option)) },
+                    onClick = { onChoose(if (option == today) null else option.toEpochDay()); open = false },
+                )
+                day = day.minusDays(1)
+                shown++
+            }
+        }
+    }
+}
+
+/**
+ * "About how long? (optional)": the learner's rough minutes for this review or first study
+ * ([com.example.domain.model.StudyMinutes]). None chosen means not known, never zero; a second tap clears a choice. Nothing
+ * schedules from it.
+ */
+@Composable
+private fun StudyMinutesPicker(
+    languageCode: String,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+    val fa = languageCode == "fa"
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            when (languageCode) { "fa" -> "حدوداً چقدر طول کشید؟ (اختیاری)"; "de" -> "Ungefähr wie lange? (optional)"; else -> "About how long? (optional)" },
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        ) {
+            com.example.domain.model.StudyMinutes.CHOICES.forEach { m ->
+                val number = if (m == com.example.domain.model.StudyMinutes.CHOICES.last()) "$m+" else "$m"
+                val shown = if (fa) com.example.ui.i18n.PersianDate.faDigits(number) else number
+                FilterChip(
+                    selected = selected == m,
+                    onClick = { onSelect(if (selected == m) com.example.domain.model.StudyMinutes.NOT_GIVEN else m) },
+                    label = { Text(when (languageCode) { "fa" -> "$shown دقیقه"; "de" -> "$shown Min."; else -> "$shown min" }) },
+                )
             }
         }
     }

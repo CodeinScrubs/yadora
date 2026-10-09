@@ -72,6 +72,14 @@ data class ReviewLogEntity(
     val questionsTotal: Int = -1,
     /** The session that produced this log: PLAN, EXTRA, TOPIC or AHEAD ([com.example.domain.model.SessionKind]); null before v10. */
     val sessionKind: String? = null,
+    // v11 (2026-10-09, the owner's decisions). Nothing schedules from either.
+    /** The learner's rough minutes for this review or first study ([com.example.domain.model.StudyMinutes]); -1 = not given. */
+    val studyMinutes: Int = -1,
+    /**
+     * When the review was SAVED, on the wall clock. [reviewedAt] is when it HAPPENED, which the learner can set to an
+     * earlier day ("Reviewed: yesterday") or correct later; -1 = saved before v11.
+     */
+    val loggedAt: Long = -1,
 )
 
 /**

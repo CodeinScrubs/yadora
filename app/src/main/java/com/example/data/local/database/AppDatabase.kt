@@ -25,7 +25,7 @@ import com.example.data.local.entity.SystemEntity
         EventLogEntity::class,
         MemoryParameterSetEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -190,8 +190,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v10 → v11 (additive, 2026-10-09): the learner's optional minutes for a review, and when a review was saved
+         * as against when it happened (a rating can claim an earlier day, and a logged day can be corrected). Existing
+         * rows get "not given" / "not recorded" (-1), which is the truth.
+         */
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN studyMinutes INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE review_logs ADD COLUMN loggedAt INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
         /** Every migration, in order — one list so no builder can forget the newest one. */
         val ALL_MIGRATIONS: Array<Migration>
-            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
     }
 }

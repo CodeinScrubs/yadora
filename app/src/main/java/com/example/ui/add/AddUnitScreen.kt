@@ -268,17 +268,22 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
         }
     }
 
-    /** Correct a past review's ratings; the repository replays history to recompute the schedule. */
+    /**
+     * Correct a past review's ratings, and its day when [newReviewedAt] is given (between its neighbouring reviews, never
+     * in the future: com.example.domain.model.ReviewDay); the repository replays history to recompute the schedule.
+     */
     fun editReviewRating(
         logId: Long,
         mem: com.example.domain.model.MemoryRating,
         und: UnderstandingRating?,
+        newReviewedAt: Long? = null,
         onComplete: (Boolean) -> Unit,
     ) {
         val unitId = existingUnit?.id ?: return onComplete(false)
         viewModelScope.launch {
-            // If replay aborts (a corrupt log), the topic is left untouched — never half-replayed.
-            val result = runCatching { repository.editReviewRating(unitId, logId, mem, und) }
+            // If replay aborts (a corrupt log, or a day outside its neighbours), the topic is left untouched — never
+            // half-replayed.
+            val result = runCatching { repository.editReviewRating(unitId, logId, mem, und, newReviewedAt) }
             if (result.isSuccess) existingUnit = repository.getUnitById(unitId)
             onComplete(result.isSuccess)
         }
@@ -1118,6 +1123,23 @@ fun AddUnitScreen(
         }
         val ratingOptions = if (isFirstStudy) listOf(MemoryRating.Easy, MemoryRating.Good, MemoryRating.Hard) else MemoryRating.entries
         val understandingRequired = mem != MemoryRating.Forgot
+        // The day this review happened, correctable between the reviews saved before and after it (saved order) and
+        // never in the future (com.example.domain.model.ReviewDay, the owner's decision 2026-10-09).
+        val zone = java.time.ZoneId.systemDefault()
+        val history = viewModel.reviewLogs.collectAsStateWithLifecycle().value
+        val ordered = remember(log.id, history) { history.sortedWith(com.example.data.local.entity.REVIEW_HISTORY_ORDER) }
+        val position = ordered.indexOfFirst { it.id == log.id }
+        val previousAt = if (position > 0) ordered[position - 1].reviewedAt else null
+        val nextAt = if (position >= 0) ordered.getOrNull(position + 1)?.reviewedAt else null
+        val dayRange = remember(log.id, previousAt, nextAt) {
+            com.example.domain.model.ReviewDay.correctionRange(previousAt, nextAt, System.currentTimeMillis(), zone)
+        }
+        val originalDay = remember(log.id) { com.example.domain.model.ReviewDay.day(log.reviewedAt, zone) }
+        var newDay by remember(log.id) { mutableStateOf<java.time.LocalDate?>(null) }
+        var showDayPicker by remember(log.id) { mutableStateOf(false) }
+        var dayError by remember(log.id) { mutableStateOf(false) }
+        fun noonOf(day: java.time.LocalDate): Long = day.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+        val shownDay = newDay ?: originalDay
         AlertDialog(
             onDismissRequest = { editingLog = null },
             title = { Text(if (fa) "اصلاح ارزیابی" else if (strings.languageCode == "de") (if (isFirstStudy) "Erste Bewertung korrigieren" else "Bewertung korrigieren") else if (isFirstStudy) "Correct first-study rating" else "Correct this rating") },
@@ -1167,6 +1189,29 @@ fun AddUnitScreen(
                             color = if (editingLogError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        if (isFirstStudy) (if (fa) "روز مطالعه" else if (strings.languageCode == "de") "Lerntag" else "Day studied")
+                        else (if (fa) "روز مرور" else if (strings.languageCode == "de") "Tag der Wiederholung" else "Day reviewed"),
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedButton(onClick = { showDayPicker = true }, enabled = dayRange != null) {
+                        Text(fmtDate(noonOf(shownDay)))
+                    }
+                    if (dayError && dayRange != null) {
+                        Text(
+                            text = run {
+                                val from = fmtDate(noonOf(dayRange.start))
+                                val to = fmtDate(noonOf(dayRange.endInclusive))
+                                if (fa) "روزی بین $from و $to انتخاب کن: ترتیب مرورهای این مبحث عوض نمی‌شود."
+                                else if (strings.languageCode == "de") "Wähle einen Tag zwischen $from und $to: die Reihenfolge der Wiederholungen bleibt."
+                                else "Choose a day between $from and $to: the order of this topic's reviews stays as it is."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = if (fa) "کل زمان‌بندی این مبحث بر اساس ارزیابی اصلاح‌شده بازمحاسبه می‌شود." else if (strings.languageCode == "de") "Der gesamte Zeitplan dieses Themas wird aus der korrigierten Bewertung neu berechnet." else "This topic's whole schedule is recalculated from the corrected rating.",
@@ -1184,7 +1229,11 @@ fun AddUnitScreen(
                     }
                     editingLogSaving = true
                     editingLogError = false
-                    viewModel.editReviewRating(log.id, mem, und) { success ->
+                    // A moved day keeps the review's own hour, inside its neighbours (ReviewDay.timeForCorrection).
+                    val movedTo = newDay?.takeIf { it != originalDay }?.let { day ->
+                        com.example.domain.model.ReviewDay.timeForCorrection(day, log.reviewedAt, previousAt, nextAt, System.currentTimeMillis(), zone)
+                    }
+                    viewModel.editReviewRating(log.id, mem, und, movedTo) { success ->
                         editingLogSaving = false
                         if (success) {
                             // The replay just recomputed this topic's schedule, but the FORM still holds
@@ -1210,6 +1259,42 @@ fun AddUnitScreen(
             ) { Text(if (editingLogSaving) "…" else strings.save) } },
             dismissButton = { TextButton(onClick = { editingLog = null }) { Text(strings.cancel) } }
         )
+
+        if (showDayPicker && dayRange != null) {
+            // A day outside the neighbours would reorder the history: refused here, and again by the repository.
+            fun accept(day: java.time.LocalDate) {
+                if (day in dayRange) { newDay = day; dayError = false } else dayError = true
+                showDayPicker = false
+            }
+            if (useJalali) {
+                com.example.ui.components.JalaliDatePickerDialog(
+                    initialMillis = noonOf(shownDay),
+                    onDismiss = { showDayPicker = false },
+                    onConfirm = { millis -> accept(com.example.domain.model.ReviewDay.day(millis, zone)) },
+                )
+            } else {
+                val dayState = rememberDatePickerState(
+                    initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(noonOf(shownDay)),
+                    selectableDates = object : SelectableDates {
+                        override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                            java.time.Instant.ofEpochMilli(utcTimeMillis).atZone(java.time.ZoneOffset.UTC).toLocalDate() in dayRange
+                    },
+                )
+                DatePickerDialog(
+                    onDismissRequest = { showDayPicker = false },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val picked = dayState.selectedDateMillis
+                            if (picked != null) accept(java.time.Instant.ofEpochMilli(picked).atZone(java.time.ZoneOffset.UTC).toLocalDate())
+                            else showDayPicker = false
+                        }) { Text(strings.okBtn) }
+                    },
+                    dismissButton = { TextButton(onClick = { showDayPicker = false }) { Text(strings.cancel) } },
+                ) {
+                    DatePicker(state = dayState)
+                }
+            }
+        }
     }
 
     if (showStudiedAtPicker) {
