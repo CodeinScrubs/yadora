@@ -73,6 +73,7 @@ jobs:
           python3 tools/pilot/test_yadora_model.py
           python3 tools/pilot/test_analyze.py
           python3 tools/pilot/test_forecast_audit.py
+          python3 tools/pilot/test_forecast_baselines.py
           python3 tools/pilot/analyze.py app/build/pilot-fixture/sample_export.json --out build/pilot-check --no-fit
           python3 tools/pilot/analyze.py app/build/soak/export.json --out build/soak-check --no-fit
           python3 tools/pilot/analyze.py app/build/owner-soak/export.json --out build/owner-check --no-fit
