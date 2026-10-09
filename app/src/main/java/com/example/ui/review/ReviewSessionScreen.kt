@@ -191,11 +191,14 @@ class ReviewViewModel(
      * @param ignoreLimit the learner chose "review more anyway" after today's limit was used up.
      * @param ahead "review ahead": topics not yet due, weakest first ([com.example.ui.today.ReviewAhead]).
      */
-    fun startSessionOnce(unitId: Long = -1L, ignoreLimit: Boolean = false, ahead: Boolean = false) {
+    fun startSessionOnce(unitId: Long = -1L, ignoreLimit: Boolean = false, ahead: Boolean = false, kind: String? = null) {
         if (sessionStarted) return
         sessionStarted = true
+        singleTopic = unitId != -1L
         sessionKind = when {
-            unitId != -1L -> com.example.domain.model.SessionKind.TOPIC
+            // One topic opened from Today keeps where it was in Today's list (Screen.ReviewSession.kind).
+            unitId != -1L -> com.example.domain.model.SessionKind.entries.firstOrNull { it.name == kind }
+                ?: com.example.domain.model.SessionKind.TOPIC
             ahead -> com.example.domain.model.SessionKind.AHEAD
             ignoreLimit -> com.example.domain.model.SessionKind.EXTRA
             else -> com.example.domain.model.SessionKind.PLAN
@@ -242,6 +245,18 @@ class ReviewViewModel(
     var lastReason by androidx.compose.runtime.mutableStateOf<String?>(null)
         private set
     fun consumeReason() { lastReason = null }
+
+    /**
+     * ONE topic, opened on its own (from Today's list, the Library, a reminder): what every review is since Today stopped
+     * offering sessions (the owner's decision, 2026-10-09). Its end screen says "Saved" and when the topic comes back,
+     * not a session summary of one.
+     */
+    var singleTopic by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    /** The last rating's reason, kept for a single topic's end screen (the snackbar's copy is consumed). */
+    var savedReason by androidx.compose.runtime.mutableStateOf<String?>(null)
+        private set
 
     // When the current card appeared — the review's duration (shown → rated) is a research signal
     // (optimal-retention computation needs per-review time). Capped so a phone left open overnight
@@ -510,6 +525,7 @@ class ReviewViewModel(
                 if (current != null) {
                     dueUnits.add(0, current)
                 }
+                savedReason = null
                 // The undone log is gone, so the streak the buttons preview with must be re-read.
                 currentUnrepairedStreak = repository.unrepairedStreak(historyItem.review.before.id)
                 // The row as undo left it: its schedule from before the rating, its content as it is now, projected
@@ -611,6 +627,7 @@ class ReviewViewModel(
                 firstStudy = reviewNumber == 0,
                 repairPending = rated.repairPending,
             )
+            savedReason = lastReason
 
             advanceUnit()
           } catch (t: Throwable) {
@@ -679,6 +696,8 @@ fun ReviewSessionScreen(
     ignoreLimit: Boolean = false,
     /** "Review ahead": topics not yet due, weakest first. */
     ahead: Boolean = false,
+    /** One topic opened from Today: where it was in Today's list (a SessionKind name); null = TOPIC. */
+    kind: String? = null,
     onNavigateToEdit: (Long) -> Unit,
     onFinish: () -> Unit
 ) {
@@ -687,7 +706,7 @@ fun ReviewSessionScreen(
     val viewModel: ReviewViewModel = viewModel(factory = ReviewViewModelFactory(application, repository))
 
     LaunchedEffect(unitId, ignoreLimit, ahead) {
-        viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead)
+        viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead, kind = kind)
     }
     // Coming back to the card (from the Edit screen, or the app from the background): show the row as it is now.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
@@ -752,6 +771,11 @@ fun ReviewSessionScreen(
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     LaunchedEffect(viewModel.lastReason) {
         viewModel.lastReason?.let { reason ->
+            // A single topic's end screen says this itself; a warning (a failed save, a refused Undo) still shows here.
+            if (viewModel.singleTopic && reason == viewModel.savedReason) {
+                viewModel.consumeReason()
+                return@LaunchedEffect
+            }
             snackbarHostState.currentSnackbarData?.dismiss()
             // consumeReason() MUST come after showSnackbar, not before: lastReason is this effect's
             // key, so clearing it first changed the key, disposed the effect, and cancelled the
@@ -781,7 +805,14 @@ fun ReviewSessionScreen(
                 Spacer(modifier = Modifier.weight(1f))
             } else if (currentUnit == null) {
                 Spacer(modifier = Modifier.weight(1f))
-                Text(strings.sessionComplete, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                // One topic: "Saved" and when it comes back. Nothing logged (Not today, or a topic that could not be
+                // opened) says so instead of a session summary of none.
+                val headline = when {
+                    !viewModel.singleTopic -> strings.sessionComplete
+                    viewModel.sessionCount > 0 -> when (strings.languageCode) { "fa" -> "ثبت شد"; "de" -> "Gespeichert"; else -> "Saved" }
+                    else -> when (strings.languageCode) { "fa" -> "چیزی ثبت نشد"; "de" -> "Nichts gespeichert"; else -> "Nothing logged" }
+                }
+                Text(headline, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 // Topics whose history could not be replayed were left out rather than scheduled on
                 // a model their state was never measured under. Say so: a silently shorter queue is
                 // indistinguishable from "nothing was due", and the user would never find out.
@@ -800,7 +831,17 @@ fun ReviewSessionScreen(
                     )
                 }
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
+                val reason = viewModel.savedReason
+                if (viewModel.singleTopic && reason != null && viewModel.sessionCount > 0) {
+                    Text(
+                        text = reason,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                } else if (!viewModel.singleTopic) {
                 // Expose session stats as an elegant summary card:
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -850,6 +891,7 @@ fun ReviewSessionScreen(
                             }
                         }
                     }
+                }
                 }
                 
                 Spacer(modifier = Modifier.height(32.dp))

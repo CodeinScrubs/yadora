@@ -1540,8 +1540,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     deferred = sum(1 for r in recalls if r.deferrals > 0)
     rep.p(f"Lateness of recall reviews against the date that actually applied — the memory date, or the earlier "
           f"understanding repair deadline the previous review set. Rows with a user deferral in between are left "
-          f"out ({deferred}): their reconstructed date is not the real one. Early reviews come from Review ahead, a "
-          f"Today card or the Library:")
+          f"out ({deferred}): their reconstructed date is not the real one. Early reviews come from Today's 'Next up' "
+          f"list (Review ahead before 2026-10-09) or the Library:")
     order = ["early (>1 d before)", "on time (±1 d)", "1–3 d late", "3–7 d late", "more than 7 d late", "unknown"]
     tot = sum(lat.values()) or 1
     rep.table(["timing", "reviews", "share"], [[k, lat.get(k, 0), fmt_p(lat.get(k, 0) / tot)] for k in order])
@@ -1550,7 +1550,8 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     rep.p(f"First ratings given on the study day itself: **{fmt_p(same_day / len(first) if first else None)}** "
           f"of {len(first)}. The schedule counts from the rating, so a late first rating moves the whole schedule.")
     kinds = Counter(r.session_kind or "not recorded" for r in all_rows if r.log_type in ("RECALL", "FIRST_STUDY"))
-    rep.p("Sessions that produced the logs: " + ", ".join(f"{k} {v}" for k, v in kinds.most_common()))
+    rep.p("Where the logs came from (sessionKind; since 2026-10-09 one topic at a time from Today: PLAN today's share, "
+          "EXTRA below its line, AHEAD 'Next up'; TOPIC anywhere else): " + ", ".join(f"{k} {v}" for k, v in kinds.most_common()))
     per = []
     for pid, i in summary["participants"].items():
         rs = [r for r in recalls if r.participant == pid]

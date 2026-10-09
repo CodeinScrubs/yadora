@@ -383,8 +383,8 @@ a topic reviewed twice on one calendar day and rated Hard. Intervals are whole d
 topic again on a later day (the one exception: a review in the first hour of a daylight-saving fall-back day,
 where a one-day interval comes due that evening; Iran has no DST). Since 2026-09-28 Review ahead leaves out
 topics reviewed today too, so in practice only a deliberate second review from the Library reaches it (none in
-the 23,601 reviews of `TwoYearSoakTest`; `OwnerYearSoakTest`, whose learner also takes same-day second looks, has 11
-in 14,647). The pin stays at 6.3.1.
+the 23,601 reviews of `TwoYearSoakTest`; `OwnerYearSoakTest`, whose learner also takes same-day second looks, has 6
+in 14,185). The pin stays at 6.3.1.
 
 **Headroom.** An ORACLE twin schedules from the learner's true memory (true stability, true curve, true speed
 of forgetting) under the same product rules and the same scheduling rule, one fixed target. No model can know
@@ -494,9 +494,9 @@ reviews, which target leaves the most on exam day, and what is a spare evening w
 95.4% against 95.3%, 6.0 reviews a topic). Each study day (6 of 7) has a budget of review units: a remembered review
 costs 1, a forgotten one 1.5, and first studying a topic and rating it costs 3. The day runs as the app runs it: due
 reviews by the queue's own score, then new topics with what is left (up to 10 a day) until the syllabus has been
-studied once, then Review ahead with any time left. The exam score is the average recall over the WHOLE syllabus, a
-topic never studied counting 0: what a perfectly calibrated candidate earns on a four-option exam with negative
-marking. True memory is FSRS-6 and ratings are honest.
+studied once, then Review ahead with any time left (on Today since 2026-10-09 the "Next up · weakest first"
+list). The exam score is the average recall over the WHOLE syllabus, a topic never studied counting 0: what a
+perfectly calibrated candidate earns on a four-option exam with negative marking. True memory is FSRS-6 and ratings are honest.
 
 A syllabus of 1,000 topics, a learner the defaults describe. Exam score at targets 0.85 / 0.90 / 0.95 (every topic
 studied at least once, unless a share is given):

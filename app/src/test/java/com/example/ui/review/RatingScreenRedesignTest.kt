@@ -76,7 +76,9 @@ class RatingScreenRedesignTest {
         waitForText("Reviewed: yesterday")
         compose.onNode(hasText(strings.urConfused, substring = true)).performScrollTo().performClick()
 
-        waitForText(strings.sessionComplete)
+        waitForText("Saved")
+        // Forgot, said for yesterday: due again yesterday + 1 day, so from today.
+        waitForText("due again from today")
         val log = runBlocking { app.database.reviewLogDao().getLogsForUnitOnce(id).single() }
         assertEquals("Forgot", log.memoryRating)
         assertEquals("the understanding answer after Forgot is recorded", "Confused", log.understandingRating)
