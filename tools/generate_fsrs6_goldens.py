@@ -1,6 +1,11 @@
 # Generate FSRS-6 golden vectors from the REAL installed py-fsrs library.
 # Not a re-derivation: these call the library's own methods.
-import json, io
+#
+#   python generate_fsrs6_goldens.py [output.json]
+#
+# app/src/test/resources/golden_fsrs6.json came from py-fsrs 6.3.1 (what reviews stamped YADORA-8 or earlier replay)
+# and golden_fsrs6_632.json from py-fsrs 6.3.2 (live since YADORA-9); each file records the version that wrote it.
+import json, io, sys
 import fsrs
 from fsrs.scheduler import Scheduler, DEFAULT_PARAMETERS
 from fsrs.rating import Rating
@@ -86,7 +91,8 @@ for S in stabs:
     for r in [0.70, 0.80, 0.85, 0.90, 0.93, 0.95, 0.97, 0.99]:
         iv.append({"s": S, "req": r, "days": (S / s._FACTOR) * ((r ** (1 / s._DECAY)) - 1)})
 
-io.open("golden_fsrs6.json", "w", encoding="utf-8").write(json.dumps({
+out = sys.argv[1] if len(sys.argv) > 1 else "golden_fsrs6.json"
+io.open(out, "w", encoding="utf-8").write(json.dumps({
     "pyFsrsVersion": ver,
     "parameters": list(DEFAULT_PARAMETERS),
     "decay": s._DECAY, "factor": s._FACTOR,

@@ -202,7 +202,9 @@ class MedReviewRepository(
                 prevTime, log.reviewedAt, MedScheduler.CURRENT_MODEL, log.elapsedDays, log.schedulerVersion, log.logType, merged,
             )
             val highYield = if (log.wasImportantAtReview >= 0) log.wasImportantAtReview == 1 else unit.highYield
-            state = MedScheduler.projectStep(state, elapsed, grade, highYield, target.weights)
+            // Each rating keeps the same-day rule of the policy that produced it, exactly as a correction's replay does.
+            val floorSameDayHard = MedScheduler.floorsSameDayHard(log.schedulerPolicyVersion.ifEmpty { MedScheduler.POLICY_VERSION })
+            state = MedScheduler.projectStep(state, elapsed, grade, highYield, target.weights, floorSameDayHard)
             if (grade == MemoryRating.Forgot) lapses++
             reviews++
             lastGradedRating = log.memoryRating
@@ -296,6 +298,8 @@ class MedReviewRepository(
                             MedScheduler.storedModelDays(it.elapsedDays, it.schedulerVersion, it.logType, MedScheduler.MemoryModel.FSRS_6),
                             // Folds follow the order the app recorded reviews, independently of a phone clock rollback.
                             validationOrder = it.id,
+                            // Its same-day rule, as every replay applies it (MedScheduler.floorsSameDayHard).
+                            policyVersion = it.schedulerPolicyVersion,
                         )
                     },
             ) { from, to -> MedScheduler.modelElapsedDays(from, to, MedScheduler.MemoryModel.FSRS_6) }
@@ -304,7 +308,8 @@ class MedReviewRepository(
 
     /**
      * What a personal-model fit learns from and is judged against, as one identity: every review up to [maxLogId]
-     * (which topic, when, both ratings, its type, model and weight set) and the weight set in use. A restore, a
+     * (which topic, when, both ratings, its type, model, weight set, day count and policy, which decides its same-day
+     * rule) and the weight set in use. A restore, a
      * wipe, a merge or a rating correction changes it even when every time stays the same; a review added after
      * the fit began (a higher id) does not. Read inside a transaction, where the fit captures its inputs and where
      * it would adopt the result.
@@ -316,7 +321,7 @@ class MedReviewRepository(
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         reviewLogDao.getAllLogsOnce().asSequence().filter { it.id <= maxLogId }.sortedBy { it.id }.forEach { l ->
             digest.update(
-                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}|${l.elapsedDays}\n"
+                "${l.id}|${l.studyUnitId}|${l.reviewedAt}|${l.memoryRating}|${l.understandingRating}|${l.logType}|${l.schedulerVersion}|${l.parameterSetId}|${l.elapsedDays}|${l.schedulerPolicyVersion}\n"
                     .toByteArray(Charsets.UTF_8)
             )
         }
@@ -1423,6 +1428,8 @@ class MedReviewRepository(
                 // flat deadline it was actually given.
                 backOffRepairClock = MedScheduler.backsOffRepairClock(policyForThisLog),
                 parameterSetId = replaySetId,
+                // YADORA-9 follows py-fsrs 6.3.2's same-day Hard; an older row keeps 6.3.1's.
+                floorSameDayHard = MedScheduler.floorsSameDayHard(policyForThisLog),
             )
             // Same deterministic fuzz as the live commit (seeded by unit + prior review count, which
             // is exactly what this loop counter holds at this step) — replay==live.

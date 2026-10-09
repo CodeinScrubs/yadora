@@ -699,7 +699,8 @@ def replay_unit(logs: List[dict], unit: dict, weights: Tuple[float, ...], tz, me
         stored = None if merged else stored_days(log)
         elapsed = counted if stored is None else stored
         r = m.retrievability(math.floor(elapsed), state.stability)
-        new = m.next_state(state, math.floor(elapsed), grade)
+        # Each review keeps the same-day rule of the policy it was scheduled under (YADORA-9: py-fsrs 6.3.2).
+        new = m.next_state(state, math.floor(elapsed), grade, ym.floors_same_day_hard(log.get("schedulerPolicyVersion", "")))
         out.append(dict(before=state, after=new, elapsed=elapsed, counted=counted, predicted=r, graded_before=graded,
                         first=False, exposure=False))
         state, last, graded = new, t, graded + 1
@@ -1518,7 +1519,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     issues_total = sum(i["consistency_issues"] for i in inv)
     summary["integrity"] = dict(checked=len(checked), mismatched=len(bad), consistency_issues=issues_total,
                                 merged_skipped=sum(1 for r in all_rows if r.merged))
-    rep.p(f"Replayed {len(checked)} FSRS-6 logs through tools/pilot/yadora_model.py (checked against py-fsrs 6.3.1): "
+    rep.p(f"Replayed {len(checked)} FSRS-6 logs through tools/pilot/yadora_model.py (checked against py-fsrs 6.3.2, and 6.3.1 for reviews stamped YADORA-8 or earlier): "
           f"elapsed days, predicted recall and the scheduled interval, fuzz included. "
           f"**{len(checked) - len(bad)} reproduced exactly, {len(bad)} did not.** "
           f"Export self-check issues: **{issues_total}**. "

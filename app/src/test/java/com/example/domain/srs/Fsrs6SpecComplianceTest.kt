@@ -55,10 +55,13 @@ class Fsrs6SpecComplianceTest {
             s / exp(w[17] * w[18]),
         )
 
-    /** FSRS-6 short-term adds the S^(-w19) term that FSRS-5 does not have. Good/Easy cannot shrink S. */
-    private fun specShortS(s: Double, g: Int): Double {
+    /**
+     * FSRS-6 short-term adds the S^(-w19) term that FSRS-5 does not have. Good/Easy cannot shrink S, and since py-fsrs
+     * 6.3.2 (POLICY YADORA-9) neither can Hard; [floorHard] false is 6.3.1, what older reviews replay.
+     */
+    private fun specShortS(s: Double, g: Int, floorHard: Boolean = true): Double {
         var inc = exp(w[17] * (g - 3 + w[18])) * s.pow(-w[19])
-        if (g == 3 || g == 4) inc = inc.coerceAtLeast(1.0)
+        if (g == 3 || g == 4 || (floorHard && g == 2)) inc = inc.coerceAtLeast(1.0)
         return s * inc
     }
 
@@ -128,11 +131,16 @@ class Fsrs6SpecComplianceTest {
 
         for (s in stabilities) for (d in difficulties) {
             for (g in Grade.entries) {
-                // Same-day branch.
+                // Same-day branch: py-fsrs 6.3.2 (live), and 6.3.1 (older reviews' replay).
                 assertEquals(
                     "short-term S'(S=$s, ${g.name})",
                     specShortS(s, g.value).coerceIn(0.01, p.maximumIntervalDays * 10),
                     Fsrs6.nextState(MemoryState(s, d), 0.0, g, p).stability, 1e-9,
+                )
+                assertEquals(
+                    "6.3.1 short-term S'(S=$s, ${g.name})",
+                    specShortS(s, g.value, floorHard = false).coerceIn(0.01, p.maximumIntervalDays * 10),
+                    Fsrs6.nextState(MemoryState(s, d), 0.0, g, p, floorSameDayHard = false).stability, 1e-9,
                 )
                 // Delayed branch.
                 for (t in listOf(1.0, 7.0, 45.0, 300.0, 1200.0)) {

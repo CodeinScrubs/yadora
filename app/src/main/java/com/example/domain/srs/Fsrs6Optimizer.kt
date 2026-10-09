@@ -107,7 +107,7 @@ object Fsrs6Optimizer {
         val defaults = Fsrs6Parameters(weights = Fsrs6Parameters.DEFAULT_WEIGHTS)
         fun nextInterval(h: History, p: Fsrs6Parameters): Double {
             var state = Fsrs6.initialState(Grade.entries.first { it.value == h.grades[0] }, p)
-            for (i in 1 until h.size) state = Fsrs6.nextState(state, h.elapsedDays[i], Grade.entries.first { it.value == h.grades[i] }, p)
+            for (i in 1 until h.size) state = Fsrs6.nextState(state, h.elapsedDays[i], Grade.entries.first { it.value == h.grades[i] }, p, h.floorHard[i])
             return Fsrs6.intervalDays(state.stability, retention, p).coerceIn(MedScheduler.MIN_INTERVAL_DAYS, MedScheduler.MAX_INTERVAL_DAYS)
         }
         return exp(histories.sumOf { ln(nextInterval(it, fitted) / nextInterval(it, defaults)) } / histories.size)
@@ -136,9 +136,16 @@ object Fsrs6Optimizer {
         val reviewedAt: LongArray,
         /** Saved log ids in the app; synthetic histories may use their monotone timestamps. Never elapsed time. */
         val validationOrder: LongArray = reviewedAt,
+        /**
+         * Per step, the same-day rule of the policy that produced the review (MedScheduler.floorsSameDayHard): true is
+         * py-fsrs 6.3.2, live since YADORA-9; false is 6.3.1, for a review stamped earlier. Every replay of a history,
+         * this one included, rebuilds the states the scheduler had.
+         */
+        val floorHard: BooleanArray = BooleanArray(grades.size) { true },
     ) {
         init {
             require(grades.isNotEmpty() && grades.size == elapsedDays.size && grades.size == reviewedAt.size)
+            require(floorHard.size == grades.size)
             require(grades.all { it in 1..4 })
             require(validationOrder.size == grades.size)
             require((1 until validationOrder.size).all { validationOrder[it] >= validationOrder[it - 1] }) {
@@ -153,19 +160,20 @@ object Fsrs6Optimizer {
 
         internal fun capped(maxSteps: Int): History =
             if (size <= maxSteps) this
-            else History(grades.copyOf(maxSteps), elapsedDays.copyOf(maxSteps), reviewedAt.copyOf(maxSteps), validationOrder.copyOf(maxSteps))
+            else History(grades.copyOf(maxSteps), elapsedDays.copyOf(maxSteps), reviewedAt.copyOf(maxSteps), validationOrder.copyOf(maxSteps), floorHard.copyOf(maxSteps))
 
         /** A prefix strictly before a validation boundary; wall time still determines the memory model's gaps. */
         internal fun before(order: Long): History? {
             val k = validationOrder.indexOfFirst { it >= order }.let { if (it < 0) size else it }
-            return if (k == 0) null else History(grades.copyOf(k), elapsedDays.copyOf(k), reviewedAt.copyOf(k), validationOrder.copyOf(k))
+            return if (k == 0) null else History(grades.copyOf(k), elapsedDays.copyOf(k), reviewedAt.copyOf(k), validationOrder.copyOf(k), floorHard.copyOf(k))
         }
     }
 
     /** A review log as the optimizer needs it, in saved order. */
     /** [storedElapsedDays]: the day count the review was scheduled with when a replay may reuse it (MedScheduler.storedModelDays). */
+    /** [policyVersion]: the policy the review was scheduled under, which decides its same-day rule ([History.floorHard]). */
     data class Event(val reviewedAt: Long, val memoryRating: String, val logType: String,
-        val storedElapsedDays: Double? = null, val validationOrder: Long = reviewedAt)
+        val storedElapsedDays: Double? = null, val validationOrder: Long = reviewedAt, val policyVersion: String = "")
 
     /**
      * A topic's history reconstructed EXACTLY as `MedReviewRepository.projectWithHistory` rebuilds its
@@ -179,6 +187,7 @@ object Fsrs6Optimizer {
         val deltas = ArrayList<Double>(events.size)
         val times = ArrayList<Long>(events.size)
         val order = ArrayList<Long>(events.size)
+        val floors = ArrayList<Boolean>(events.size)
         var prevTime = 0L
         for ((index, e) in events.withIndex()) {
             if (index > 0 && e.logType == "FIRST_STUDY") {
@@ -190,10 +199,11 @@ object Fsrs6Optimizer {
             grades.add(g)
             times.add(e.reviewedAt)
             order.add(e.validationOrder)
+            floors.add(MedScheduler.floorsSameDayHard(e.policyVersion.ifEmpty { MedScheduler.POLICY_VERSION }))
             prevTime = e.reviewedAt
         }
         if (grades.isEmpty()) return null
-        return History(grades.toIntArray(), deltas.toDoubleArray(), times.toLongArray(), order.toLongArray())
+        return History(grades.toIntArray(), deltas.toDoubleArray(), times.toLongArray(), order.toLongArray(), floors.toBooleanArray())
     }
 
     private fun gradeOf(rating: String): Int? = when (rating) {
@@ -271,14 +281,15 @@ object Fsrs6Optimizer {
 
         fun initialDifficulty(g: Int): Dual = clamp(p[4] - (p[5] * (g - 1).toDouble()).exp() + 1.0, 1.0, 10.0)
 
-        fun next(s: Dual, dd: Dual, t: Double, r: Dual, g: Int): Pair<Dual, Dual> {
+        /** One transition, with [floorHard] the review's same-day rule (py-fsrs 6.3.2 when true, 6.3.1 when false). */
+        fun next(s: Dual, dd: Dual, t: Double, r: Dual, g: Int, floorHard: Boolean = true): Pair<Dual, Dual> {
             val damped = dd + (p[6] * (-(g - 3).toDouble())) * (10.0 - dd) / 9.0
             val nextD = clamp(p[7] * rawEasyD0 + (1.0 - p[7]) * damped, 1.0, 10.0)
             val nextS = when {
                 t < 1.0 -> {
                     val sc = atLeast(s, Fsrs6.S_MIN)
                     var inc = (p[17] * (p[18] + (g - 3).toDouble())).exp() * sc.pow(-p[19])
-                    if (g >= 3) inc = atLeast(inc, 1.0)
+                    if (g >= 3 || (floorHard && g == 2)) inc = atLeast(inc, 1.0)
                     atLeast(sc * inc, Fsrs6.S_MIN)
                 }
                 g == 1 -> {
@@ -329,7 +340,7 @@ object Fsrs6Optimizer {
                     for (k in 0 until N) grad[k] += slope * r.d[k]
                     reviews++
                 }
-                val (ns, nd) = model.next(s, dd, t, r, h.grades[i])
+                val (ns, nd) = model.next(s, dd, t, r, h.grades[i], h.floorHard[i])
                 s = ns
                 dd = nd
             }
@@ -508,7 +519,7 @@ object Fsrs6Optimizer {
                     bins.add(binOf(t, i, lapses))
                 }
                 if (h.grades[i] == 1) lapses++
-                state = Fsrs6.nextState(state, t, grade, params)
+                state = Fsrs6.nextState(state, t, grade, params, h.floorHard[i])
             }
         }
         val p = predicted.toDoubleArray()

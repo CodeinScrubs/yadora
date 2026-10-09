@@ -2,7 +2,7 @@
 Yadora's memory model and scheduling rules, in plain Python (standard library only).
 
 This is an independent transcription of the Kotlin sources, for ANALYSIS: replaying exported histories,
-refitting weights, and simulating learners. It is checked against the same py-fsrs 6.3.1 golden vectors
+refitting weights, and simulating learners. It is checked against the same py-fsrs 6.3.2 and 6.3.1 golden vectors
 the app is checked against (test_yadora_model.py), so a disagreement between the two points at a bug in
 one of them, not at a matter of opinion.
 
@@ -23,9 +23,9 @@ DEFAULT_WEIGHTS: Tuple[float, ...] = (
     0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666,
     0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
 )
-DEFAULT_PARAMETER_SET_ID = "FSRS6-DEFAULT-21-PYFSRS-6.3.1"
+DEFAULT_PARAMETER_SET_ID = "FSRS6-DEFAULT-21-PYFSRS-6.3.2"
 
-# py-fsrs 6.3.1's parameter bounds (what the app's optimizer clamps to as well).
+# py-fsrs's parameter bounds, the same in 6.3.1 and 6.3.2 (what the app's optimizer clamps to as well).
 LOWER_BOUNDS = (0.001, 0.001, 0.001, 0.001, 1.0, 0.001, 0.001, 0.001, 0.0, 0.0,
                 0.001, 0.001, 0.001, 0.001, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.1)
 UPPER_BOUNDS = (100.0, 100.0, 100.0, 100.0, 10.0, 4.0, 4.0, 0.75, 4.5, 0.8,
@@ -38,13 +38,13 @@ D_MIN, D_MAX = 1.0, 10.0
 AGAIN, HARD, GOOD, EASY = 1, 2, 3, 4
 GRADE_OF = {"Forgot": AGAIN, "Hard": HARD, "Good": GOOD, "Easy": EASY}
 
-# MedScheduler policy constants (POLICY_VERSION YADORA-8).
+# MedScheduler policy constants (POLICY_VERSION YADORA-9).
 MIN_INTERVAL_DAYS = 1.0
 MAX_INTERVAL_DAYS = 365.0
 RELEARN_STEP_DAYS = 1.0
 FIRST_STUDY_MAX_DAYS = 5.0
 FUZZ_MIN_BASE_DAYS = 3.0
-POLICY_VERSION = "YADORA-8"
+POLICY_VERSION = "YADORA-9"
 REPAIR_BACKOFF_FACTOR = 2.0
 
 # RecallCalibration constants.
@@ -99,11 +99,13 @@ class Fsrs6:
         out = w[7] * self._raw_initial_difficulty(EASY) + (1.0 - w[7]) * damped
         return min(max(out, D_MIN), D_MAX)
 
-    def short_term_stability(self, s: float, grade: int) -> float:
+    def short_term_stability(self, s: float, grade: int, floor_hard: bool = True) -> float:
+        """py-fsrs 6.3.2 (the default, live since YADORA-9) floors the same-day multiplier at 1 for Hard, Good and
+        Easy; 6.3.1 (floor_hard=False, for a review stamped YADORA-8 or earlier) for Good and Easy only."""
         w = self.w
         s = max(s, S_MIN)
         inc = math.exp(w[17] * (grade - 3 + w[18])) * s ** (-w[19])
-        if grade in (GOOD, EASY):
+        if grade in (GOOD, EASY) or (floor_hard and grade == HARD):
             inc = max(inc, 1.0)
         return max(s * inc, S_MIN)
 
@@ -122,11 +124,11 @@ class Fsrs6:
         short_term = st.stability / math.exp(w[17] * w[18])
         return max(min(long_term, short_term), S_MIN)
 
-    def next_state(self, st: State, elapsed_days: float, grade: int) -> State:
+    def next_state(self, st: State, elapsed_days: float, grade: int, floor_hard: bool = True) -> State:
         r = self.retrievability(elapsed_days, st.stability)
         d = self.next_difficulty(st.difficulty, grade)
         if elapsed_days < 1.0:
-            s = self.short_term_stability(st.stability, grade)
+            s = self.short_term_stability(st.stability, grade, floor_hard)
         elif grade == AGAIN:
             s = self.lapse_stability(st, r)
         else:
@@ -135,6 +137,11 @@ class Fsrs6:
 
 
 # --- MedScheduler rules ---------------------------------------------------------------------------------
+
+def floors_same_day_hard(policy: str) -> bool:
+    """MedScheduler.floorsSameDayHard: YADORA-9 onward (and unstamped rows) follow py-fsrs 6.3.2's same-day Hard."""
+    return policy not in tuple(f"YADORA-{n}" for n in range(1, 9))
+
 
 def safe_scale(scale: float) -> float:
     return min(max(scale, CAL_MIN_SCALE), CAL_MAX_SCALE) if math.isfinite(scale) else 1.0

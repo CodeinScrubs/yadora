@@ -35,7 +35,7 @@ class RepairAfterFuzzTest {
             4.0, MedScheduler.repairDays(o, MemoryRating.Easy, final, "YADORA-7")!!, 0.0)
         assertEquals("current policy keeps the final-interval repair rule", 4.0,
             MedScheduler.repairDays(o, MemoryRating.Easy, final, MedScheduler.POLICY_VERSION)!!, 0.0)
-        assertEquals("the policy new reviews are stamped with", "YADORA-8", MedScheduler.POLICY_VERSION)
+        assertEquals("the policy new reviews are stamped with", "YADORA-9", MedScheduler.POLICY_VERSION)
         assertEquals("an unstamped row replays under the current policy", 4.0, MedScheduler.repairDays(o, MemoryRating.Easy, final, "")!!, 0.0)
     }
 
