@@ -1577,3 +1577,15 @@ run the suite — those invariants are load-bearing.
 
 - `DESIGN.md` — full product/design write-up and rationale.
 - `plans/` — advisor-generated implementation plans (if present).
+
+
+### Scheduling context is captured once per committed review (2026-10-09)
+
+`rateUnit` captures the effective retention and normalized calibration scale after topic projection and
+before its suspendable streak read. It passes them explicitly to `MedScheduler.review` and stores those
+same values in the review log and immutable REVIEW_FORECAST. Later settings/calibration refreshes
+cannot change this decision's context or leave metadata read from a different value than scheduling.
+No equation, policy version or database/export schema changes. `ReviewPolicySnapshotTest` changes the
+globals during the real DAO read and checks the decision, replay metadata and immutable forecast against
+the captured Important-topic retention/scale. It is a context-consistency regression, not a claim that a
+hardware/thread race has been observed in a real user's logs. Historical rows are not rewritten.

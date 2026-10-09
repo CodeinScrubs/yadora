@@ -900,6 +900,11 @@ class MedReviewRepository(
         // The first graded rating is always review #0 (seeded from the rating, capped by the first-study
         // window) however late it happens. Same rule as the replay path.
         val reviewNumber = MedScheduler.effectiveReviewNumber(unit.reviewCount)
+        // A settings/calibration refresh may arrive while the streak read suspends. Capture the
+        // scheduling context once, normalize it as the model does, and use these exact values in
+        // both the calculation and its immutable/replay log; never re-read mutable globals later.
+        val desiredRetention = MedScheduler.effectiveRetention(unit.highYield)
+        val calibration = com.example.domain.srs.RecallCalibration.safeScale(MedScheduler.calibrationScale)
 
         val outcome = MedScheduler.review(
             stability = unit.stability,
@@ -914,6 +919,8 @@ class MedReviewRepository(
             unrepairedStreak = unrepairedStreak(unit.id),
             // The set the projection just put this topic on, stated rather than re-read.
             parameterSetId = unit.parameterSetId,
+            desiredRetentionOverride = desiredRetention,
+            calibrationScaleOverride = calibration,
         )
 
         // Deterministic ±5% fuzz (seeded by unit + prior review count): the value the preview showed and
@@ -976,7 +983,7 @@ class MedReviewRepository(
             initialDifficulty = if (reviewNumber == 0) MedScheduler.difficultyLabelFor(memoryRating) else null,
             reviewDurationMs = reviewDurationMs,
             wasImportantAtReview = if (unit.highYield) 1 else 0,
-            desiredRetentionAtReview = MedScheduler.effectiveRetention(unit.highYield),
+            desiredRetentionAtReview = desiredRetention,
             schedulerVersion = MedScheduler.SCHEDULER_VERSION,
             // Which policy bundle and which understanding factor shaped this interval, so later policy
             // changes replay history faithfully. -1.0 = "not recorded": the fast Forgot path passes Partial
@@ -985,7 +992,7 @@ class MedReviewRepository(
             understandingFactorAtReview =
                 if (understandingAsked) MedScheduler.understandingFactor(understandingRating) else -1.0,
             // The per-user interval correction this review was scheduled with.
-            calibrationScaleAtReview = MedScheduler.calibrationScale,
+            calibrationScaleAtReview = calibration,
             // Not scored since the key-point rating cap was retired.
             keyPointsTotal = -1,
             keyPointsRecalled = -1,
