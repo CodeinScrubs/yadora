@@ -343,6 +343,9 @@ class MedReviewRepository(
      * attempt saw or a month since it. The fit is judged against the set in use on the learner's own
      * later reviews ([com.example.domain.srs.Fsrs6Optimizer.fitAndValidate]); the attempt is recorded
      * either way, and an accepted set becomes ACTIVE in the same transaction that retires the old one.
+     * At a due attempt the active set is also rechecked against the same bounds/grade/lengthening
+     * conditions; a failing baseline is retired even if the candidate is rejected. The lengthening
+     * ceiling is a geometric mean against published defaults, not a per-topic or exam guarantee.
      * Writes the database only — the scheduler switches at the next [refreshMemoryModel]. Returns the
      * attempt's report, or null when none was due.
      */
@@ -385,10 +388,25 @@ class MedReviewRepository(
 
         val activeWeights = activeRow?.let { com.example.domain.srs.Fsrs6Optimizer.decode(it.weights) }
         val current = activeWeights ?: com.example.domain.srs.Fsrs6Parameters.DEFAULT_WEIGHTS
+        // Adoption's conservative ceiling is checked on the learner's history at that attempt.
+        // As the library/evidence changes, the same active weights can cross it. Rejecting a new
+        // candidate must not silently retain that unsafe baseline. This check uses the SAME history
+        // and retention snapshot as the fit; no retirement is committed until its identity is rechecked.
+        val activeLengthening = activeWeights?.let {
+            com.example.domain.srs.Fsrs6Optimizer.lengthening(histories, it, retention)
+        }
+        val activeFailure = when {
+            activeRow == null -> null
+            activeWeights == null -> "invalid weights"
+            !com.example.domain.srs.Fsrs6Optimizer.keepsGradeOrder(activeWeights) -> "grade order"
+            activeLengthening == null || !activeLengthening.isFinite() -> "non-finite lengthening"
+            activeLengthening > 1.0 -> "lengthening"
+            else -> null
+        }
         val report = com.example.domain.srs.Fsrs6Optimizer.fitAndValidate(
             histories, current, retention = retention,
         )
-        if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return report
+        if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA && activeFailure == null) return report
 
         val weights = report.weights
         val accepted = report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.ACCEPTED && weights != null
@@ -409,7 +427,18 @@ class MedReviewRepository(
                 )
                 return@withTransaction
             }
-            if (accepted) dao.retireActive(now)
+            if (accepted || activeFailure != null) dao.retireActive(now)
+            if (activeFailure != null) {
+                database.eventLogDao().insert(
+                    com.example.data.local.entity.EventLogEntity(
+                        type = "PERSONAL_MODEL_RETIRED",
+                        detail = "set=${activeRow?.id} reason=$activeFailure retention=$retention evidence=$available" +
+                            (if (activeLengthening == null) "" else " lengthening=$activeLengthening"),
+                    )
+                )
+            }
+            // Rechecking the active set does not turn insufficient training data into a fit attempt.
+            if (report.verdict == com.example.domain.srs.Fsrs6Optimizer.Verdict.NOT_ENOUGH_DATA) return@withTransaction
             dao.insert(
                 com.example.data.local.entity.MemoryParameterSetEntity(
                     createdAt = now,

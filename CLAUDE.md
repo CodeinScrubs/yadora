@@ -1576,3 +1576,18 @@ run the suite — those invariants are load-bearing.
 
 - `DESIGN.md` — full product/design write-up and rationale.
 - `plans/` — advisor-generated implementation plans (if present).
+
+
+### Revalidate the active personal model at a due refit (2026-10-09)
+
+At each due/forced personal refit, the active set is tested against the same conservative guard as a
+candidate: valid weights, ordered initial grades and geometric mean interval lengthening <= 1 against
+the published defaults on the captured histories at the actual retention target. A rejected replacement
+no longer leaves a baseline that fails this guard ACTIVE. Retirement and its `PERSONAL_MODEL_RETIRED`
+event occur only after the full fit identity and enabled switch are rechecked in the commit transaction
+(PR #24); stale fits cannot retire a current model. Retired weights remain available for historical
+replay, existing topic dates are not rewritten, and the scheduler refreshes at the next session.
+This is checked at a due refit, not continuously or on every app launch; it is an average model ceiling,
+not a promise that each topic's interval is shorter or that exam scores improve. The default ceiling is
+intentionally distinct from the previously calibrated intervals. `ActiveModelSafetyTest` reproduces the
+rejected-candidate gap with real Room and tests safe baselines and discard paths.
