@@ -13,7 +13,6 @@ import com.example.domain.srs.MedScheduler
 import com.example.domain.srs.MemoryState
 import com.example.ui.today.DayBounds
 import kotlinx.coroutines.runBlocking
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -269,19 +268,21 @@ class TwoYearSoakTest {
         }
 
         // The export: zero self-check issues, written for tools/pilot/analyze.py to replay in CI.
-        val json = JSONObject(AnalyticsExporter.buildJson(app))
-        assertEquals("export self-check: " + json.getJSONObject("consistency"), 0,
-            json.getJSONObject("consistency").getInt("issueCount"))
-        java.io.File(System.getProperty("user.dir"), "build/soak/export.json").apply {
+        val export = java.io.File(System.getProperty("user.dir"), "build/soak/export.json").apply {
             parentFile!!.mkdirs()
-            writeText(json.toString())
+            outputStream().use { AnalyticsExporter.writeJson(app, it) }
         }
+        SoakJsonFiles.assertConsistentExport(export)
 
-        // A backup restores to exactly the same data.
-        val backup = BackupManager.buildBackupJson(app)
-        assertEquals(order.size, BackupManager.restoreFromJson(app, backup))
-        fun comparable(s: String) = JSONObject(s).apply { remove("exportedAt") }.toString()
-        assertEquals("backup -> restore -> backup is the identity", comparable(backup), comparable(BackupManager.buildBackupJson(app)))
+        // Exercise the same streaming backup/restore paths the Settings screen uses, preserving every row.
+        val backup = java.io.File(export.parentFile, "backup.json").apply {
+            outputStream().use { BackupManager.writeBackup(app, it) }
+        }
+        assertEquals(order.size, backup.inputStream().use { BackupManager.restoreFromStream(app, it) })
+        val after = java.io.File(export.parentFile, "restored-backup.json").apply {
+            outputStream().use { BackupManager.writeBackup(app, it) }
+        }
+        SoakJsonFiles.assertSameBackup(backup, after)
 
         // Replay == live: rebuilding every topic's schedule from its own history reproduces the row.
         for (id in order) {

@@ -765,10 +765,11 @@ object MedScheduler {
      * when it happens, which is the live rule. A REPLAY no longer counts again in today's zone: it reads back the count
      * each review was scheduled with ([storedModelDays], since 2026-10-04).
      */
-    fun modelElapsedDays(fromMillis: Long, toMillis: Long, model: MemoryModel): Double = when (model) {
+    fun modelElapsedDays(fromMillis: Long, toMillis: Long, model: MemoryModel, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): Double = when (model) {
         MemoryModel.FSRS_5 -> ((toMillis - fromMillis) / 86400000.0).coerceAtLeast(0.0)
         MemoryModel.FSRS_6 -> java.time.temporal.ChronoUnit.DAYS
-            .between(localDate(fromMillis), localDate(toMillis))
+            .between(java.time.Instant.ofEpochMilli(fromMillis).atZone(zone).toLocalDate(),
+                java.time.Instant.ofEpochMilli(toMillis).atZone(zone).toLocalDate())
             .coerceAtLeast(0L).toDouble()
     }
 

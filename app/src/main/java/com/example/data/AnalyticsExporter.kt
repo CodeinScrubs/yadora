@@ -30,8 +30,9 @@ object AnalyticsExporter {
         put("purpose", "One learner's Yadora history for analysing and tuning the scheduler. Yadora schedules WHEN to review a " +
             "topic; the review itself is done by any method, mostly outside the app. No topic titles, notes, prompts or key points.")
         put("times", "Epoch milliseconds (UTC). Local dates need environment.timeZoneId. Day counts on FSRS-6 logs are whole LOCAL calendar days.")
-        put("recallOutcome", "reviewLogs with logType RECALL: memoryRating Forgot = failure, Hard/Good/Easy = success. It is the " +
-            "learner's own answer to 'How much did you still remember?' (before rereading), asked after the review.")
+        put("recallOutcome", "reviewLogs with logType RECALL: memoryRating is the learner's subjective POST-STUDY judgment, " +
+            "mixing remembered material, current mastery and topic difficulty. Forgot = 0 and Hard/Good/Easy = 1 are " +
+            "diagnostic proxies only: no separate pre-study recall test, item-correctness measurement or exam outcome is implied.")
         put("firstStudy", "logType FIRST_STUDY: the rating given right after first studying the topic. memoryRating Easy/Good/Hard " +
             "there means topic difficulty Easy/Medium/Hard (initialDifficulty), NOT a recall. The schedule counts from this moment. " +
             "A later FIRST_STUDY row on the same topic (only after a merge) is a re-exposure, never a recall.")
@@ -74,6 +75,14 @@ object AnalyticsExporter {
             "recomputed (an event without upto: the later logs reviewed before it).")
         put("reviewDurationMs", "How long the review screen showed the topic before the rating, capped at 30 minutes. NOT " +
             "the time the review took: a review is done by any method, mostly outside the app (a question bank, a book).")
+        put("reviewForecast", "REVIEW_FORECAST events (v=1) are immutable snapshots saved atomically with a review: log=<id> joins " +
+            "to reviewLogs even after a merge. p is the raw prediction from pre-review stability/difficulty, elapsed is the " +
+            "day count actually used in zone, model/set/policy identify the computation, memory/understanding are the " +
+            "original subjective post-study answers. A correction or replay does not rewrite this event; Undo removes it. " +
+            "memoryDue/repairDue/effectiveDue/deferredUntil are the stored dates before the review; dueContext classifies " +
+            "availability by the end of that local day (not the user's motive). FIRST_STUDY is not delayed-recall evidence. " +
+            "Older reviews have no forecast event: do not backfill one from a later replay. These self-ratings are a proxy, " +
+            "not objectively measured recall or proof of an educational benefit. tools/pilot/forecast_audit.py reads them.")
         put("dailySnapshot", "DAILY_SNAPSHOT: at most one per local day, written when the app first opens that day or by the " +
             "6-hourly safety worker, whichever comes first (its time says which part of the day; a day without one is a day " +
             "the phone ran neither). Counts only, no content. detail: active (topics not archived or deleted), rated (with a " +

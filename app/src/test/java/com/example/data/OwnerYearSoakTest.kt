@@ -17,7 +17,6 @@ import com.example.ui.today.DayBounds
 import com.example.ui.today.OverdueRedistributor
 import com.example.ui.today.TodayBuckets
 import kotlinx.coroutines.runBlocking
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -183,10 +182,15 @@ class OwnerYearSoakTest {
 
             // The phone is replaced in the middle of the year: everything moves through a backup.
             if (d == days / 2) {
-                val before = BackupManager.buildBackupJson(app)
-                assertEquals(order.size, BackupManager.restoreFromJson(app, before))
-                fun comparable(s: String) = JSONObject(s).apply { remove("exportedAt") }.toString()
-                assertEquals("mid-year backup -> restore -> backup is the identity", comparable(before), comparable(BackupManager.buildBackupJson(app)))
+                val before = java.io.File(System.getProperty("user.dir"), "build/owner-soak/mid-year-backup.json").apply {
+                    parentFile!!.mkdirs()
+                    outputStream().use { BackupManager.writeBackup(app, it) }
+                }
+                assertEquals(order.size, before.inputStream().use { BackupManager.restoreFromStream(app, it) })
+                val after = java.io.File(before.parentFile, "mid-year-restored.json").apply {
+                    outputStream().use { BackupManager.writeBackup(app, it) }
+                }
+                SoakJsonFiles.assertSameBackup(before, after)
                 count("phoneChanges")
             }
 
@@ -385,9 +389,12 @@ class OwnerYearSoakTest {
 
         // What a year of this costs the phone's code paths (desktop JVM; a phone is several times slower).
         val tPlan = System.nanoTime(); repo.todayPlan(dailyLimit, atLocal(last, 20)); val planMs = ms(tPlan)
-        val tExport = System.nanoTime(); val json = JSONObject(AnalyticsExporter.buildJson(app)); val exportMs = ms(tExport)
-        val tBackup = System.nanoTime(); val backup = BackupManager.buildBackupJson(app); val backupMs = ms(tBackup)
-        val tRestore = System.nanoTime(); assertEquals(order.size, BackupManager.restoreFromJson(app, backup)); val restoreMs = ms(tRestore)
+        val exportDir = java.io.File(System.getProperty("user.dir"), "build/owner-soak").apply { mkdirs() }
+        val export = java.io.File(exportDir, "export.json")
+        val tExport = System.nanoTime(); export.outputStream().use { AnalyticsExporter.writeJson(app, it) }; val exportMs = ms(tExport)
+        val backup = java.io.File(exportDir, "yadora_owner_year_backup.json")
+        val tBackup = System.nanoTime(); backup.outputStream().use { BackupManager.writeBackup(app, it) }; val backupMs = ms(tBackup)
+        val tRestore = System.nanoTime(); assertEquals(order.size, backup.inputStream().use { BackupManager.restoreFromStream(app, it) }); val restoreMs = ms(tRestore)
         val tAhead = System.nanoTime(); repo.reviewAheadQueue(atLocal(last, 22)); val aheadMs = ms(tAhead)
 
         println("OWNER YEAR: ${order.size} topics, $totalReviews reviews (busiest day $maxDayReviews), events $counts")
@@ -395,7 +402,7 @@ class OwnerYearSoakTest {
         println("OWNER YEAR: topics at 90%+ ${"%.4f".format(at90)}, weakest tenth ${"%.4f".format(weakestTenth)}")
         println("OWNER YEAR: review time Yadora ${"%.1f".format(yadoraSpent)}, random twin ${"%.1f".format(randomSpent)}, oldest-first twin ${"%.1f".format(oldestSpent)}")
         println("OWNER YEAR: backlog left at night on $backlogDays days (largest $maxBacklog); on exam day ${overdueAtExam.size} topics overdue, the oldest by $worstOverdueDays days")
-        println("OWNER YEAR: plan ${planMs} ms, review-ahead queue ${aheadMs} ms, export ${exportMs} ms (${json.toString().length / 1024} KB), backup ${backupMs} ms (${backup.length / 1024} KB), restore ${restoreMs} ms, refits ${refitMillis} ms")
+        println("OWNER YEAR: plan ${planMs} ms, review-ahead queue ${aheadMs} ms, export ${exportMs} ms (${export.length() / 1024} KB), backup ${backupMs} ms (${backup.length() / 1024} KB), restore ${restoreMs} ms, refits ${refitMillis} ms")
 
         // Equal time, measured: each twin spent what Yadora spent, to within its last day's overspend.
         for ((name, spent) in listOf("random" to randomSpent, "oldest-first" to oldestSpent)) {
@@ -407,17 +414,14 @@ class OwnerYearSoakTest {
         assertTrue("and the disciplined oldest-first twin ($oldestMean)", yadoraMean > oldestMean)
 
         // The export: zero self-check issues, written for tools/pilot/analyze.py to replay.
-        assertEquals("export self-check: " + json.getJSONObject("consistency"), 0, json.getJSONObject("consistency").getInt("issueCount"))
-        java.io.File(System.getProperty("user.dir"), "build/owner-soak/export.json").apply {
-            parentFile!!.mkdirs()
-            writeText(json.toString())
-        }
+        SoakJsonFiles.assertConsistentExport(export)
 
         // A backup restores to exactly the same data. The file is kept too: a year-sized library to restore on a phone or
         // an emulator (Settings -> Import backup), where only a device shows how long a restore of this size takes.
-        fun comparable(s: String) = JSONObject(s).apply { remove("exportedAt") }.toString()
-        assertEquals("backup -> restore -> backup is the identity", comparable(backup), comparable(BackupManager.buildBackupJson(app)))
-        java.io.File(System.getProperty("user.dir"), "build/owner-soak/yadora_owner_year_backup.json").writeText(backup)
+        val restored = java.io.File(exportDir, "restored-backup.json").apply {
+            outputStream().use { BackupManager.writeBackup(app, it) }
+        }
+        SoakJsonFiles.assertSameBackup(backup, restored)
 
         // Replay == live: rebuilding every topic's schedule from its own history reproduces the row.
         for (id in order) {

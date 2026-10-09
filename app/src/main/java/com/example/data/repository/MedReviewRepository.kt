@@ -894,7 +894,8 @@ class MedReviewRepository(
         // offered by today's queue is credited with the day the learner actually waited rather than the
         // clock difference from whatever hour they last reviewed at. Clamped at 0: a future-dated topic
         // reviewed early would otherwise log negative elapsed days.
-        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL)
+        val reviewZone = java.time.ZoneId.systemDefault()
+        val elapsedDays = MedScheduler.modelElapsedDays(unit.lastReviewedAt ?: unit.studiedAt, now, MedScheduler.CURRENT_MODEL, reviewZone)
 
         // The first graded rating is always review #0 (seeded from the rating, capped by the first-study
         // window) however late it happens. Same rule as the replay path.
@@ -996,7 +997,7 @@ class MedReviewRepository(
             questionsTotal = score.second,
             sessionKind = sessionKind.name,
         )
-        val logId = commitReview(updatedUnit, log)
+        val logId = commitReview(updatedUnit, log, com.example.data.ReviewForecast.detail(unit, log, reviewZone))
         return RatedReview(
             before = loaded, after = updatedUnit, logId = logId, reviewNumber = reviewNumber,
             memoryIntervalDays = nextInterval, effectiveDueAt = effectiveDueAt,
@@ -1009,11 +1010,19 @@ class MedReviewRepository(
      * Persist a review atomically: the unit's schedule, its log, AND its growth event land in one
      * transaction (keyed by the log id, so undo can remove exactly this event). Returns the log id.
      */
-    suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity): Long {
+    suspend fun commitReview(updatedUnit: StudyUnitEntity, log: ReviewLogEntity, forecastDetail: String? = null): Long {
         var logId = 0L
         database.withTransaction {
             studyUnitDao.updateUnit(updatedUnit)
             logId = reviewLogDao.insertLog(log)
+            // Prospective evidence must land with the review or not at all. Never backfill from a replay:
+            // today's reconstructed state is not the prediction made at that historic review.
+            if (forecastDetail != null) database.eventLogDao().insert(
+                com.example.data.local.entity.EventLogEntity(
+                    at = log.reviewedAt, type = com.example.data.ReviewForecast.EVENT,
+                    unitId = updatedUnit.id, detail = "log=$logId $forecastDetail",
+                )
+            )
             database.eventLogDao().insert(
                 com.example.data.local.entity.EventLogEntity(
                     type = "STUDY_ACTION", unitId = updatedUnit.id, detail = logId.toString()
@@ -1043,6 +1052,7 @@ class MedReviewRepository(
             studyUnitDao.updateUnit(withSchedulingOf(current, previousUnit))
             reviewLogDao.deleteLogById(review.logId)
             database.eventLogDao().deleteStudyActionForLog(review.logId.toString())
+            database.eventLogDao().deleteReviewForecastForLog("log=${review.logId} %")
             true
     }
 
