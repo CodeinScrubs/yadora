@@ -802,8 +802,15 @@ class MedReviewRepository(
     suspend fun reviewAheadQueue(
         now: Long = System.currentTimeMillis(),
         limit: Int = com.example.ui.today.ReviewAhead.SESSION_SIZE,
+    ): List<StudyUnitEntity> = reviewAheadOf(studyUnitDao.getAllActiveOnce(), now, limit)
+
+    /** [reviewAheadQueue] over topics already in hand: Today's "next up" list reads the library it already watches. */
+    fun reviewAheadOf(
+        active: List<StudyUnitEntity>,
+        now: Long,
+        limit: Int = com.example.ui.today.ReviewAhead.SESSION_SIZE,
     ): List<StudyUnitEntity> = com.example.ui.today.ReviewAhead.order(
-        active = studyUnitDao.getAllActiveOnce(),
+        active = active,
         now = now,
         recall = { u ->
             runCatching {

@@ -6,16 +6,14 @@ import com.example.data.local.entity.REVIEW_HISTORY_ORDER
 import com.example.data.local.entity.StudyUnitEntity
 import com.example.domain.model.MemoryRating
 import com.example.domain.model.SessionKind
+import com.example.domain.model.StudyMinutes
 import com.example.domain.model.UnderstandingRating
 import com.example.domain.srs.Fsrs6
 import com.example.domain.srs.Fsrs6Parameters
 import com.example.domain.srs.Grade
 import com.example.domain.srs.MedScheduler
 import com.example.domain.srs.MemoryState
-import com.example.ui.today.DailyPlan
 import com.example.ui.today.DayBounds
-import com.example.ui.today.OverdueRedistributor
-import com.example.ui.today.TodayBuckets
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,11 +34,14 @@ import java.time.ZoneId
  * the irregular one, which is where a scheduler's edges are:
  * - 10% of days nothing at all, 15% light days (a couple of new topics, 40% of the plan), the rest normal days with
  *   0 to 10 new topics, rated at once ("Save and rate now");
- * - the evening plan at the default daily limit, a "Not today" now and then, "Review more anyway" when the limit held
- *   reviews back, "Spread out" when the backlog is bigger than a day (through [OverdueRedistributor.deferrals], the
- *   Today screen's own function);
+ * - in the evening, today's share at the default daily limit (each topic picked and rated on its own: Today has no
+ *   sessions since 2026-10-09), a "Not today" now and then, and topics from below the share's line when the limit held
+ *   reviews back and there is still energy. "Spread out" is gone from the app (the owner's decision, 2026-10-09), so a
+ *   backlog simply stays listed, most urgent first;
+ * - every rating as the redesigned screen asks for it: understanding after Forgot too, and the learner's rough minutes
+ *   on about half the reviews;
  * - reviews the learner chooses: a topic not due, and now and then one already reviewed today (the same-day branch);
- * - Review ahead on spare evenings, and as a final push in the last month;
+ * - the "Next up, weakest first" list on spare evenings, and as a final push in the last month;
  * - an occasional rating correction, a phone change in the middle of the year (backup, restore), and the personal
  *   model's refit every few weeks, exactly as the daily worker calls it.
  *
@@ -206,11 +207,17 @@ class OwnerYearSoakTest {
                 val sameDay = mem.lastDay == d
                 val recalled = rnd.nextDouble() < mem.r(d)
                 val grade = if (recalled) successGrade(rnd) else Grade.Again
-                val understanding = if (recalled && rnd.nextDouble() < 0.15) UnderstandingRating.Partial else UnderstandingRating.Clear
+                // Understanding is asked after Forgot too (2026-10-09): after rereading, a forgotten topic is often clear
+                // again, or partly so. It never moves Forgot's date, which is tomorrow either way.
+                val understanding = rnd.nextDouble().let { u ->
+                    if (recalled) (if (u < 0.15) UnderstandingRating.Partial else UnderstandingRating.Clear)
+                    else when { u < 0.15 -> UnderstandingRating.Confused; u < 0.50 -> UnderstandingRating.Partial; else -> UnderstandingRating.Clear }
+                }
+                // The learner's rough minutes, on about half the reviews (optional and often skipped).
+                val minutes = if (rnd.nextDouble() < 0.5) StudyMinutes.CHOICES[rnd.nextInt(StudyMinutes.CHOICES.size)] else StudyMinutes.NOT_GIVEN
                 repo.rateUnit(
-                    unitId = unit.id, now = at, memoryRating = ratingOf(grade),
-                    understandingRating = if (recalled) understanding else UnderstandingRating.Partial,
-                    understandingAsked = recalled, sessionKind = sessionKind, reviewDurationMs = 120_000,
+                    unitId = unit.id, now = at, memoryRating = ratingOf(grade), understandingRating = understanding,
+                    understandingAsked = true, sessionKind = sessionKind, reviewDurationMs = 120_000, studyMinutes = minutes,
                 )!!
                 mem.update(d, grade)
                 if (sameDay) count("reviews.sameDay")
@@ -248,32 +255,7 @@ class OwnerYearSoakTest {
                 count("topics.new")
             }
 
-            // "Spread out", when the backlog is bigger than one day's limit: the Today screen's own plan.
-            if (kind == DayKind.NORMAL) {
-                val now = atLocal(d, 19)
-                val start = DayBounds.startOf(now)
-                val end = DayBounds.endOf(now)
-                val active = unitDao.getAllActiveOnce()
-                val overdue = active.filter { TodayBuckets.isOverdue(it.nextReviewAt, start) }
-                val backlog = OverdueRedistributor.spreadable(overdue).size
-                if (OverdueRedistributor.offersRecovery(backlog, dailyLimit) && rnd.nextDouble() < 0.5) {
-                    val updated = OverdueRedistributor.deferrals(
-                        overdue = overdue,
-                        dueTodayReviews = active.count { TodayBuckets.isDueToday(it.nextReviewAt, start, end) && !DailyPlan.isFirstRating(it) },
-                        doneToday = logDao.countReviewsBetween(start, end),
-                        dailyCapacity = dailyLimit,
-                        now = now,
-                    )
-                    if (updated.isNotEmpty()) {
-                        repo.updateUnitsAtomic(updated)
-                        repo.logEvent("REDISTRIBUTE", detail = updated.size.toString())
-                        count("spreadOut")
-                        count("spreadOut.topics", updated.size)
-                    }
-                }
-            }
-
-            // The evening session, opened exactly as the review screen opens it.
+            // The evening: today's share, with the model and calibration refreshed as the review screen does before a rating.
             val evening = atLocal(d, if (kind == DayKind.LIGHT) 22 else 20)
             repo.refreshMemoryModel()
             MedScheduler.calibrationScale = repo.recallCalibrationScale()
@@ -291,7 +273,7 @@ class OwnerYearSoakTest {
                 review(unit, evening + i * 60_000L, SessionKind.PLAN)
             }
 
-            // "Review more anyway" when the limit held reviews back and there is still energy.
+            // Below the line of today's share, when the limit held reviews back and there is still energy.
             if (kind == DayKind.NORMAL && plan.heldBack > 0 && rnd.nextDouble() < 0.35) {
                 val at = atLocal(d, 21, 0)
                 val more = repo.todayPlan(dailyLimit, at, ignoreLimit = true)
@@ -313,7 +295,7 @@ class OwnerYearSoakTest {
                 }
             }
 
-            // Review ahead: on a spare evening, and as a final push in the last month.
+            // "Next up, weakest first": on a spare evening, and as a final push in the last month.
             val pushing = d >= pushFrom
             if (pushing || (kind == DayKind.NORMAL && rnd.nextDouble() < 0.3)) {
                 val target = if (pushing) pushExtra else rnd.nextInt(5, 21)

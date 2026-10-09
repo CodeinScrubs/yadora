@@ -81,9 +81,9 @@ event. Elapsed time at the eventual review is still measured from `lastReviewedA
 retention as the date approached and force a final review ~1–2 days before.
 
 *As built:* the exam date is decorative by decision (CLAUDE.md); it drives the countdown and nothing else.
-Exam preparation is the learner's choice, not the schedule's: keep the retention target at 0.90 and, in
-the final four weeks, use **Review ahead** on Today (rated topics not yet due, weakest predicted recall
-first). Raising the target months ahead was the earlier advice; the two-year simulation
+Exam preparation is the learner's choice, not the schedule's: keep the retention target at 0.90 and, with
+spare time, above all in the final four weeks, work down Today's **Next up · weakest first** list (rated topics
+not yet due, weakest predicted recall first; until 2026-10-09 a "Review ahead" session). Raising the target months ahead was the earlier advice; the two-year simulation
 (`tools/pilot/residency.py`, `docs/RESEARCH.md` §2.5) found it costs more reviews and does less, and for a
 fast forgetter or a heavy load it overflows the daily limit. The identical-twins simulation (`docs/RESEARCH.md` §2.1) shows why the latter matters: it is the
 one case where a learner without a schedule can win, by saving time for a final push, and a Yadora learner
@@ -135,6 +135,12 @@ Permissions to add: `SCHEDULE_EXACT_ALARM` (fallback path), `RECEIVE_BOOT_COMPLE
 ---
 
 ## 5. UX — Today screen & information architecture
+
+*As built since 2026-10-09 (the owner's decision; CLAUDE.md, "The owner's redesign"):* Today has NO session
+button. The learner picks each topic, studies it outside the app and rates it. Today is one list: the due topics in
+the queue's urgency order, a line after today's share (first ratings plus the most urgent reviews up to the daily
+limit), every other due topic below it, and "Next up · weakest first" (topics not yet due) under that. "Spread out"
+is gone. The original plan below is kept for its reasoning.
 
 **Governing rule:** ONE primary action visible without scrolling; everything else is progressive disclosure.
 

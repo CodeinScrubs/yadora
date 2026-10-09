@@ -47,10 +47,12 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
         route.contains("Today") || route.contains("Library") || route.contains("Progress")
     } ?: true
 
-    // Deep-link from a "Review now" notification/alarm straight into the review session.
+    // A "Review now" notification/alarm opens Today, where the learner picks a topic: there is no session to start
+    // (the owner's decision, 2026-10-09). It used to open today's plan as a session.
     androidx.compose.runtime.LaunchedEffect(openReviewSignal) {
         if (openReviewSignal > 0) {
-            navController.navigate(Screen.ReviewSession(-1L)) {
+            navController.navigate(Screen.Today) {
+                popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
                 launchSingleTop = true
             }
         }
@@ -118,8 +120,8 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     repository = repository,
                     onNavigateToAdd = { navController.navigate(Screen.AddUnit) { launchSingleTop = true } },
                     onNavigateToReview = { unitId -> navController.navigate(Screen.ReviewSession(unitId)) { launchSingleTop = true } },
-                    onReviewMoreAnyway = { navController.navigate(Screen.ReviewSession(-1L, ignoreLimit = true)) { launchSingleTop = true } },
-                    onReviewAhead = { navController.navigate(Screen.ReviewSession(-1L, ahead = true)) { launchSingleTop = true } },
+                    // One topic from Today's list, with where it was (PLAN / EXTRA / AHEAD), for the logs.
+                    onReviewFromToday = { unitId, kind -> navController.navigate(Screen.ReviewSession(unitId, kind = kind)) { launchSingleTop = true } },
                     onNavigateToEdit = { unitId -> navController.navigate(Screen.EditUnit(unitId)) { launchSingleTop = true } },
                     onNavigateToSettings = { navController.navigate(Screen.Settings) { launchSingleTop = true } }
                 )
@@ -182,6 +184,7 @@ fun MedReviewApp(repository: MedReviewRepository, onLanguageChange: (String) -> 
                     unitId = reviewSession.unitId,
                     ignoreLimit = reviewSession.ignoreLimit,
                     ahead = reviewSession.ahead,
+                    kind = reviewSession.kind,
                     onNavigateToEdit = { id -> navController.navigate(Screen.EditUnit(id, fromReview = true)) { launchSingleTop = true } },
                     onFinish = { navController.popBackStack() }
                 )

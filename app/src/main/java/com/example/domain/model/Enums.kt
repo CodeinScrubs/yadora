@@ -52,15 +52,18 @@ enum class ReviewMethod {
     }
 }
 
-/** Which kind of review session produced a log. Research data: an early review is a different measurement. */
+/**
+ * Which kind of review produced a log. Research data: an early review is a different measurement. Since 2026-10-09 Today
+ * has no sessions (the owner picks each topic), and a topic tapped in Today's list keeps where it was in it.
+ */
 enum class SessionKind {
-    /** Today's plan (due topics within the daily limit, first ratings first). */
+    /** Today's share: due topics within the daily limit, first ratings first (until 2026-10-09: today's plan session). */
     PLAN,
-    /** "Review more anyway": due topics past the daily limit. */
+    /** Due topics below the line of today's share (until 2026-10-09: "Review more anyway"). */
     EXTRA,
-    /** One topic opened on purpose: a Today card, the Library's review-now, or "Save and rate now". */
+    /** One topic opened anywhere but Today's list: the Library's review-now, "Save and rate now", a related-topic match. */
     TOPIC,
-    /** "Review ahead": topics not yet due, weakest predicted recall first. */
+    /** "Next up, weakest first": topics not yet due, weakest predicted recall first (until 2026-10-09: "Review ahead"). */
     AHEAD,
 }
 

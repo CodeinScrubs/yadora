@@ -56,8 +56,10 @@ object AnalyticsExporter {
             "Confused); tools/pilot/analyze.py reconstructs the date that actually applied.")
         put("reviewMethods", "Optional, several allowed: Questions (question bank, past papers, flashcards), Reading, Lecture, Other. " +
             "Empty = not said. questionsCorrect/questionsTotal: optional score for that review, -1 = not recorded.")
-        put("sessionKind", "PLAN = today's plan within the daily limit, EXTRA = 'review more anyway', TOPIC = one topic opened on purpose, " +
-            "AHEAD = 'review ahead' (not yet due, weakest first). Null = logged before v12.")
+        put("sessionKind", "PLAN = today's share within the daily limit, EXTRA = due below its line ('review more anyway' before " +
+            "2026-10-09), TOPIC = one topic opened elsewhere (the Library, 'Save and rate now'), AHEAD = 'next up, weakest first' " +
+            "(not yet due; the 'review ahead' session before 2026-10-09). Since 2026-10-09 Today has no sessions: each topic is " +
+            "picked and opened on its own, and keeps where it was in Today's list. Null = logged before v12.")
         put("understandingRating", "'How well do you understand it now?' Confused / Partial / Clear. NotAsked: after Forgot, " +
             "which skipped the question until 2026-10-09; it is asked after Forgot too since then (the date stays tomorrow).")
         put("studyMinutes", "The learner's rough estimate of how long this review or first study took, from quick choices " +

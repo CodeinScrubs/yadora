@@ -190,7 +190,7 @@ the run, so regenerate it the day you use it (`--tests "com.example.data.DeviceS
   high-yield retention, first-study window, interval fuzz, queue priority score),
   `Fsrs6Optimizer.kt` (fits and judges the personal weight set) and `KeyPoints.kt`
   (reference text only). This is the tested core — keep it pure and covered.
-- `ui/today/QueuePlanning.kt` — pure `DailyPlan` (what today's session offers), `DayBounds`,
+- `ui/today/QueuePlanning.kt` — pure `DailyPlan` (today's share: what the top of Today offers), `DayBounds`,
   `TodayBuckets`, `OverdueRedistributor`. Tested in `QueuePlanningTest`.
 - `data/` — Room (`AppDatabase`, DAOs, entities), `MedReviewRepository`,
   `BackupManager` (versioned JSON export/import), `AnalyticsExporter`,
@@ -411,7 +411,7 @@ These were decided deliberately. Re-suggesting them wastes a session:
   and this one only touches a topic reviewed twice on one calendar day and rated Hard, where it cuts
   stability by more than half, 100 days to 45. The app almost never produces that: the daily plan offers
   a topic again only on a later day, Review ahead leaves out topics reviewed today (2026-09-28), and the
-  two-year soak's 23,601 reviews contain none (the owner-year soak's 14,647, with its same-day second looks, hold 11).
+  two-year soak's 23,601 reviews contain none (the owner-year soak's 14,185, with its same-day second looks, hold 6).
   What remains is a deliberate second review from the Library and the
   fall-back-night hour in the due-date entry above); and the stability floor is 0.001, not 0.01.
   A fifth was found only after the goldens were extended to the COMPOSED step: Yadora clamped
@@ -614,9 +614,10 @@ These were decided deliberately. Re-suggesting them wastes a session:
   `priorityScore`. ONE plan is counted everywhere — the review session, the Today card, the reminder
   receiver, the notification's list, the safety worker, the boot catch-up and the widget
   (`MedReviewApplication.todayPlan`) — so once the day's reviews are done the reminders stop nagging
-  and the widget says "done for today". Today then shows "Today's reviews are done" with "Review more
-  anyway", which opens a session without the limit (`Screen.ReviewSession(ignoreLimit = true)`); a
-  Today card or the Library's review-now opens a single topic regardless.
+  and the widget says "done for today". Since 2026-10-09 Today has no sessions (the owner's redesign, below): the
+  plan is "today's share" at the top of ONE list, a line ends it, and every other due review stays listed below the
+  line, most urgent first, a tap away (`TodayShareTest`). Once the limit is used up, "Today's reviews are done" says
+  so and points down the list. "Review more anyway" (a session without the limit) is gone with the sessions.
 - **Edit-screen Save writes against the row as it is NOW** (`ui/add/TopicEdit`). The form is filled
   once, and the screen can sit in the back stack while a reminder's "Review now", the notification's
   "Not today" or a rating correction writes the same row; saving the loaded copy silently undid them
@@ -727,6 +728,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   promised "let's recover the important ones first" (two outside audits, 2026-09-30); pressed after the day's limit it
   keeps none, as before. The card says how many stay today and over how many days the rest go, and Settings no
   longer promises "never more than you can do": a backlog over two weeks of the limit puts more on each of those days.
+  NO LONGER OFFERED since 2026-10-09 (the owner's decision): Today's line after the share says what fits today, and a
+  backlog stays listed below it, most urgent first, instead of being moved onto later days. Deferrals it wrote
+  earlier are honoured; `OverdueRedistributor` and its tests stay, and Settings tip 3 describes the line instead.
 - **Duplicate detection normalizes Persian/Arabic** (`TopicTitle`). SQL `lower(trim(title))` is byte
   equality with an ASCII-only lowercase, so Farsi yeh vs Arabic yeh and keheh vs Arabic kaf —
   chosen by the keyboard, not the writer, and visually identical — produced two topics with no
@@ -811,8 +815,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
     lateness alone (0.4–2.0 and 0.6–8.0 points at the quiz; RESEARCH §2.4). Their premise was wrong for FSRS-6: a
     topic 30 days overdue still sits at 59–88% predicted recall.
   - The order matters only when more is due than the day allows. It is not replayed, so no POLICY bump.
-    `PriorityScoreTest` pins the terms, the cap and the fallbacks; the Spread-out plan uses the same order
-    (`DailyPlan.byPriority`).
+    `PriorityScoreTest` pins the terms, the cap and the fallbacks. Since 2026-10-09 Today's whole list follows this
+    order, below the share's line too (`DailyPlan.byPriority`); its due and overdue lists used to be sorted by due date,
+    so the validated order reached only the session button the owner does not use.
 - **Retention is clamped on read** (`MedScheduler.safeRetention`), not just on write.
   Prefs store a `Float` and FSRS consumes a `Double`, so even a value clamped to
   exactly `0.99` reads back fractionally outside the band `FsrsParameters` accepts —
@@ -864,7 +869,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
   learner DEFERRED ("Not today", "Spread out") are left out too: offering one again the same evening
   (first, since it is overdue on the model's clock) contradicted the learner's own choice.
   `ReviewAhead.isCandidate` is the one rule, used by the queue and by the Today button, so the button
-  never opens an empty session.
+  never opens an empty session. Since 2026-10-09 it is not a session but a section of Today, "Next up · weakest
+  first", always shown when it has topics (up to 30, ten until "More"); a tap reviews that one topic early, logged
+  AHEAD (`PilotScreensTest`).
 - **Scheduling choices are checked against their alternatives by simulation** (`tools/pilot/experiments.py`,
   results in `docs/RESEARCH.md` §2.4, 2026-09-24). Queue order under a binding limit: see the queue-order entry
   above (lateness plus a capped review value since 2026-09-29, ahead of lateness alone, the old weakness/lapse
@@ -1531,15 +1538,18 @@ These were decided deliberately. Re-suggesting them wastes a session:
     Samsung). Started from Git Bash such a crash leaves no Windows error report and looks like the emulator being
     killed; start it with PowerShell's `Start-Process` to see the report.
   - **Measured on the real code** (`OwnerYearSoakTest`: Asia/Tehran, 365 days, the default limit of 50; 10% of days
-    off, 15% light, 0–10 new topics on the rest; Not today, Spread out, Review more anyway, review-now including
-    same-day second looks, Review ahead on spare evenings and a last-month push, rating corrections, a mid-year phone
-    change, a refit every 20 days): 1,958 topics, 14,647 reviews; exam day 96.9% against 90.9% for random review and
-    92.6% oldest-first at equal time, which is measured (each twin spent what Yadora spent, to within one review); 100%
-    of topics at 90%+, weakest tenth 93.2%, nothing overdue on exam day; every refit refused (the simulated learner is
-    the defaults' learner); the export replays all 16,605 logs exactly. (YADORA-8, 2026-10-09, changed which random
-    draw each step gets, so the days, the new topics and the reviews differ: before it 1,935 topics, 14,989 reviews,
-    97.1%, 90.7%, 93.3%, 93.6%; YADORA-7, 2026-10-04: before it 14,764 reviews, 96.9%.) CI runs
-    it and replays its export.
+    off, 15% light, 0–10 new topics on the rest; today's share topic by topic, a Not today now and then, topics from
+    below the share's line on energetic evenings, review-now including same-day second looks, the Next-up list on spare
+    evenings and a last-month push, the understanding question after Forgot and minutes on about half the reviews,
+    rating corrections, a mid-year phone change, a refit every 20 days): 1,965 topics, 14,185 reviews; exam day 97.1%
+    against 90.6% for random review and 92.9% oldest-first at equal time, which is measured (each twin spent what Yadora
+    spent, to within one review); 99.9% of topics at 90%+, weakest tenth 93.5%, nothing overdue on exam day, a backlog
+    left at night on 146 days (the largest 105); every refit refused (the simulated learner is the defaults' learner);
+    the export replays all 16,150 logs exactly. (The redesign, 2026-10-09, took Spread out away and asks two more
+    things per rating, which changes the draws: before it 1,958 topics, 14,647 reviews, 96.9%, 90.9%, 92.6%, 100% at
+    90%+, 93.2%. YADORA-8, the same day, changed which random draw each step gets: before it 1,935 topics, 14,989
+    reviews, 97.1%, 90.7%, 93.3%, 93.6%; YADORA-7, 2026-10-04: before it 14,764 reviews, 96.9%.) CI runs it and replays
+    its export.
   - **The simulation's finding** (§2.8, model-based): with a fixed daily budget and a finite syllabus, the split of the
     day between new material and reviews decides the exam score when time is tight (20–45 points at 20 units a day),
     and the target then moves it by about one point; spare time on Review ahead beats a higher target (98.7% against
@@ -1660,10 +1670,14 @@ These were decided deliberately. Re-suggesting them wastes a session:
   From the owner's own answers in a requirements chat with another assistant, then two rounds of questions here:
   - A topic's scope is its title ("آسم" is all of asthma, "درمان آسم" only its treatment); a logged review means that
     whole scope was covered, from any source; one history per topic.
-  - The owner picks topics, studies outside the app and rates each one afterwards: no "Start review" session. Today lists
-    ALL due topics in the queue's urgency order (the priority score, not the due date), with a line after the first N
-    (N = the daily limit): today's suggested share, the rest of the time for new material. In the one-year simulation the
-    split between new material and reviews is the largest lever (RESEARCH.md §2.8), and the limit is what protects it.
+  - BUILT (2026-10-09): the owner picks topics, studies outside the app and rates each one afterwards: no "Start review"
+    session. Today lists ALL due topics in the queue's urgency order (the priority score, not the due date), with a line
+    after the first N (N = what is left of the daily limit, first ratings on top): today's suggested share, the rest of
+    the time for new material. In the one-year simulation the split between new material and reviews is the largest
+    lever (RESEARCH.md §2.8), and the limit is what protects it. A tap opens that one topic, and its log says where in the
+    list it was (`Screen.ReviewSession.kind`: PLAN in the share, EXTRA below the line, AHEAD in Next up; TOPIC anywhere
+    else). After the rating the screen says "Saved" and when the topic comes back, with Undo, not a session summary. A
+    reminder's "Review now" opens Today. The multi-topic session code stays in `ReviewSessionScreen` but nothing opens it.
   - BUILT (2026-10-09): the memory rating: "Forgot" = when I came back to it, most of it was gone, even if I know it well now after reading.
     Hard, Good and Easy stay the owner's overall judgement after the review (what was still there, current mastery, how
     heavy the topic is); the hint text says exactly this. The understanding question stays, and is asked after Forgot
@@ -1679,8 +1693,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     them under the app's name); a tap opens that topic; once it is rated the next one comes in silently; sound and
     vibration at most once per chosen reminder time. Swiping one away hides it until the next reminder time: not a
     review, not a deferral.
-  - Review ahead becomes a section under today's list (next up, weakest predicted recall first; a tap reviews early);
-    Spread out goes: the share line does its job, and a backlog is not hidden on later days.
+  - BUILT (2026-10-09): Review ahead becomes a section under today's list (next up, weakest predicted recall first; a
+    tap reviews early); Spread out goes: the share line does its job, and a backlog is not hidden on later days.
   - The Important switch stays, off by default. The exam date stays display-only. No automatic same-day re-suggestion
     (already the case: the shortest interval is one day).
   - py-fsrs 6.3.2's same-day Hard floor is adopted: a new model identity, with goldens generated by py-fsrs 6.3.2 itself

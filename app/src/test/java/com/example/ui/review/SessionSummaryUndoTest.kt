@@ -65,7 +65,7 @@ class SessionSummaryUndoTest {
         waitForText(strings.understandingNowQuestion)
         compose.onNode(hasText(strings.urClear, substring = true)).performScrollTo().performClick()
 
-        waitForText(strings.sessionComplete)
+        waitForText("Saved")
         assertEquals("the rating was logged", 1, runBlocking { app.database.reviewLogDao().getLogsForUnitOnce(id).size })
         compose.onNodeWithText("Undo last rating").performClick()
 

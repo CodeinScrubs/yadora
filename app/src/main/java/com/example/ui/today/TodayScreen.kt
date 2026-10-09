@@ -51,9 +51,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
+
+/** "Next up": how many topics Today lists at first, and at most after "more". */
+private const val NEXT_UP_SHOWN = 10
+private const val NEXT_UP_MAX = 30
 
 class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() {
     // Day boundaries are computed fresh on each emission (not once at construction), so the Today
@@ -127,6 +132,16 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
 
     val upcomingUnits: StateFlow<List<StudyUnitEntity>> = allUpcoming.map { it.take(5) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /**
+     * "Next up, weakest first": rated topics not due today, lowest predicted recall first (ReviewAhead), each a tap away
+     * from an early review. It replaced the Review ahead session (the owner's decision, 2026-10-09: the learner picks
+     * topics, there is no session). Computed off the main thread whenever the library changes.
+     */
+    val nextUp: StateFlow<List<StudyUnitEntity>> = activeNow
+        .map { units -> repository.reviewAheadOf(units, System.currentTimeMillis(), NEXT_UP_MAX) }
+        .flowOn(kotlinx.coroutines.Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -142,34 +157,9 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
         .flatMapLatest { repository.observeReviewsBetween(startOfToday(), endOfToday()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    fun redistributeOverdueUnits(context: android.content.Context) {
-        viewModelScope.launch {
-            // The plan is built around what the user actually said they can do in a day. A fixed
-            // window turned a 100-topic backlog into 34 a day for someone whose limit is 10 -- a
-            // schedule they cannot execute, which teaches them the dates are not to be trusted.
-            val capacity = com.example.domain.srs.MedScheduler.safeDailyLimit(
-                context.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
-                    .getFloat("daily_review_limit", 50f)
-            )
-            // Most urgent first (the queue's own score), what is left of today's limit kept today, the rest spread from
-            // tomorrow, each recorded as a DEFERRAL: OverdueRedistributor.deferrals is the one definition.
-            val updated = OverdueRedistributor.deferrals(
-                overdue = overdueUnits.value,
-                dueTodayReviews = dueTodayUnits.value.count { !DailyPlan.isFirstRating(it) },
-                doneToday = reviewsDoneToday.value,
-                dailyCapacity = capacity,
-                now = System.currentTimeMillis(),
-            )
-            if (updated.isEmpty()) return@launch
-            // One transaction: a crash mid-redistribution must not leave a half-applied plan.
-            repository.updateUnitsAtomic(updated)
-            repository.logEvent("REDISTRIBUTE", detail = updated.size.toString())
-            // The schedule just changed: re-arm the reminder and refresh the home-screen widget so
-            // neither keeps acting on the pre-redistribution due list.
-            runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
-            com.example.widget.DueWidgetProvider.updateAll(context)
-        }
-    }
+    // "Spread out" (OverdueRedistributor.deferrals) is no longer offered here (the owner's decision, 2026-10-09): the line
+    // after today's share says what to do today, and a backlog stays visible, most urgent first, instead of being moved
+    // onto later days. Deferrals it wrote earlier are honoured as before.
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -242,10 +232,11 @@ fun TodayScreen(
     onNavigateToReview: (Long) -> Unit,
     onNavigateToEdit: (Long) -> Unit,
     onNavigateToSettings: () -> Unit,
-    /** Today's limit is used up and the learner wants to keep going: a session without the limit. */
-    onReviewMoreAnyway: () -> Unit = {},
-    /** Nothing is due and the learner wants to study anyway: not-yet-due topics, weakest first (ReviewAhead). */
-    onReviewAhead: () -> Unit = {},
+    /**
+     * One topic tapped in Today's list, and where it was (a SessionKind name): PLAN in today's share, EXTRA below its
+     * line, AHEAD in "next up". There is no session to start (the owner's decision, 2026-10-09): the learner picks.
+     */
+    onReviewFromToday: (unitId: Long, kind: String) -> Unit = { id, _ -> onNavigateToReview(id) },
 ) {
     val viewModel: TodayViewModel = viewModel(factory = TodayViewModelFactory(repository))
     
@@ -266,8 +257,9 @@ fun TodayScreen(
     // snippet, else subject) so the user can tell them apart on the card.
     // Titles are compared through TopicTitle, like the duplicate warning on save: a plain lowercase()
     // cannot see that the same Persian word was typed on two different keyboards.
-    val dupTitles = remember(overdue, dueToday, upcoming) {
-        (overdue + dueToday + upcoming).groupingBy { com.example.data.text.TopicTitle.normalize(it.title) }.eachCount()
+    val nextUp by viewModel.nextUp.collectAsStateWithLifecycle()
+    val dupTitles = remember(overdue, dueToday, nextUp) {
+        (overdue + dueToday + nextUp).groupingBy { com.example.data.text.TopicTitle.normalize(it.title) }.eachCount()
             .filterValues { it > 1 }.keys
     }
     val disambOf: (StudyUnitEntity) -> String? = { u ->
@@ -276,7 +268,6 @@ fun TodayScreen(
             ?: u.source?.trim()?.take(40)?.takeIf { it.isNotBlank() }
             ?: subjects.find { it.id == u.subjectId }?.name
     }
-        var upcomingExpanded by remember { mutableStateOf(false) }
         
         val totalDue = overdue.size + dueToday.size
     // The review queue is capped at the daily limit, so show the count that will actually load (no lie).
@@ -292,8 +283,10 @@ fun TodayScreen(
         sp.registerOnSharedPreferenceChangeListener(listener)
         awaitDispose { sp.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    // Today's plan (DailyPlan): every first rating plus the reviews that fit in what is left of the DAILY
-    // limit — exactly what "Start review" loads, and what the reminders and the widget count.
+    // Today's plan (DailyPlan): every first rating plus the reviews that fit in what is left of the DAILY limit. Since
+    // 2026-10-09 it is "today's share": the top of one list the learner picks from (no session), and what the reminders
+    // and the widget count. The line after it keeps the rest of the day for new material, the largest lever in the
+    // one-year simulation (RESEARCH.md §2.8); everything below it stays listed, most urgent first, never hidden.
     //
     // No time estimate: a review is done however the learner likes, mostly outside the app (questions,
     // a lecture, a video), so the seconds a card sits open measure nothing and "about N min" would be a
@@ -303,6 +296,12 @@ fun TodayScreen(
         DailyPlan.plan(due, doneToday, dailyLimit, System.currentTimeMillis())
     }
     val displayDue = plan.size
+    // Below the line: every other due review, in the same urgency order (DailyPlan.byPriority).
+    val belowLine = remember(due, plan) {
+        val offered = plan.reviews.mapTo(HashSet()) { it.id }
+        DailyPlan.byPriority(due.filterNot { DailyPlan.isFirstRating(it) }, System.currentTimeMillis()).filter { it.id !in offered }
+    }
+    var nextUpExpanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     if (showUpcomingSchedule) {
         UpcomingScheduleDialog(
@@ -423,32 +422,24 @@ fun TodayScreen(
                             )
                         }
                         if (plan.heldBack > 0) {
-                            // Transparency: the daily limit is managing the load, not hiding it — the
-                            // most urgent reviews got today's slots, the rest wait for tomorrow.
+                            // Transparency: the daily limit is managing the load, not hiding it — the most urgent
+                            // reviews are today's share, and the rest stay listed below its line.
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (isFa) "${n(plan.heldBack)} مرور طبق سقف روزانه‌ات برای بعد نگه داشته شد" else if (strings.languageCode == "de") "${plan.heldBack} durch dein Tageslimit für später aufgehoben" else "${plan.heldBack} held for later by your daily limit",
+                                text = if (isFa) "${n(plan.heldBack)} مرور دیگر زیر خط سهم امروز، فوری‌ترین اول؛ برای وقتی که وقت داری. سقف روزانه بقیهٔ روز را برای مطالب جدید نگه می‌دارد."
+                                    else if (strings.languageCode == "de") "${plan.heldBack} weitere unter der Linie des heutigen Anteils, die dringendsten zuerst: für freie Zeit. Dein Tageslimit hält den Rest des Tages für neuen Stoff frei."
+                                    else "${plan.heldBack} more below the line of today's share, most urgent first: for when you have time. Your daily limit keeps the rest of the day for new material.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { onNavigateToReview(-1L) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                            shape = RoundedCornerShape(percent = 50)
-                        ) {
-                            Text(
-                                "${strings.startReview} · ${n(displayDue)}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        // No "Start review" button (the owner's decision, 2026-10-09): the learner picks a topic below,
+                        // studies it however they like and rates it; Yadora is not a flashcard session.
                     }
                 }
             }
 
-            // Today's limit is used up while reviews are still due. Said plainly, with a way to keep going:
+            // Today's limit is used up while reviews are still due. Said plainly; the rest stay listed below, a tap away:
             // the limit protects the learner's day, it must never stand between them and a review they want.
             if (plan.limitReached) {
                 val isFa = strings.languageCode == "fa"
@@ -470,16 +461,12 @@ fun TodayScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = if (isFa) "امروز ${n(plan.doneToday)} مرور انجام دادی و به سقف روزانه‌ات رسیدی. ${n(plan.heldBack)} مرور دیگر می‌تواند تا فردا صبر کند."
-                                else if (strings.languageCode == "de") "Du hast heute ${if (plan.doneToday == 1) "1 Wiederholung" else "${plan.doneToday} Wiederholungen"} gemacht und dein Tageslimit erreicht. ${plan.heldBack} ${if (plan.heldBack == 1) "weitere kann" else "weitere können"} bis morgen warten."
-                                else "You did ${if (plan.doneToday == 1) "1 review" else "${plan.doneToday} reviews"} today and reached your daily limit. ${plan.heldBack} more can wait until tomorrow.",
+                            text = if (isFa) "امروز ${n(plan.doneToday)} مرور انجام دادی و به سقف روزانه‌ات رسیدی. ${n(plan.heldBack)} مرور دیگر پایین‌تر است، فوری‌ترین اول: تا فردا صبر می‌کنند، یا اگر وقت داری سراغشان برو."
+                                else if (strings.languageCode == "de") "Du hast heute ${if (plan.doneToday == 1) "1 Wiederholung" else "${plan.doneToday} Wiederholungen"} gemacht und dein Tageslimit erreicht. ${plan.heldBack} ${if (plan.heldBack == 1) "weitere steht" else "weitere stehen"} unten, die dringendsten zuerst: Sie können bis morgen warten, oder du nimmst sie dir vor, wenn du Zeit hast."
+                                else "You did ${if (plan.doneToday == 1) "1 review" else "${plan.doneToday} reviews"} today and reached your daily limit. ${plan.heldBack} more ${if (plan.heldBack == 1) "is" else "are"} below, most urgent first: they can wait until tomorrow, or take them if you have time.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        TextButton(onClick = onReviewMoreAnyway) {
-                            Text(if (isFa) "باز هم مرور می‌کنم" else if (strings.languageCode == "de") "Trotzdem weiter wiederholen" else "Review more anyway")
-                        }
                     }
                 }
             }
@@ -618,222 +605,111 @@ fun TodayScreen(
                                     Spacer(modifier = Modifier.height(6.dp))
                                     // Honest next-review line: the real date of the next upcoming item,
                                     // not a hardcoded "tomorrow" (which was simply wrong for longer gaps).
-                                    val nextUp = upcoming.firstOrNull()
+                                    val nextDue = upcoming.firstOrNull()
                                     Text(
-                                        text = if (nextUp == null) (when (strings.languageCode) { "fa" -> "فعلاً چیزی در برنامه نیست."; "de" -> "Noch nichts geplant."; else -> "Nothing scheduled yet." })
-                                               else (when (strings.languageCode) { "fa" -> "مرور بعدی: "; "de" -> "Nächste: "; else -> "Next: " }) + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextUp.nextReviewAt, strings.languageCode == "fa"),
+                                        text = if (nextDue == null) (when (strings.languageCode) { "fa" -> "فعلاً چیزی در برنامه نیست."; "de" -> "Noch nichts geplant."; else -> "Nothing scheduled yet." })
+                                               else (when (strings.languageCode) { "fa" -> "مرور بعدی: "; "de" -> "Nächste: "; else -> "Next: " }) + com.example.ui.i18n.AppDate.weekdayDate(useJalali, nextDue.nextReviewAt, strings.languageCode == "fa"),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
-                                    // Review ahead (ReviewAhead): for spare time and the weeks before an exam.
-                                    // Offered only when a rated topic is waiting; honest about the cost.
-                                    val endOfDay = remember(allUpcoming) { DayBounds.endOf(System.currentTimeMillis()) }
-                                    if (allUpcoming.any { ReviewAhead.isCandidate(it, endOfDay) }) {
-                                        Spacer(modifier = Modifier.height(10.dp))
-                                        OutlinedButton(onClick = onReviewAhead, shape = RoundedCornerShape(percent = 50)) {
-                                            Text(when (strings.languageCode) { "fa" -> "مرور جلوتر از برنامه"; "de" -> "Vorausarbeiten"; else -> "Review ahead" })
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = when (strings.languageCode) {
-                                                // A good use of ANY spare time, not only the last weeks: with a fixed daily budget,
-                                                // spare evenings spent here left more on exam day than a higher target did
-                                                // (tools/pilot/one_exam.py, docs/RESEARCH.md 2.8).
-                                                "fa" -> "مباحثی که هنوز موعدشان نرسیده، از ضعیف‌ترین: استفادهٔ خوبی از وقت اضافه، مخصوصاً در هفته‌های پیش از امتحان. مرورِ زودتر از موعد، حافظه را کمتر از مرورِ به‌موقع تقویت می‌کند."
-                                                "de" -> "Noch nicht fällige Themen, die schwächsten zuerst: gut für freie Zeit, vor allem in den Wochen vor einer Prüfung. Eine frühe Wiederholung stärkt das Gedächtnis weniger als eine pünktliche."
-                                                else -> "Topics not due yet, weakest first: a good use of spare time, above all in the weeks before an exam. An early review strengthens memory less than one on time."
-                                            },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (upcoming.isNotEmpty()) {
-                        // Today is clear; show a collapsed "Upcoming" the user can open on demand.
-                        // (When upcoming is also empty, the caught-up card above already says everything —
-                        // no second "nothing due" line, and no celebratory tone.)
-                        item {
-                            // The header counts everything ahead; the list previews the next five.
-                            UpcomingHeader(strings.upcoming, allUpcoming.size, upcomingExpanded) { upcomingExpanded = !upcomingExpanded }
-                        }
-                        if (upcomingExpanded) {
-                            items(upcoming) { unit ->
-                                StudyUnitCard(unit, subjects, onClick = { onNavigateToEdit(unit.id) }, disambiguator = disambOf(unit))
-                            }
-                            if (allUpcoming.size > upcoming.size) {
-                                item {
-                                    TextButton(onClick = { showUpcomingSchedule = true }) {
-                                        Text(
-                                            when (strings.languageCode) {
-                                                "fa" -> "دیدن همه (${com.example.ui.i18n.PersianDate.faDigits(allUpcoming.size)})"
-                                                "de" -> "Alle ansehen (${allUpcoming.size})"
-                                                else -> "See all (${allUpcoming.size})"
-                                            }
-                                        )
-                                    }
                                 }
                             }
                         }
                     }
                 } else {
-                    if (overdue.isNotEmpty()) {
-                        // The recovery plan is offered only for a backlog bigger than one day's limit
-                        // (OverdueRedistributor.offersRecovery); a smaller one the daily plan clears by itself.
-                        // Reviews only: first ratings are never spread (OverdueRedistributor.spreadable).
-                        val backlog = OverdueRedistributor.spreadable(overdue).size
-                        if (OverdueRedistributor.offersRecovery(backlog, dailyLimit)) item {
-                            val isFarsi = strings.languageCode == "fa"
-                            val over = com.example.ui.theme.overdueTone()
-                            val nOver = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(backlog) else backlog.toString()
-                            // The same plan the button below builds: what is left of today's limit keeps the most urgent,
-                            // and the rest are spread from tomorrow over 3–14 days sized from the limit. This card used to
-                            // promise "3 days" whatever the backlog was.
-                            val kept = OverdueRedistributor.keptToday(
-                                backlog, dailyLimit, doneToday, dueToday.count { !DailyPlan.isFirstRating(it) },
+                    // Today's share: first ratings, then the most urgent reviews, up to the daily limit. A tap opens that
+                    // topic to rate; the learner studies it however they like, and there is no session to start.
+                    if (plan.size > 0) {
+                        item {
+                            Text(
+                                when (strings.languageCode) { "fa" -> "سهم امروز"; "de" -> "HEUTIGER ANTEIL"; else -> "TODAY'S SHARE" },
+                                style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            val recoveryDays = OverdueRedistributor.daysUsed(backlog, dailyLimit, kept)
-                            val nKept = if (isFarsi) com.example.ui.i18n.PersianDate.faDigits(kept) else kept.toString()
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                shape = RoundedCornerShape(20.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = over.container
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, over.main.copy(alpha = 0.4f))
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = if (isFarsi) "مدتی دور بودی" else if (strings.languageCode == "de") "Du warst eine Weile weg" else "You were away",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = over.main
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = if (isFarsi) {
-                                            if (kept > 0) "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم: $nKept تا امروز، و بقیه را می‌توانی روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز بعد پخش کنی."
-                                            else "$nOver مرور منتظر است. بیا اول مهم‌ترین‌ها را جبران کنیم — می‌توانی آن‌ها را روی ${com.example.ui.i18n.PersianDate.faDigits(recoveryDays)} روز پخش کنی."
-                                        } else if (strings.languageCode == "de") {
-                                            (if (backlog == 1) "1 Wiederholung wartet." else "$backlog Wiederholungen warten.") +
-                                                (if (kept > 0) " Holen wir zuerst die wichtigsten nach: $kept heute, den Rest kannst du auf die nächsten $recoveryDays Tage verteilen."
-                                                else " Holen wir zuerst die wichtigsten nach — du kannst sie auf $recoveryDays Tage verteilen.")
-                                        } else {
-                                            (if (backlog == 1) "1 review is waiting." else "$backlog reviews are waiting.") +
-                                                (if (kept > 0) " Let's recover the important ones first: $kept today, and the rest can be spread over the next ${if (recoveryDays == 1) "day" else "$recoveryDays days"}."
-                                                else " Let's recover the important ones first — you can spread them over ${if (recoveryDays == 1) "1 day" else "$recoveryDays days"}.")
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        items(plan.queue, key = { "share-${it.id}" }) { unit ->
+                            StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "PLAN") }, disambiguator = disambOf(unit))
+                        }
+                    }
+                    // The line: the share ends where the daily limit does, and the rest of the day belongs to new material.
+                    // Everything else that is due stays listed below it, most urgent first, never hidden or moved.
+                    if (belowLine.isNotEmpty()) {
+                        item {
+                            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                                HorizontalDivider(thickness = 1.5.dp, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    when (strings.languageCode) {
+                                        "fa" -> "سهم امروز تا اینجاست؛ بقیهٔ وقتت برای مطالب جدید. پایین‌تر: بقیهٔ موعدرسیده‌ها، فوری‌ترین اول."
+                                        "de" -> "Hier endet der heutige Anteil; der Rest deiner Zeit gehört neuem Stoff. Darunter: alles Weitere, was fällig ist, das Dringendste zuerst."
+                                        else -> "Today's share ends here; the rest of your time is for new material. Below: the rest of what is due, most urgent first."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        items(belowLine, key = { "below-${it.id}" }) { unit ->
+                            StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "EXTRA") }, disambiguator = disambOf(unit))
+                        }
+                    }
+                }
+                // Next up, weakest first (ReviewAhead): rated topics not due today, lowest predicted recall first, a tap from
+                // an early review. It replaced the Review ahead session (the owner's decision, 2026-10-09).
+                if (nextUp.isNotEmpty()) {
+                    item {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Text(
+                                    when (strings.languageCode) { "fa" -> "بعدی‌ها، ضعیف‌ترین اول"; "de" -> "ALS NÄCHSTES · DIE SCHWÄCHSTEN ZUERST"; else -> "NEXT UP · WEAKEST FIRST" },
+                                    style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                // Peek at what's coming: opens a by-day list of upcoming reviews.
+                                IconButton(onClick = { showUpcomingSchedule = true }, modifier = Modifier.size(28.dp)) {
+                                    Icon(
+                                        imageVector = Icons.Default.DateRange,
+                                        contentDescription = when (strings.languageCode) { "fa" -> "برنامهٔ روزهای آینده"; "de" -> "Kommende Tage"; else -> "Upcoming schedule" },
+                                        tint = MaterialTheme.colorScheme.primary,
                                     )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Button(
-                                        onClick = { viewModel.redistributeOverdueUnits(ctxForLimit.applicationContext) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = over.main,
-                                            contentColor = over.onSolid
-                                        ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text(
-                                            text = if (isFarsi) "توزیع مجدد و پخش مباحث عقب‌افتاده" else if (strings.languageCode == "de") "Überfällige Themen verteilen" else "Spread Out Overdue Topics",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
                                 }
                             }
-                        }
-
-                        item {
-                            Text(strings.overdue, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = com.example.ui.theme.overdueTone().main)
-                        }
-                        items(overdue) { unit ->
-                            StudyUnitCard(unit, subjects, onClick = { onNavigateToReview(unit.id) }, disambiguator = disambOf(unit))
-                        }
-                    }
-                    
-                    if (dueToday.isNotEmpty()) {
-                        item {
-                            Text(strings.priorityFocus, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        items(dueToday) { unit ->
-                            StudyUnitCard(unit, subjects, onClick = { onNavigateToReview(unit.id) }, disambiguator = disambOf(unit))
+                            Text(
+                                text = when (strings.languageCode) {
+                                    // A good use of ANY spare time, not only the last weeks: with a fixed daily budget,
+                                    // spare evenings spent here left more on exam day than a higher target did
+                                    // (tools/pilot/one_exam.py, docs/RESEARCH.md 2.8).
+                                    "fa" -> "مباحثی که هنوز موعدشان نرسیده، از ضعیف‌ترین: استفادهٔ خوبی از وقت اضافه، مخصوصاً در هفته‌های پیش از امتحان. مرورِ زودتر از موعد، حافظه را کمتر از مرورِ به‌موقع تقویت می‌کند."
+                                    "de" -> "Noch nicht fällige Themen, die schwächsten zuerst: gut für freie Zeit, vor allem in den Wochen vor einer Prüfung. Eine frühe Wiederholung stärkt das Gedächtnis weniger als eine pünktliche."
+                                    else -> "Topics not due yet, weakest first: a good use of spare time, above all in the weeks before an exam. An early review strengthens memory less than one on time."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
-                    
-                    if (upcoming.isNotEmpty()) {
+                    items(if (nextUpExpanded) nextUp else nextUp.take(NEXT_UP_SHOWN), key = { "ahead-${it.id}" }) { unit ->
+                        StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "AHEAD") }, disambiguator = disambOf(unit))
+                    }
+                    if (!nextUpExpanded && nextUp.size > NEXT_UP_SHOWN) {
                         item {
-                            // The header counts everything ahead; the list previews the next five.
-                            UpcomingHeader(strings.upcoming, allUpcoming.size, upcomingExpanded) { upcomingExpanded = !upcomingExpanded }
-                        }
-                        if (upcomingExpanded) {
-                            items(upcoming) { unit ->
-                                StudyUnitCard(unit, subjects, onClick = { onNavigateToEdit(unit.id) }, disambiguator = disambOf(unit))
-                            }
-                            if (allUpcoming.size > upcoming.size) {
-                                item {
-                                    TextButton(onClick = { showUpcomingSchedule = true }) {
-                                        Text(
-                                            when (strings.languageCode) {
-                                                "fa" -> "دیدن همه (${com.example.ui.i18n.PersianDate.faDigits(allUpcoming.size)})"
-                                                "de" -> "Alle ansehen (${allUpcoming.size})"
-                                                else -> "See all (${allUpcoming.size})"
-                                            }
-                                        )
+                            TextButton(onClick = { nextUpExpanded = true }) {
+                                val more = nextUp.size - NEXT_UP_SHOWN
+                                Text(
+                                    when (strings.languageCode) {
+                                        "fa" -> "بیشتر (${com.example.ui.i18n.PersianDate.faDigits(more)})"
+                                        "de" -> "Mehr ($more)"
+                                        else -> "More ($more)"
                                     }
-                                }
+                                )
                             }
                         }
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun UpcomingHeader(label: String, count: Int, expanded: Boolean, onToggle: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onToggle() }
-            .padding(top = 8.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        val strings = com.example.ui.i18n.LocalStrings.current
-        Text(
-            text = "${label.uppercase()} (${if (strings.languageCode == "fa") com.example.ui.i18n.PersianDate.faDigits(count) else count.toString()})",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Icon(
-            imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription = when (com.example.ui.i18n.LocalStrings.current.languageCode) {
-                "fa" -> if (expanded) "بستن" else "باز کردن"
-                "de" -> if (expanded) "Einklappen" else "Ausklappen"
-                else -> if (expanded) "Collapse" else "Expand"
-            },
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
