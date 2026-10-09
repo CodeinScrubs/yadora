@@ -470,6 +470,9 @@ object BackupManager {
         // REPLACE-by-id semantics in the restore rely on log ids being unique within the file.
         require(logs.map { it.id }.toSet().size == logs.size) { "Damaged backup: duplicate review-log ids" }
         require(logs.all { it.id > 0 }) { "Damaged backup: review log with invalid id" }
+        // A new phone must not allocate ids that retained events still refer to after a permanent purge.
+        // Compute/validate the reservation BEFORE writing the safety copy or replacing any current data.
+        val identityFloors = BackupIdentity.floors(units.map { it.id }, logs.map { it.id }, events)
 
         // Safety net: restore is all-or-nothing, so before touching anything, snapshot the CURRENT
         // data to a private file. If the user imports the wrong backup, their real data is still
@@ -502,6 +505,7 @@ object BackupManager {
             db.studyUnitDao().insertUnits(units)
             db.reviewLogDao().insertLogs(logs)
             db.eventLogDao().insertAll(events)
+            BackupIdentity.preserve(db.openHelper.writableDatabase, identityFloors)
         }
         // The scheduler must see the restored weight sets before anything schedules again.
         runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }
