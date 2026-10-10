@@ -162,6 +162,28 @@ posted before the switch kept their English words, which is why a language chang
 that build, 16 topics up in English left none after a switch to Persian, and the reminder read "۱۶ مبحث برای مرور". A
 "Done" on a review opened from a notification returns to whatever screen was underneath (Settings there).
 
+Verified 2026-10-10 on the Samsung (main at 977128a, the production review, a fresh install; Yadora had been uninstalled
+from it), in Persian. Onboarding: notifications and exact alarms granted in the REMINDERS step re-armed both slots exact
+(`window=0`, `exactAllowReason=permission`; a fresh install had armed them inexact, as on the emulator). Restore of the seed,
+Today's long Persian list (the share, then Next up), both rating steps without scrolling (the understanding step with
+the day chip and the minutes), "Saved" and Undo (row, log and forecast back exactly), a review backdated to yesterday
+(reviewedAt yesterday at this hour, loggedAt now, 45 minutes, kind TOPIC, its forecast), a question score, "Save and review
+now" (the edit saved, the topic's rating screen opened while not due), a two-word search in reversed order, reminders
+switched off taking every notification and both alarms away, the alarm-mode ringer over the lock screen with the screen
+off (USAGE_ALARM from Yadora's uid; the topics silent, `mSoundNotificationKey=null`), a topic tap from One UI's shade, also
+after the process was killed (`run-as kill -9`), and a language switch (group gone, channels renamed; the reminder keeps
+its words in alarm mode, where it is never re-posted). The R8 release (debug-signed) restored the 1,818-topic year (22 MB)
+in about 31 s with the progress dialog up throughout. The phone's research export replayed through `analyze.py`: 127 logs,
+0 mismatches, 0 self-check issues, D1 OK; `forecast_audit.py` read 86 forecasts, none malformed. FOUND and fixed: One UI
+keeps at most 25 notifications per app (AOSP 50). With a 50-topic share the reminder, the summary and 23 topics came up and
+17 never did, and the next sync could add none; `dumpsys notification --stats` counted 35 quota violations
+(`numQuotaLViolations`), exactly the dropped posts. `TopicNotifications.MAX_TOPICS` is 20 now, and a sync looks again after
+posting and sends what did not come up once more, slowly: a first test reminder had left 2 of 14 topics up while the phone
+counted 12 rate violations, and five more tries did not reproduce it. Also found: Hard's sentence "it comes back soon"
+under a 101-day date (a mature topic still grows on Hard); it now names only the date. Not checkable over adb: typing
+Persian (adb types ASCII only; the Persian matching is `LibrarySearchTest`'s), a rotation (a system setting on the owner's
+phone), Doze over real days.
+
 Device-testing gotchas: in Git Bash set `MSYS_NO_PATHCONV=1` before adb commands — otherwise a device
 path like `/sdcard/ui.xml` is silently rewritten into a Windows path and the command "succeeds" doing
 nothing. After a reboot wait up to two minutes past `sys.boot_completed` before judging whether reminders
@@ -1558,8 +1580,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     soak) restored through Settings with the progress dialog up the whole time, Today then showing 37 reviews, the
     Library 1,935 topics; the R8 release installed over it; "drugs heart" found "Heart failure — drugs"; after a restore
     of the seed the rebuilt app logged APP_VERSION and a DAILY_SNAPSHOT matching Today (14 offered: 2 first ratings, 12
-    reviews). Not measured: how long a year-sized restore takes on a phone (this emulator, with software graphics and a
-    busy host, gave 40–200 s and is no guide). Gotcha: the headless emulator (`-no-window`, SwiftShader) crashed, an
+    reviews). How long a year-sized restore takes on a phone: about 31 s on the owner's Samsung, R8 release (2026-10-10; this
+    emulator, with software graphics and a busy host, gave 40–200 s and is no guide). Gotcha: the headless emulator (`-no-window`, SwiftShader) crashed, an
     access violation in its JIT-compiled renderer code, each time a reviewed topic's page opened (the forgetting-curve
     chart; all 120,475 of its points across both test libraries are finite and in [0, 1], and the page works on the
     Samsung). Started from Git Bash such a crash leaves no Windows error report and looks like the emulator being
@@ -1718,8 +1740,9 @@ These were decided deliberately. Re-suggesting them wastes a session:
     never in the future (`ReviewDay`, REVIEW_DATE_CORRECTED; the moved review's own prediction leaves the calibration too).
     A first rating moved to before the study date takes the study date with it (`ReviewDayAndMinutesTest`). Reviews keep
     `loggedAt`, when they were saved, beside `reviewedAt`, when they happened (DB v11, backup v10, export v16).
-  - BUILT (2026-10-09): notifications, one per topic, for the topics above today's line (at most 40: Android keeps
-    about 50 per app); a tap opens that topic; once it is rated the next one comes in silently; sound and vibration at
+  - BUILT (2026-10-09): notifications, one per topic, for the topics above today's line (at most 20 since 2026-10-10,
+    40 before: Android keeps 50 per app, but One UI on the owner's Samsung keeps 25, and a 50-topic share left 17 topics
+    without a notification; the 2026-10-10 Samsung paragraph); a tap opens that topic; once it is rated the next one comes in silently; sound and vibration at
     most once per chosen reminder time. Swiping one away hides it until the next reminder time: not a review, not a
     deferral (`notifications/TopicNotifications`).
     - **How:** the reminder stays one notification with its actions and the ringer, and it is the only one that sounds.
@@ -1732,9 +1755,11 @@ These were decided deliberately. Re-suggesting them wastes a session:
       day; REMINDER_FIRED outcome `repeat`) and only keeps what is up in step; so does every change
       (`TodayRefresh.afterChange`, called wherever the widget used to be refreshed), and the reminder's own count is
       re-posted silently when it is up (`refreshIfShowing`; not in alarm mode, where a re-post could ring again).
-    - **Why only the new ones are posted:** Android throttles UPDATES of a notification to about five a second, not new
-      ones, so a sync posts what is missing and cancels what left the share; it never re-posts what is up. So the
-      notifications keep the words they were posted with: a language change takes the group away (it comes back at the
+    - **Why only the new ones are posted:** Android throttles UPDATES of a notification to about five a second (and the
+      Samsung counted rate violations once, unexplained), so a sync posts what is missing, looks again after 0.8 s and
+      posts once more, four a second, what did not come up and the share still wants (`TopicNotifications.repostTargets`),
+      and cancels what left the share; it never re-posts what is up. So the notifications keep the words they were posted
+      with: a language change takes the group away (it comes back at the
       next reminder time in the new language), and so does a restore, whose topics may reuse an old topic's id.
     - **Logged:** APP_OPENED from=topic (one topic) or topics (the group), TOPIC_NOTIFICATION_HIDDEN (a swipe);
       `analyze.py` counts a topic tap as a tap on its reminder. `TopicNotificationsTest`.
