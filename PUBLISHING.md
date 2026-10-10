@@ -199,3 +199,35 @@ On the code side, every push to GitHub runs the unit tests, lint (0 errors) and 
 automatically; the app ships in German, English and Persian. What CI cannot catch is device-only
 behaviour — reminders under battery optimisation, alarms after a reboot — so smoke-test the signed
 build on a real phone before every release (§3).
+
+---
+
+## 10. Cafe Bazaar (Iran) — updating the app there
+
+Checked against Bazaar's developer guides on 2026-10-10 (the app-bundle guide, the panel guide and its common-errors
+page at developers.cafebazaar.ir).
+
+- **The same key, always.** Bazaar keeps no signing key of yours, and its panel refuses an update signed with a key other
+  than the last package published there ("بسته باید با کلیدی یکسان با آخرین بسته منتشر شده امضا شود"). v1.0 was signed with
+  the upload key whose certificate is `CN=Shayan SalehiRad, OU=Yadora Development, O=CodeinScrubs`, SHA-256
+  `B6:7B:CC:E3:85:28:4D:99:C3:01:BE:45:C0:1C:90:20:00:55:59:BC:95:0E:FF:41:2A:AE:2C:58:59:DA:62:81` (read from the v1.0
+  bundle with `keytool -printcert -jarfile app/release/app-release.aab`). Check every new file before uploading:
+  `apksigner verify --print-certs app-release.apk` must print that SHA-256. If the key is lost, Bazaar cannot be updated
+  any more: back it up (section 2).
+- **Simplest: one signed APK.** Android Studio → Build → Generate Signed App Bundle or APK → **APK** → the upload keystore
+  (alias `upload`) → `release`, V1 and V2 signatures. Yadora's release APK is universal (about 3.5 MB; its only native
+  code is a 10 KB AndroidX helper for each processor type), so ONE APK serves every phone; "several APKs" in the panel is
+  an option for apps that split by processor, not a requirement.
+- **Or an AAB, with Bazaar's extra step.** Upload the `.aab`; the panel then asks for a `.bin` made from that SAME file by
+  Bazaar's open-source bundle signer (github.com/cafebazaar/bundle-signer, v0.1.13, needs Java 9+), run on your own PC:
+  `java -jar bundlesigner-0.1.13.jar genbin -v --bundle app-release.aab --bin . --v2-signing-enabled true
+  --v3-signing-enabled false --ks <your-upload-key.jks> --ks-key-alias upload` (it asks for the passwords). A bundle
+  built again needs a new `.bin`; a mismatch is "مشکلی در امضای بسته‌ها پیش آمده است".
+- **The release.** پیشخان → the app → «رهانش‌ها» → «رهانش جدید» → upload → the changes in Persian and English → send it
+  for review. Review takes 1 to 3 working days (Thursday and Friday do not count); with «انتشار خودکار» it goes live on
+  approval, and syncing can take up to 4 hours. «رهانش تدریجی» releases to a share of users first. A release left
+  «آماده‌ی انتشار» for 60 days needs a new request.
+- **Version.** The versionCode must be higher than every package Bazaar has published (v1.0 was 3, v1.1 is 4); the
+  targetSdk must meet Bazaar's minimum (it refuses old ones; Yadora's is 36).
+- **Permissions.** Bazaar asks for a justification of "dangerous" permissions (it names location). Yadora has none of
+  them, and no internet permission either: notifications, exact alarms, the full-screen alarm, start at boot, vibration.

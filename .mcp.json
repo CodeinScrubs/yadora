@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "maestro": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "F:\\tools\\maestro\\bin\\maestro.bat",
+        "mcp"
+      ],
+      "env": {
+        "JAVA_HOME": "C:/Program Files/Android/Android Studio/jbr",
+        "MAESTRO_CLI_NO_ANALYTICS": "1",
+        "MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED": "true",
+        "MAESTRO_DISABLE_UPDATE_CHECK": "true"
+      }
+    }
+  }
+}

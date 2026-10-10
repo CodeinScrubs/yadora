@@ -203,6 +203,19 @@ the app's data, unless `ALLOW_UNINSTALL=1`); `tools/device/test_reminder.sh <ser
 test reminder" through the real UI and prints the notification Android actually posted. Run both on a
 real phone before every release.
 
+**Maestro** (https://maestro.dev, the owner's request, 2026-10-10) drives the UI by what is on screen instead of
+coordinates. The CLI (2.11.0) lives in `F:\tools\maestro`, not on PATH (C: is nearly full), and runs on Android Studio's
+JBR; `.mcp.json` registers its MCP server for this project (`cmd /c F:\tools\maestro\bin\maestro.bat mcp`, with
+analytics and the update check off), which a new session asks to approve once. `tools/device/maestro/smoke.yaml` opens
+every main screen and comes back, in any of the three languages, without touching the data:
+`maestro --device <serial> test tools/device/maestro/smoke.yaml` (set `JAVA_HOME` to the JBR first). Always name the
+device: emulator-5556 is the owner's MedOS emulator, and Maestro lists it too. Checked on the Samsung: the flow from the
+CLI and through the MCP's `run` tool, `inspect_screen`, `take_screenshot`. Gotchas: the MCP serves a viewer on
+127.0.0.1:9999, downloads Cisco's OpenH264 DLL into `%LOCALAPPDATA%\simserver-openh264` and pushes a screen-sharing agent
+into `/data/local/tmp/.studio` on the phone; typing text that is not ASCII installs Maestro's app and makes its keyboard
+the phone's input method (`ime enable` / `ime set`), so Persian typing belongs on an emulator, not on the owner's phone;
+`claude mcp add -e K=V name ...` takes the name as one more variable (write `--env=K=V`).
+
 For a realistic library on a device, `DeviceSeedBackupTest` writes `app/build/device-seed/yadora_seed_backup.json`:
 ~40 English and Persian topics with a month of history made through the real commit path, more reviews due than a
 limit of 10 allows, first ratings waiting, a deferral, an archived and a deleted topic. Its dates are relative to
