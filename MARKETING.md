@@ -187,8 +187,9 @@ everything that isn't a flashcard).
 - Later options: one-time "supporter" unlock (theme colors already exist as a natural premium
   candidate) or simply keep it free and build reputation. Avoid subscriptions for an offline app —
   users resent paying monthly for something with no server.
-- Iran distribution: Play + direct APK via Telegram channel + Cafe Bazaar / Myket (same signed AAB
-  /APK works; each store has its own console).
+- Iran distribution: Play + direct APK via Telegram channel + Cafe Bazaar / Myket (the same signed APK works
+  everywhere, signed with the same key every time; an AAB on Bazaar also needs its bundle signer, PUBLISHING.md section 10;
+  each store has its own console).
 - Piracy reality (discussed before): an offline APK will be shared; a free launch makes that
   irrelevant and turns sharing into marketing.
 

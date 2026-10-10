@@ -1,0 +1,23 @@
+# Yadora UI smoke test with Maestro (https://maestro.dev): the app starts and each main screen opens and comes back,
+# whether the interface is Persian, English or German. It does NOT clear the app's data or change anything in it, so it
+# is safe on a phone that holds a real library. Name the device every time (another emulator may be attached):
+#   maestro --device <adb-serial> test tools/device/maestro/smoke.yaml
+# Texts are regular expressions matched against the whole label, so "Today" does not match "Today's Review".
+appId: com.yadora.app
+name: Yadora main screens
+---
+- launchApp:
+    stopApp: true
+- extendedWaitUntil:
+    visible: "Today's Review|مرور امروز|Heutige Wiederholung"
+    timeout: 20000
+- tapOn: "Library|کتابخانه|Bibliothek"
+- assertVisible: "Search topics.*|جستجوی مباحث.*|Themen durchsuchen.*"
+- tapOn: "Progress|پیشرفت|Fortschritt"
+- assertVisible: "Overview|نمای کلی|Überblick"
+- tapOn: "Today|امروز|Heute"
+- assertVisible: "Today's Review|مرور امروز|Heutige Wiederholung"
+- tapOn: "Settings|تنظیمات|Einstellungen"
+- assertVisible: "Notifications|اعلان‌ها|Benachrichtigungen"
+- back
+- assertVisible: "Today's Review|مرور امروز|Heutige Wiederholung"
