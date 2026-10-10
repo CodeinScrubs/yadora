@@ -45,9 +45,14 @@ code problem. Delete the entry the error names from `~/.gradle/caches/build-cach
 test fails in setup with "Failed to interact with raw FileDescriptor internals".
 
 **Device testing:** `adb` is at `%LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe` (not on PATH).
-The user's Samsung Galaxy A52s (Android 14) is a test device and destructive testing of Yadora on it
-is OK'd. Reboot, Doze and clock-change tests belong on the emulator (AVD `Medium_Phone_API_36.1`).
-Unit tests cannot prove reminder or alarm behaviour — only a device can.
+The user's Samsung Galaxy A52s (Android 14) was the test device until 2026-10-10. **Since then it holds the owner's
+REAL study data**: the 1.1 release, signed with the upload key (the build uploaded to Cafe Bazaar, archived with its R8
+`mapping.txt` in `F:/yadora-releases/1.1-vc4`), installed fresh for the owner's own studying. Nothing destructive on it
+any more: no uninstall, clear data, restore, "Delete all data", seed backups, test reminders or settings changes, and no
+installing another build over it (a debug-signed one cannot even install over the release key). Read-only checks only
+(`dumpsys`, the app's own exports the owner makes), and ask first. The release is not debuggable, so `run-as` does not
+work on it. Anything that writes belongs on an emulator. Reboot, Doze and clock-change tests belong on the emulator (AVD
+`Medium_Phone_API_36.1`). Unit tests cannot prove reminder or alarm behaviour — only a device can.
 
 Verified on hardware 2026-09-13 (build 1.1 / 4, AGP 9.4.0): on the Samsung (Android 14) an in-place
 upgrade install, launch with no crash/ANR, both daily reminders armed as EXACT alarms
