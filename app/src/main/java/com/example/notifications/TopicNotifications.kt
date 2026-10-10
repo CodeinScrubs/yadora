@@ -19,6 +19,7 @@ import com.example.data.local.entity.StudyUnitEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -33,9 +34,10 @@ import kotlinx.coroutines.launch
  * All of them are silent: their channel ([CHANNEL_ID]) has no sound or vibration, and every post is marked silent.
  * Turning that channel off in the phone's settings turns them off and keeps the reminder.
  *
- * Android keeps about 50 notifications per app, and it limits how fast one is UPDATED (about five a second; a new one
- * is not limited that way). So a sync posts only the topics not yet showing and takes away the ones that left the
- * share; it never re-posts the ones already there.
+ * Android keeps at most 50 notifications per app (One UI 25, [MAX_TOPICS]), and it limits how fast one is UPDATED (about
+ * five a second). So a sync posts only the topics not yet showing and takes away the ones that left the share; it never
+ * re-posts the ones already there. The system can drop a post without an error, so a sync looks once more after posting
+ * and posts again, slowly, what did not come up ([repostTargets]).
  */
 object TopicNotifications {
     const val CHANNEL_ID = "yadora_topics_v1"
@@ -44,7 +46,17 @@ object TopicNotifications {
     const val SUMMARY_ID = 2
     /** Every topic notification has this id and its own tag ([tagOf]). */
     const val TOPIC_ID = 3
-    const val MAX_TOPICS = 40
+    /**
+     * At most this many topics are up at once; the rest of the share comes in as they are rated. Android's own limit is
+     * 50 notifications per app, but One UI 6 on the owner's Samsung (SM-A528B, Android 14, 2026-10-10) stopped Yadora at
+     * 25: of a 50-topic share, 23 topics came up beside the reminder and the summary, the other 17 never did, and the
+     * next sync could add none (the phone counted 35 posts over its quota). With the reminder, the summary and an update
+     * of either in flight, 20 stays under that. It was 40.
+     */
+    const val MAX_TOPICS = 20
+    /** How long a sync waits before it looks whether its posts came up, and the gap between two posts sent again. */
+    private const val RECHECK_MS = 800L
+    private const val REPOST_GAP_MS = 250L
 
     /** Swiping a topic notification away (its delete intent). */
     const val ACTION_HIDE = "com.example.notifications.ACTION_TOPIC_HIDDEN"
@@ -74,6 +86,15 @@ object TopicNotifications {
         val wanted = share.asSequence().filter { it !in hidden }.distinct().take(max).toList()
         val wantedSet = wanted.toHashSet()
         return Diff(post = wanted.filter { it !in showing }, cancel = showing.filterTo(HashSet()) { it !in wantedSet })
+    }
+
+    /**
+     * The topics to post again once a sync has looked: those it posted ([tried]) that are not up, and that today's share,
+     * as it is NOW, still wants (not rated or put away meanwhile).
+     */
+    fun repostTargets(tried: List<Long>, share: List<Long>, showing: Set<Long>, hidden: Set<Long>, max: Int = MAX_TOPICS): List<Long> {
+        val triedSet = tried.toHashSet()
+        return diff(share, showing, hidden, max).post.filter { it in triedSet }
     }
 
     fun createChannel(context: Context) {
@@ -198,9 +219,27 @@ object TopicNotifications {
         val byId = share.associateBy { it.id }
         // The summary first, so the topics land in their group at once.
         nm.notify(SUMMARY_ID, summary(app, share.size))
-        for (id in d.post) {
-            val unit = byId[id] ?: continue
-            nm.notify(tagOf(id), TOPIC_ID, topic(app, unit, unit.subjectId?.let { subjects[it] }, rank.getValue(id)))
+        fun post(id: Long) {
+            val unit = byId[id] ?: return
+            // One topic that cannot be posted must not keep the rest of the list away.
+            runCatching { nm.notify(tagOf(id), TOPIC_ID, topic(app, unit, unit.subjectId?.let { subjects[it] }, rank.getValue(id))) }
+                .onFailure { android.util.Log.w("Yadora", "a topic notification could not be posted", it) }
+        }
+        d.post.forEach(::post)
+        if (d.post.isEmpty()) return up
+        // Android can drop a post without telling the app: over its count quota (above), or over its rate. On the owner's
+        // Samsung a test reminder once left 2 of 14 topics up and the rest never came, while the phone counted 12 rate
+        // violations (2026-10-10). So look once, when the system has had time to show them, and post again, slowly, what
+        // it dropped. Not when the whole group was taken away meanwhile (a snooze, reminders switched off).
+        delay(RECHECK_MS)
+        if (!anyShowing(app)) return 0
+        val again = repostTargets(d.post, app.todayPlan().queue.map { it.id }, showingIds(app), hidden(app))
+        if (again.isNotEmpty()) {
+            if (active(app).none { it.id == SUMMARY_ID && it.tag == null }) nm.notify(SUMMARY_ID, summary(app, share.size))
+            for (id in again) {
+                post(id)
+                delay(REPOST_GAP_MS)
+            }
         }
         return up
     }

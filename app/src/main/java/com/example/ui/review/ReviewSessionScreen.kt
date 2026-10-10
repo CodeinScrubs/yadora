@@ -509,7 +509,9 @@ class ReviewViewModel(
             firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
             memory == MemoryRating.Forgot && dueNow -> if (fa) "فراموش شده بود — از امروز دوباره مرورش می‌کنی." else if (de) "Vergessen — ab heute wieder zum Neulernen dran." else "Forgot — it's due again from today to relearn."
             memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — $days دوباره مرورش می‌کنی." else if (de) "Vergessen — $days kommt es zum Neulernen zurück." else "Forgot — it's back $days to relearn."
-            memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es gab Lücken, also blieb der Abstand kurz — nächste Wiederholung $days." else "There were gaps, so it comes back soon — next review $days."
+            // No "so it comes back soon": on a mature topic Hard still lengthens the interval (82.7 days to 101.9 on the
+            // owner's phone, 2026-10-10), and the sentence then contradicted its own date.
+            memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت — مرور بعدی $days." else if (de) "Es gab Lücken — nächste Wiederholung $days." else "There were gaps — next review $days."
             memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — nächste Wiederholung $days." else "Easy — next review $days."
             else -> if (fa) "خوب یادت مانده بود — مرور بعدی $days." else if (de) "Gut behalten — nächste Wiederholung $days." else "Remembered well — next review $days."
         }

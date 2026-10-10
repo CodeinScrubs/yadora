@@ -30,7 +30,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * One silent notification per topic of today's share (the owner's decision, 2026-10-09): at most forty, in the share's
+ * One silent notification per topic of today's share (the owner's decision, 2026-10-09): at most twenty (forty until
+ * One UI's quota of 25 notifications per app dropped the rest, 2026-10-10), in the share's
  * order; a tap opens that topic; once it is rated the next topic of the share takes its place; a swiped one stays away
  * until the next chosen reminder time; and a ~3-hour repeat of the alarm chain makes no sound and posts nothing new.
  */
@@ -81,11 +82,25 @@ class TopicNotificationsTest {
     }
 
     @Test
-    fun `the topics to show are the share in its order without the hidden ones, forty at most`() {
+    fun `the topics to show are the share in its order without the hidden ones, twenty at most`() {
+        assertEquals("the reminder, the summary, the topics and an update in flight stay under One UI's 25",
+            20, TopicNotifications.MAX_TOPICS)
         val d = TopicNotifications.diff((1L..45L).toList(), showing = setOf(1L, 2L, 99L), hidden = setOf(3L))
-        assertEquals("3 left out, forty in all, the two already up not posted again", (4L..41L).toList(), d.post)
+        assertEquals("3 left out, twenty in all, the two already up not posted again", (4L..21L).toList(), d.post)
         assertEquals("what left the share goes", setOf(99L), d.cancel)
         assertEquals(TopicNotifications.Diff(emptyList(), setOf(5L)), TopicNotifications.diff(emptyList(), setOf(5L), emptySet()))
+    }
+
+    @Test
+    fun `a post the system dropped is sent again only while the share still wants it`() {
+        // Posted 1..6; 1 and 2 came up, 3 to 6 did not. Meanwhile 4 was rated (it left the share) and 5 was swiped away.
+        val again = TopicNotifications.repostTargets(tried = (1L..6L).toList(), share = listOf(1L, 2L, 3L, 5L, 6L, 7L),
+            showing = setOf(1L, 2L), hidden = setOf(5L))
+        assertEquals("3 and 6 again; 7 joined the share later and is another sync's to post", listOf(3L, 6L), again)
+        assertEquals("nothing when everything came up", emptyList<Long>(),
+            TopicNotifications.repostTargets(listOf(1L, 2L), listOf(1L, 2L), setOf(1L, 2L), emptySet()))
+        assertEquals("never past the cap", (1L..20L).toList(),
+            TopicNotifications.repostTargets((1L..30L).toList(), (1L..30L).toList(), emptySet(), emptySet()))
     }
 
     @Test
@@ -102,13 +117,13 @@ class TopicNotificationsTest {
     }
 
     @Test
-    fun `a chosen time posts the first forty of the share, silently, in its order, each opening its topic`() = runBlocking {
+    fun `a chosen time posts the first twenty of the share, silently, in its order, each opening its topic`() = runBlocking {
         seedShare(45)
         val share = app.todayPlan().queue.map { it.id }
         assertEquals("the default limit holds all of them", 45, share.size)
-        assertEquals(40, TopicNotifications.postAll(app))
+        assertEquals(20, TopicNotifications.postAll(app))
         val up = topicsUp()
-        assertEquals("the first forty of the share", share.take(40).toSet(), idsUp())
+        assertEquals("the first twenty of the share", share.take(20).toSet(), idsUp())
         val summary = nm.activeNotifications.single { it.id == TopicNotifications.SUMMARY_ID }
         assertTrue("one group, with its own summary", summary.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0)
         for (sbn in up) {
@@ -124,7 +139,7 @@ class TopicNotificationsTest {
         val channel = nm.getNotificationChannel(TopicNotifications.CHANNEL_ID)
         assertNull("the channel has no sound", channel.sound)
         assertFalse("and no vibration", channel.shouldVibrate())
-        val keys = share.take(40).map { id -> up.single { TopicNotifications.unitIdOf(it.tag) == id }.notification.sortKey }
+        val keys = share.take(20).map { id -> up.single { TopicNotifications.unitIdOf(it.tag) == id }.notification.sortKey }
         assertEquals("in the share's order", keys.sorted(), keys)
 
         val tap = shadowOf(up.single { TopicNotifications.unitIdOf(it.tag) == share[0] }.notification.contentIntent).savedIntent
@@ -138,9 +153,9 @@ class TopicNotificationsTest {
         TopicNotifications.postAll(app)
         val rated = app.todayPlan().queue.first().id
         rate(rated)
-        assertEquals(40, TopicNotifications.sync(app))
+        assertEquals(20, TopicNotifications.sync(app))
         assertFalse(rated in idsUp())
-        assertEquals("the share's first forty as it is now", app.todayPlan().queue.map { it.id }.take(40).toSet(), idsUp())
+        assertEquals("the share's first twenty as it is now", app.todayPlan().queue.map { it.id }.take(20).toSet(), idsUp())
     }
 
     @Test
