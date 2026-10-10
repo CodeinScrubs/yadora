@@ -46,14 +46,16 @@ class ForecastBaselineTest(unittest.TestCase):
         self.assertEqual(expected, fa.with_past_baseline(sorted(rows, key=lambda r: r["at"])))
 
     def test_learner_set_policy_session_and_due_context_have_independent_histories(self):
+        # The rating definition too (ratingDef 2 since 2026-10-09): one never serves as the other's reference.
         scopes = [{}, dict(participant="B"), dict(set=7), dict(policy="YADORA-7"),
-                  dict(session="QUESTIONS"), dict(dueContext="AHEAD"), dict(model="older")]
+                  dict(session="QUESTIONS"), dict(dueContext="AHEAD"), dict(model="older"), dict(rating_def=2)]
         rows = [row(i * len(scopes) + j + 1, success=j != 0, **scope)
                 for i in range(22) for j, scope in enumerate(scopes)]
         grouped = defaultdict(list)
         for r in fa.with_past_baseline(rows):
-            grouped[(r["participant"], r["model"], r["set"], r["policy"], r["session"], r["dueContext"])].append(r)
-        self.assertEqual(7, len(grouped))
+            grouped[(r["participant"], r["model"], r["set"], r["policy"], r["session"], r["dueContext"],
+                     r.get("rating_def", 1))].append(r)
+        self.assertEqual(8, len(grouped))
         for rs in grouped.values():
             self.assertTrue(all(r["baseline_p"] is None for r in rs[:20]))
             expected = 1 / 22 if not rs[0]["original_success"] else 21 / 22

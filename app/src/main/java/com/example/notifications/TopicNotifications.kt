@@ -153,6 +153,15 @@ object TopicNotifications {
     fun languageChanged(context: Context) {
         cancelAll(context)
         refreshReminderSoon(context)
+        // The channels' names in Android's settings, and the widget's words, follow the new language at once (a
+        // production review, 2026-10-10: the widget kept the old words until its next refresh, up to half an hour).
+        runCatching {
+            NotificationScheduler.createNotificationChannel(context)
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (nm.getNotificationChannel(NotificationScheduler.ALARM_CHANNEL_ID) != null) NotificationScheduler.createAlarmChannel(context)
+            if (nm.getNotificationChannel(CHANNEL_ID) != null) createChannel(context)
+        }
+        com.example.widget.DueWidgetProvider.updateAll(context)
     }
 
     /** The reminder's count and words kept true in the background, when it is up; the topic group is left alone. */

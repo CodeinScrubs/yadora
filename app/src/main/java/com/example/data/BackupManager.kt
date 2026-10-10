@@ -201,6 +201,19 @@ object BackupManager {
     /** The picked file could not be opened at all: a revoked permission or a provider that is gone, not a bad backup. */
     class UnreadableFile(cause: Throwable?) : java.io.IOException("Could not open the chosen file", cause)
 
+    /**
+     * A valid file this version cannot read: a newer backup format or a memory model it does not know. Told apart from
+     * a damaged file, so the learner reads "update the app" and not "invalid backup" (a production review, 2026-10-10).
+     */
+    class NewerVersion(message: String) : IllegalArgumentException(message)
+
+    /**
+     * The file was valid, but the restore could not be carried out (the safety copy or the replacement failed, most
+     * likely a full phone). Nothing was changed: the replacement is one transaction, and nothing runs before the safety
+     * copy. It used to read "invalid backup" too (a production review, 2026-10-10).
+     */
+    class NotRestored(cause: Throwable) : java.io.IOException("The restore could not be carried out; nothing was changed", cause)
+
     /** Opens a file the learner picked for a restore, so that a failure to OPEN it is told apart from a bad backup. */
     fun openPicked(context: Context, uri: android.net.Uri): java.io.InputStream =
         try {
@@ -243,6 +256,7 @@ object BackupManager {
                 "backupVersion" -> fileVersion = (reader.readValue() as? Number)
                     ?.takeIf { it.toDouble().let { v -> v.isFinite() && v == Math.floor(v) && v in 1.0..1_000_000.0 } }
                     ?.toInt()
+                    ?.also { if (it > BACKUP_VERSION) throw NewerVersion("This backup was made by a NEWER Yadora version ($it) — update the app first.") }
                     ?: throw IllegalArgumentException("backupVersion is not a whole number")
                 "subjects" -> reader.forEachRecord { _, o ->
                     subjects += SubjectEntity(
@@ -401,8 +415,8 @@ object BackupManager {
         }
         val knownModels = com.example.domain.srs.MedScheduler.MemoryModel.entries.mapTo(HashSet()) { it.id }
         units.forEachIndexed { i, u ->
-            require(u.memoryModel in knownModels) {
-                "Topic ${i + 1} uses a memory model this version of Yadora does not know (${u.memoryModel}) — update the app first."
+            if (u.memoryModel !in knownModels) {
+                throw NewerVersion("Topic ${i + 1} uses a memory model this version of Yadora does not know (${u.memoryModel}) — update the app first.")
             }
         }
 
@@ -427,7 +441,8 @@ object BackupManager {
             require(u.parameterSetId in usableSetIds) { "Damaged backup: topic ${i + 1} references a missing memory model" }
         }
         // Whole-file preflight: reject structurally corrupt topics BEFORE any current data is deleted.
-        require(fileVersion in 1..BACKUP_VERSION) { "This backup was made by a NEWER Yadora version ($fileVersion) — update the app first." }
+        if (fileVersion > BACKUP_VERSION) throw NewerVersion("This backup was made by a NEWER Yadora version ($fileVersion) — update the app first.")
+        require(fileVersion >= 1) { "Damaged backup: backupVersion $fileVersion" }
         require(units.map { it.id }.toSet().size == units.size) { "Damaged backup: duplicate topic ids" }
         require(subjects.map { it.id }.toSet().size == subjects.size) { "Damaged backup: duplicate subject ids" }
         require(systems.map { it.id }.toSet().size == systems.size) { "Damaged backup: duplicate collection ids" }
@@ -489,16 +504,20 @@ object BackupManager {
         // only copy of the user's data without a recovery net is never acceptable. Temp + rename so
         // a crash mid-write can't leave a truncated safety file that LOOKS valid. Streamed to disk,
         // like every backup, so a long history cannot run the restore out of memory here.
-        run {
+        try {
             val tmp = context.filesDir.resolve("last_before_restore_backup.json.tmp")
             tmp.outputStream().use { writeBackup(context, it) }
             check(tmp.length() > 0L) { "Safety copy could not be written" }
             val dest = context.filesDir.resolve("last_before_restore_backup.json")
             if (dest.exists()) dest.delete()
             check(tmp.renameTo(dest)) { "Safety copy could not be finalized" }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw NotRestored(e)
         }
 
-        db.withTransaction {
+        try { db.withTransaction {
             db.eventLogDao().deleteAll() // always: "replace ALL data" must not leave stale events behind
             db.reviewLogDao().deleteAllLogs()
             db.studyUnitDao().deleteAllUnits()
@@ -514,6 +533,11 @@ object BackupManager {
             db.reviewLogDao().insertLogs(logs)
             db.eventLogDao().insertAll(events)
             BackupIdentity.preserve(db.openHelper.writableDatabase, identityFloors)
+        } } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Rolled back: the library is as it was.
+            throw NotRestored(e)
         }
         // The scheduler must see the restored weight sets before anything schedules again.
         runCatching { (context.applicationContext as MedReviewApplication).repository.refreshMemoryModel() }

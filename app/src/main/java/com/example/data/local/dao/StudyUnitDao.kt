@@ -100,6 +100,10 @@ interface StudyUnitDao {
     @Query("SELECT COUNT(*) FROM study_units WHERE archived = 0")
     fun getTotalActiveUnitsCount(): Flow<Int>
 
+    /** The learner's topics, archived ones included, not the trash: whether the library is empty at all. */
+    @Query("SELECT COUNT(*) FROM study_units WHERE deletedAt IS NULL")
+    fun getLibraryCount(): Flow<Int>
+
     /** Every row, archived and recently deleted too: whether a backup would have anything in it. */
     @Query("SELECT COUNT(*) FROM study_units")
     suspend fun countAllOnce(): Int

@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.ui.MedReviewApp
 import kotlinx.coroutines.launch
 import com.example.ui.theme.MyApplicationTheme
@@ -76,6 +77,15 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     val app = application as MedReviewApplication
+    // A finished restore or "Delete all data" changed the settings this activity read when it was created (language,
+    // theme, colours): it rebuilds itself. The request comes through the application (DataOperations), so it reaches
+    // the activity on screen even when the one that started the operation was replaced by a rotation meanwhile.
+    val rebuildSeen = com.example.ui.settings.DataOperations.rebuild.value
+    lifecycleScope.launch {
+      repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+        com.example.ui.settings.DataOperations.rebuild.collect { if (it != rebuildSeen) recreate() }
+      }
+    }
     if (savedInstanceState == null) logOpen(intent)
     // For the analysis: the first run of a new build, a changed time zone, and the day's load if the safety worker has
     // not written it yet today (AppVersionLog, TimeZoneLog, DailySnapshot). All best effort; none throws.
@@ -86,7 +96,11 @@ class MainActivity : ComponentActivity() {
     }
     runCatching { com.example.notifications.AlarmRingActivity.dismissActive() } // opening the app silences a ringing alarm
     com.example.notifications.TodayRefresh.afterChange(this) // keep the home-screen count and the topic notifications fresh
-    if (intent?.getBooleanExtra("open_review", false) == true) {
+    // Only for a new activity: after the process was killed, Android recreates this one from the intent it was first
+    // started with, extras and all (removeExtra changed only this process's copy), and it navigated to Today again, over
+    // whatever the learner had open (a production review, 2026-10-10). A tap that reaches a recreated activity comes
+    // through onNewIntent, as the topic extra below does.
+    if (savedInstanceState == null && intent?.getBooleanExtra("open_review", false) == true) {
       openReviewSignal.value++
       intent?.removeExtra("open_review") // consume it, so rotation/recreate doesn't re-navigate
       // Opening review from the reminder/alarm dismisses the (possibly ongoing) reminder notification.
@@ -145,6 +159,8 @@ class MainActivity : ComponentActivity() {
                         putString("app_language", lang)
                         putBoolean("language_selected", true)
                     }
+                    // The reminder channel was created at start in English; Android's settings name it in this language.
+                    runCatching { com.example.notifications.NotificationScheduler.createNotificationChannel(this@MainActivity) }
                     currentLanguage = lang
                     languageSelected = true
                 })

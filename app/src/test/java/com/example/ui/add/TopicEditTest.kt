@@ -106,4 +106,21 @@ class TopicEditTest {
         assertFalse("no reviews, no interval to tighten",
             TopicEdit.plan(unrated, unrated, formOf(unrated).copy(highYield = true), t0).tightenForImportant)
     }
+
+    /**
+     * The date pickers give 09:00 of the day chosen. OK on the day already shown turned a 16:05 due date into a deferral
+     * to 09:00, and a study time into a replayed history; a study "today" picked before 09:00 lay in the future and hid
+     * "Save and rate now" (a production review, 2026-10-10).
+     */
+    @Test
+    fun `a date picked on the day already shown keeps its time, and today is never in the future`() {
+        val zone = java.time.ZoneId.systemDefault()
+        fun at(d: Int, h: Int, m: Int = 0) = java.time.LocalDate.of(2026, 10, d).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+        assertEquals(at(13, 16, 5), keepIfSameDay(at(13, 9), at(13, 16, 5)))
+        assertEquals(at(14, 9), keepIfSameDay(at(14, 9), at(13, 16, 5)))
+        assertEquals(at(14, 9), keepIfSameDay(at(14, 9), null))
+        assertEquals("today before 09:00 is now", at(10, 8, 30), studiedOn(at(10, 9), now = at(10, 8, 30)))
+        assertEquals("after 09:00 it stays 09:00", at(10, 9), studiedOn(at(10, 9), now = at(10, 15)))
+        assertEquals("another day keeps 09:00", at(8, 9), studiedOn(at(8, 9), now = at(10, 8, 30)))
+    }
 }

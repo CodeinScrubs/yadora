@@ -40,13 +40,13 @@ interface EventLogDao {
     suspend fun getMergeEvents(): List<EventLogEntity>
 
     /**
-     * Every correction, of a rating or of the day a review happened (com.example.data.RecomputedPredictions reads which
-     * predictions each one recomputed).
+     * Every correction, of a rating or of the day a review happened, and every merge, which moves a corrected topic's
+     * logs (com.example.data.RecomputedPredictions reads which predictions each correction recomputed).
      */
-    @Query("SELECT * FROM event_logs WHERE type IN ('RATING_CORRECTED', 'REVIEW_DATE_CORRECTED')")
+    @Query("SELECT * FROM event_logs WHERE type IN ('RATING_CORRECTED', 'REVIEW_DATE_CORRECTED', 'MERGE')")
     suspend fun getCorrectionEvents(): List<EventLogEntity>
 
     /** [getCorrectionEvents] as a Flow, for the Progress screen's calibration card. */
-    @Query("SELECT * FROM event_logs WHERE type IN ('RATING_CORRECTED', 'REVIEW_DATE_CORRECTED')")
+    @Query("SELECT * FROM event_logs WHERE type IN ('RATING_CORRECTED', 'REVIEW_DATE_CORRECTED', 'MERGE')")
     fun observeCorrectionEvents(): kotlinx.coroutines.flow.Flow<List<EventLogEntity>>
 }

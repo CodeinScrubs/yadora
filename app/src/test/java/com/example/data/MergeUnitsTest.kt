@@ -465,6 +465,129 @@ class MergeUnitsTest {
         assertEquals("the topic is untouched", 3, repo.getUnitById(keep)!!.reviewCount)
     }
 
+    /**
+     * The correction dialog offers an absorbed copy's first study ("Correct first-study rating"), and the replay rebuilt
+     * that row without the new answer: the dialog closed, RATING_CORRECTED was logged, and the row still said Good (a
+     * production review, 2026-10-10).
+     */
+    @Test
+    fun `a corrected re-study exposure keeps the answer it was corrected to`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 2, dueAt = now + 15 * day)
+        val other = addUnit("آپاندیسیت", stability = 6.0, difficulty = 6.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.insertReviewLog(logFor(keep, now - 50 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(keep, now - 20 * day))
+        repo.insertReviewLog(logFor(other, now - 2 * day, type = "FIRST_STUDY"))
+        repo.mergeUnits(keep, listOf(other))!!
+        val before = db.reviewLogDao().getLogsForUnitOnce(keep).sortedBy { it.id }
+        val exposure = before.last()
+        assertEquals("FIRST_STUDY", exposure.logType)
+
+        repo.editReviewRating(keep, exposure.id, MemoryRating.Hard, UnderstandingRating.Partial)
+
+        val after = db.reviewLogDao().getLogsForUnitOnce(keep).sortedBy { it.id }
+        val corrected = after.single { it.id == exposure.id }
+        assertEquals("the row says the corrected answer", MemoryRating.Hard.name, corrected.memoryRating)
+        assertEquals(UnderstandingRating.Partial.name, corrected.understandingRating)
+        assertEquals(MedScheduler.difficultyLabelFor(MemoryRating.Hard), corrected.initialDifficulty)
+        assertEquals("and stays an exposure", "FIRST_STUDY", corrected.logType)
+        for ((was, now2) in before.zip(after).filter { it.first.id != exposure.id }) {
+            assertEquals("an untouched row keeps its answer", was.memoryRating, now2.memoryRating)
+            assertEquals(was.understandingRating, now2.understandingRating)
+        }
+    }
+
+    /**
+     * A copy rated "Studied: <an earlier day>" (ReviewDay) after the other copy's review is saved after that review and
+     * dated before it. Merged, it is an exposure saved last, and the replay moved the clock BACK to it: the topic's
+     * last review and both due dates moved to before a review that had happened (a production review, 2026-10-10).
+     */
+    @Test
+    fun `an exposure dated before a later review does not move a replay's clock back`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 2, dueAt = now + 15 * day)
+        val other = addUnit("آپاندیسیت", stability = 3.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 2 * day)
+        repo.updateUnit(repo.getUnitById(keep)!!.copy(lastReviewedAt = now - 20 * day))
+        repo.updateUnit(repo.getUnitById(other)!!.copy(lastReviewedAt = now - 30 * day))
+        repo.insertReviewLog(logFor(keep, now - 40 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(keep, now - 20 * day))
+        // Saved after the recall above, dated ten days before it.
+        repo.insertReviewLog(logFor(other, now - 30 * day, type = "FIRST_STUDY"))
+        repo.mergeUnits(keep, listOf(other))!!
+        assertEquals("the merge keeps the latest review", now - 20 * day, repo.getUnitById(keep)!!.lastReviewedAt)
+
+        repo.updateUnitReplayingHistory(repo.getUnitById(keep)!!)
+        val after = repo.getUnitById(keep)!!
+
+        assertEquals("the replay keeps it too", now - 20 * day, after.lastReviewedAt)
+        assertEquals("and counts the memory date from it", now - 20 * day + (after.currentIntervalDays * day).toLong(), after.modelDueAt)
+    }
+
+    /**
+     * A merge moves every log of an absorbed copy to the survivor, so a copy restored from the trash starts a history of
+     * its own. Counting it as merged kept that history out of the personal fit for good (a production review, 2026-10-10).
+     */
+    @Test
+    fun `a copy restored after a merge is not a merged topic`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val keep = addUnit("Appendicitis", stability = 20.0, difficulty = 4.0, reviewCount = 2, dueAt = now + 15 * day)
+        val other = addUnit("آپاندیسیت", stability = 6.0, difficulty = 6.0, reviewCount = 1, dueAt = now + 5 * day)
+        repo.insertReviewLog(logFor(keep, now - 50 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(keep, now - 20 * day))
+        repo.insertReviewLog(logFor(other, now - 40 * day, type = "FIRST_STUDY"))
+        repo.mergeUnits(keep, listOf(other))!!
+        assertEquals("the combined history is left out of the fit", 0, repo.trainingHistories().size)
+
+        repo.restoreDeletedUnit(other)
+        repo.insertReviewLog(logFor(other, now - 6 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(other, now - 2 * day))
+
+        assertEquals("the restored copy's own history is", 1, repo.trainingHistories().size)
+    }
+
+    /**
+     * A copy a merge absorbed before 2026-08-06 kept its counts while its reviews moved to the survivor. Restored from the
+     * trash as it was, it claimed reviews with no history, and every later backup was refused as damaged (a production
+     * review, 2026-10-10). It comes back unrated.
+     */
+    @Test
+    fun `a legacy absorbed copy restored from the trash comes back unrated`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val legacy = addUnit("Old copy", stability = 12.0, difficulty = 5.0, reviewCount = 4, dueAt = now + 3 * day, lapses = 1)
+        db.studyUnitDao().softDeleteUnit(legacy, now - day)
+        val keep = addUnit("Kept topic", stability = 8.0, difficulty = 5.0, reviewCount = 1, dueAt = now + 2 * day)
+        repo.insertReviewLog(logFor(keep, now - 5 * day, type = "FIRST_STUDY"))
+
+        repo.restoreDeletedUnit(legacy)
+
+        val back = repo.getUnitById(legacy)!!
+        assertNull("restored", back.deletedAt)
+        assertEquals("with no reviews it cannot show", 0, back.reviewCount)
+        assertEquals(0, back.lapseCount)
+        assertEquals(com.example.domain.model.StudyState.New.name, back.state)
+        assertEquals("due on its study date, like any unrated topic", back.studiedAt, back.nextReviewAt)
+        // A topic restored with its own history is left as it was.
+        db.studyUnitDao().softDeleteUnit(keep, now)
+        repo.restoreDeletedUnit(keep)
+        assertEquals(1, repo.getUnitById(keep)!!.reviewCount)
+    }
+
+    /** The row's stored recall is what the live commit writes beside the state: the last review's prediction. */
+    @Test
+    fun `a correction's replay stores the last review's prediction on the row`() = runBlocking {
+        val now = System.currentTimeMillis()
+        val id = addUnit("Asthma", stability = 9.0, difficulty = 5.0, reviewCount = 2, dueAt = now + 3 * day)
+        repo.updateUnit(repo.getUnitById(id)!!.copy(retrievability = 0.123, memoryModel = MedScheduler.CURRENT_MODEL.id))
+        repo.insertReviewLog(logFor(id, now - 30 * day, type = "FIRST_STUDY"))
+        repo.insertReviewLog(logFor(id, now - 10 * day))
+        val recall = db.reviewLogDao().getLogsForUnitOnce(id).maxBy { it.id }
+
+        repo.editReviewRating(id, recall.id, MemoryRating.Hard, UnderstandingRating.Clear)
+
+        val replayed = db.reviewLogDao().getLogsForUnitOnce(id).maxBy { it.id }
+        assertEquals(replayed.retrievabilityAtReview, repo.getUnitById(id)!!.retrievability, 0.0)
+    }
+
     private fun logFor(unitId: Long, at: Long, type: String = "RECALL") = com.example.data.local.entity.ReviewLogEntity(
         studyUnitId = unitId, reviewedAt = at,
         memoryRating = MemoryRating.Good.name, understandingRating = UnderstandingRating.Clear.name,

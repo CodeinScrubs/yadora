@@ -15,8 +15,11 @@ import androidx.compose.ui.text.style.TextDecoration
 object NoteLinks {
     private val URL = Regex("""(?i)\b(?:https?://|www\.)[^\s<>"]+""")
 
-    /** Punctuation that ends a sentence rather than the address ("see https://x.org/a."). */
-    private const val TRAILING = ".,;:!?'\"،؛)]}"
+    /**
+     * Punctuation that ends a sentence rather than the address ("see https://x.org/a."), in Persian too: its question
+     * mark, guillemets and curly quotes were left in the address (a production review, 2026-10-10).
+     */
+    private const val TRAILING = ".,;:!?'\"،؛؟»«”“’‘…)]}"
 
     data class Found(val range: IntRange, val url: String)
 

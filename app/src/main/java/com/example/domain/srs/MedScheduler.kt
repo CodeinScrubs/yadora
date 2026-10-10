@@ -121,6 +121,13 @@ object MedScheduler {
     @Volatile
     var knownParameterSets: Map<Long, DoubleArray> = emptyMap()
 
+    /**
+     * True once `MedReviewRepository.refreshMemoryModel` has loaded the sets in this process. What only READS them (today's
+     * share and its order, Next up, the reminders, the widget) loads them first if nothing has (`ensureMemoryModelLoaded`).
+     */
+    @Volatile
+    var parameterSetsLoaded: Boolean = false
+
     /** The weights of set [id]. Throws for a set the registry does not hold, so SCHEDULING fails closed. */
     fun weightsFor(id: Long): DoubleArray {
         val active = activeParameterSet
@@ -815,6 +822,17 @@ object MedScheduler {
         }
 
     /** The elapsed days a replay feeds [model] for one review: its stored count when that is reusable, else counted again. */
+    /**
+     * Where a re-encoding exposure (a later FIRST_STUDY row, only a merge makes one) leaves a replay's clock: at the
+     * exposure, never before the review the clock already stands at. A merged copy can be saved after a later review
+     * of the other copy and still be dated earlier (rated "Studied: <an earlier day>", ReviewDay), and moving the clock
+     * back to it measured the next review from before a review that had happened, and the topic's due dates with it (a
+     * production review, 2026-10-10). Every reconstruction applies it: the correction's replay, the projection, the
+     * optimizer's histories and `tools/pilot/analyze.py` (`replay_unit`). For a history in time order it is the
+     * exposure's own time, as before.
+     */
+    fun exposureClock(clock: Long, exposureAt: Long): Long = maxOf(clock, exposureAt)
+
     fun replayElapsedDays(
         fromMillis: Long,
         toMillis: Long,

@@ -126,14 +126,16 @@ MIN_EFFECTIVE_TOPICS = 20
 def with_past_baseline(rows):
     """Counterfactual reference on retained, valid ORIGINAL observations, with no current/future outcome.
 
-    Each learner/model/set/policy/session/due-context stream resets independently. Order is the saved log id,
+    Each learner/model/set/policy/session/due-context/rating-definition stream resets independently (the two rating
+    definitions measure different things, so one never serves as the other's reference). Order is the saved log id,
     never the editable/rollback-prone wall clock. Laplace smoothing prevents certainty after all successes
     or failures. The fixed 50-review window and 20-review warm-up are diagnostics, not validated optima.
     """
     histories = defaultdict(lambda: deque(maxlen=BASELINE_WINDOW))
     result = []
     for row in sorted(rows, key=lambda r: (r["participant"], r["log"])):
-        key = (row["participant"], row["model"], row["set"], row["policy"], row["session"], row["dueContext"])
+        key = (row["participant"], row["model"], row["set"], row["policy"], row["session"], row["dueContext"],
+               row.get("rating_def", 1))
         past = histories[key]
         probability = (sum(past) + 1.) / (len(past) + 2.) if len(past) >= BASELINE_MIN_HISTORY else None
         result.append(dict(row, baseline_p=probability, baseline_history_n=len(past)))

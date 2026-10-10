@@ -55,6 +55,9 @@ object NotificationScheduler {
     /** Whether it was armed as an exact alarm (an inexact one may come up to about an hour late by design). */
     const val EXTRA_EXACT = "com.example.notifications.EXTRA_EXACT"
 
+    /** On the Snooze button: whether its label said "This evening" when the reminder was posted (snoozeTargetMillis). */
+    const val EXTRA_SNOOZE_EVENING = "com.example.notifications.EXTRA_SNOOZE_EVENING"
+
     private const val REQ_DAILY = 1001
     private const val REQ_OPEN = 1004
     private const val REQ_TEST = 1005
@@ -142,8 +145,16 @@ object NotificationScheduler {
         val vibrationEnabled = sp.getBoolean("vibration_enabled", true)
         val importance =
             if (soundEnabled || vibrationEnabled) NotificationManager.IMPORTANCE_DEFAULT else NotificationManager.IMPORTANCE_LOW
-        val channel = NotificationChannel(channelId(context), "Daily Reminders", importance).apply {
-            description = "Reminders for due study units"
+        // In the interface language, like the topic channel; created again on a language change, which renames it
+        // (a production review, 2026-10-10: these two read English in every language).
+        val lang = sp.getString("app_language", "en") ?: "en"
+        val name = when (lang) { "fa" -> "یادآوری روزانه"; "de" -> "Tägliche Erinnerungen"; else -> "Daily Reminders" }
+        val channel = NotificationChannel(channelId(context), name, importance).apply {
+            description = when (lang) {
+                "fa" -> "یادآوری وقتی مبحثی برای مرور هست"
+                "de" -> "Erinnerungen, wenn Themen fällig sind"
+                else -> "Reminders for due study units"
+            }
             if (!soundEnabled) setSound(null, null)
             enableVibration(vibrationEnabled)
         }
@@ -157,10 +168,30 @@ object NotificationScheduler {
             .forEach { nm.deleteNotificationChannel(it.id) }
     }
 
+    /**
+     * The reminder sound or vibration was switched: a new channel, and the old one deleted. Deleting a channel takes its
+     * notifications with it, so a reminder that was up vanished until the next reminder time (a production review,
+     * 2026-10-10); it is posted again, silently, on the new channel.
+     */
+    fun changeReminderChannel(context: Context) {
+        val wasUp = reminderShowing(context)
+        createNotificationChannel(context)
+        if (wasUp) {
+            val app = context.applicationContext
+            Thread { runCatching { refreshIfShowing(app, assumeShowing = true) } }.start()
+        }
+    }
+
     /** High-importance channel for the optional "ring like an alarm clock" full-screen reminder. */
     fun createAlarmChannel(context: Context) {
-        val channel = NotificationChannel(ALARM_CHANNEL_ID, "Alarm Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Rings like an alarm clock when reviews are due"
+        val lang = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE).getString("app_language", "en") ?: "en"
+        val name = when (lang) { "fa" -> "یادآوری با زنگ هشدار"; "de" -> "Wecker-Erinnerungen"; else -> "Alarm Reminders" }
+        val channel = NotificationChannel(ALARM_CHANNEL_ID, name, NotificationManager.IMPORTANCE_HIGH).apply {
+            description = when (lang) {
+                "fa" -> "وقتی مروری مانده، مثل ساعت زنگ‌دار زنگ می‌زند"
+                "de" -> "Klingelt wie ein Wecker, wenn Wiederholungen fällig sind"
+                else -> "Rings like an alarm clock when reviews are due"
+            }
             // The full-screen AlarmRingActivity owns the looping alarm tone; keep the channel itself
             // silent so the alarm sound doesn't play twice (channel + activity).
             setSound(null, null)
@@ -255,16 +286,24 @@ object NotificationScheduler {
 
         val primary = nextNudgeTime(context)
         val secondary = nextSecondarySlotTime(context)
-        armAlarm(context, primary, REQ_DAILY, ACTION_FIRE)
-        // A morning primary can produce a 3-hour repeat at exactly the 18:00 secondary slot. Two
-        // different PendingIntents at the same instant create duplicate notifications/full-screen
-        // launches. One fire is enough; the next receiver pass will re-arm the following slot.
-        if (reminderSlotsCollide(primary, secondary)) {
-            cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
-        } else {
-            armAlarm(context, secondary, REQ_DAILY_2, ACTION_FIRE)
-        }
+        val (armPrimary, armSecondary) = slotsToArm(primary, secondary, sp.getInt("reminder_hour", 20), sp.getInt("reminder_minute", 0))
+        if (armPrimary != null) armAlarm(context, armPrimary, REQ_DAILY, ACTION_FIRE) else cancelAlarm(context, REQ_DAILY, ACTION_FIRE)
+        if (armSecondary != null) armAlarm(context, armSecondary, REQ_DAILY_2, ACTION_FIRE) else cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
     }
+
+    /**
+     * Which of the chain's next alarm ([primary]: the set time or a ~3h repeat) and the second daily slot to arm; null =
+     * not this one. Both, unless they collide: then ONE (two PendingIntents at one instant post twice), and it must be the
+     * one the learner CHOSE. A morning set time's chain lands a repeat on the 18:00 slot (09:00, 12:00, 15:00, then
+     * 18:00 and a second or so), and since 2026-10-09 a repeat is silent ([isChosenSlot]): keeping the repeat there
+     * cancelled the evening reminder's sound on every such day (a production review, 2026-10-10). Pure, so it is tested.
+     */
+    fun slotsToArm(primary: Long, secondary: Long, hour: Int, minute: Int, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): Pair<Long?, Long?> =
+        when {
+            !reminderSlotsCollide(primary, secondary) -> primary to secondary
+            isChosenSlot("primary", primary, hour, minute, zone) -> primary to null
+            else -> null to secondary
+        }
 
     /** Next occurrence (today if still ahead, else tomorrow) of the second daily slot. */
     private fun nextSecondarySlotTime(context: Context): Long {
@@ -326,6 +365,17 @@ object NotificationScheduler {
         TopicNotifications.cancelAll(context)
     }
 
+    /**
+     * Reminders switched OFF: no alarm, and nothing left up. The Settings switch used to cancel only the alarms, so the
+     * reminder and today's topic notifications stayed up, and every rating kept them in step (a production review,
+     * 2026-10-10); the receiver's own OFF path already took them away.
+     */
+    fun remindersOff(context: Context) {
+        cancelReminder(context)
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        TopicNotifications.cancelAll(context)
+    }
+
     fun cancelReminder(context: Context) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         am.cancel(firePendingIntent(context, REQ_DAILY, ACTION_FIRE))
@@ -344,28 +394,47 @@ object NotificationScheduler {
      */
     fun snoozeIsEvening(now: Calendar = Calendar.getInstance()): Boolean = now.get(Calendar.HOUR_OF_DAY) < 17
 
-    private fun snoozeTargetMillis(context: Context): Long {
-        val now = Calendar.getInstance()
-        return if (snoozeIsEvening(now)) {
-            Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 18); set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-            }.timeInMillis
-        } else {
-            val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-            Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, sp.getInt("reminder_hour", 20))
-                set(Calendar.MINUTE, sp.getInt("reminder_minute", 0))
-                set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-                add(Calendar.DAY_OF_YEAR, 1)
-            }.timeInMillis
+    /**
+     * Where a snooze goes. [labelSaidEvening] is what its button said when the reminder was posted
+     * ([EXTRA_SNOOZE_EVENING]): the label is fixed then, and deciding at the tap sent a "This evening" pressed between
+     * 17:00 and 18:00 to tomorrow (a production review, 2026-10-10). Evening is 18:00 today while it is still ahead; null
+     * (a button posted by an older build) decides by the time of the tap, as before.
+     */
+    private fun snoozeTargetMillis(context: Context, labelSaidEvening: Boolean? = null): Long {
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        return snoozeTarget(System.currentTimeMillis(), labelSaidEvening, sp.getInt("reminder_hour", 20), sp.getInt("reminder_minute", 0))
+    }
+
+    /** [snoozeTargetMillis] at [now], pure, so the label's promise is tested. */
+    internal fun snoozeTarget(now: Long, labelSaidEvening: Boolean?, hour: Int, minute: Int): Long {
+        val at = Calendar.getInstance().apply { timeInMillis = now }
+        val evening = Calendar.getInstance().apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, 18); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        if ((labelSaidEvening ?: snoozeIsEvening(at)) && evening > now) return evening
+        // "This evening" tapped once the evening has begun: two hours on, while that is still evening. It went to
+        // tomorrow, and the evening the label promised never came (a production review, 2026-10-10).
+        if (labelSaidEvening == true) {
+            val later = Calendar.getInstance().apply { timeInMillis = now + 2 * 60 * 60 * 1000L }
+            if (later.get(Calendar.DAY_OF_YEAR) == at.get(Calendar.DAY_OF_YEAR) && later.get(Calendar.HOUR_OF_DAY) < WAKING_END_HOUR) {
+                return later.timeInMillis
+            }
         }
+        return Calendar.getInstance().apply {
+            timeInMillis = now
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            add(Calendar.DAY_OF_YEAR, 1)
+        }.timeInMillis
     }
 
     /** Re-show the reminder at the snooze target WITHOUT changing any topic's due date (a true snooze). */
-    fun scheduleSnooze(context: Context) {
+    fun scheduleSnooze(context: Context, labelSaidEvening: Boolean? = null) {
         // Clamp into waking hours so an edge case never rings in the middle of the night.
-        val target = clampToWakingWindow(snoozeTargetMillis(context))
+        val target = clampToWakingWindow(snoozeTargetMillis(context, labelSaidEvening))
         transientPrefs(context).edit { putLong(PREF_SNOOZED_UNTIL, target) }
         cancelAlarm(context, REQ_DAILY, ACTION_FIRE)
         cancelAlarm(context, REQ_DAILY_2, ACTION_FIRE)
@@ -523,6 +592,19 @@ object NotificationScheduler {
         )
     }
 
+    /**
+     * True when a reminder is posted as an ALARM (the full-screen ringer on the alarm channel). "Silence alarms" is a kill
+     * switch, NOT a second alarm setting: it suppresses the full-screen ring while leaving alarm mode configured, so
+     * turning it back off restores the learner's setup. On Android 14+ Play/system policy can revoke full-screen access:
+     * the reminder then falls back to an ordinary audible one instead of the silent alarm channel without the ringer.
+     */
+    fun alarmModeActive(context: Context): Boolean {
+        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
+        val requested = sp.getBoolean("alarm_enabled", false) && !sp.getBoolean("alarm_silenced", false)
+        return requested && (Build.VERSION.SDK_INT < 34 ||
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent())
+    }
+
     /** True when the reminder itself is up in the notification shade. */
     fun reminderShowing(context: Context): Boolean = runCatching {
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).activeNotifications
@@ -534,10 +616,11 @@ object NotificationScheduler {
      * up, taken away when today's share is empty. In alarm mode it is left as it is, so a re-post cannot bring the
      * full-screen ringer back. Never brings back a reminder the learner put away. Call it off the main thread.
      */
-    fun refreshIfShowing(context: Context) {
-        if (!reminderShowing(context)) return
-        val sp = context.getSharedPreferences("medreview_settings", Context.MODE_PRIVATE)
-        val alarmMode = sp.getBoolean("alarm_enabled", false) && !sp.getBoolean("alarm_silenced", false)
+    fun refreshIfShowing(context: Context, assumeShowing: Boolean = false) {
+        if (!assumeShowing && !reminderShowing(context)) return
+        // The mode a reminder is actually posted in: with full-screen access refused it is an ordinary one, and its count
+        // was left stale until the share was empty (a production review, 2026-10-10).
+        val alarmMode = alarmModeActive(context)
         val app = context.applicationContext as? com.example.MedReviewApplication ?: return
         val size = runCatching { kotlinx.coroutines.runBlocking { app.todayPlan().size } }.getOrNull() ?: return
         if (size == 0) {
@@ -619,7 +702,11 @@ object NotificationScheduler {
             context, REQ_OPEN, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val snoozeIntent = Intent(context, ReviewReminderReceiver::class.java).apply { action = ACTION_SNOOZE }
+        val snoozeIntent = Intent(context, ReviewReminderReceiver::class.java).apply {
+            action = ACTION_SNOOZE
+            // The button keeps the promise its label makes, whenever it is tapped (snoozeTargetMillis).
+            putExtra(EXTRA_SNOOZE_EVENING, snoozeIsEvening())
+        }
         val snoozePi = PendingIntent.getBroadcast(
             context, REQ_SNOOZE_BTN, snoozeIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -638,13 +725,7 @@ object NotificationScheduler {
         // "Silence alarms" is a kill switch, NOT a second alarm setting: it suppresses the
         // full-screen ring while leaving alarm mode configured, so turning it back off restores the
         // user's setup. Ordinary reminder notifications are unaffected and still arrive.
-        val alarmModeRequested = sp.getBoolean("alarm_enabled", false) &&
-            !sp.getBoolean("alarm_silenced", false)
-        val canUseFullScreen = Build.VERSION.SDK_INT < 34 ||
-            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
-        // On Android 14+, Play/system policy can revoke full-screen access. Fall back to an ordinary
-        // audible reminder instead of selecting the silent alarm channel without launching the ringer.
-        val alarmMode = !silent && alarmModeRequested && canUseFullScreen
+        val alarmMode = !silent && alarmModeActive(context)
         val channel = if (alarmMode) { createAlarmChannel(context); ALARM_CHANNEL_ID } else channelId(context)
 
         // Professional presentation: the sprout brand glyph as the (system-tinted) status-bar icon,

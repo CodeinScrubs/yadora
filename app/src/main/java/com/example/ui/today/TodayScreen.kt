@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 
@@ -77,22 +78,32 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
         set(java.util.Calendar.MILLISECOND, 999)
     }.timeInMillis
 
-    // Room flows only emit on DATABASE changes — if the app sits open across midnight untouched,
-    // yesterday's classification would stick. This ticker re-emits just after each local midnight so
-    // Due/Overdue/Upcoming reclassify from time passing alone.
-    private val dayTick = kotlinx.coroutines.flow.flow {
-        emit(Unit)
+    /**
+     * The minute, for what the screen reads from the clock (the greeting, "due now", the exam countdown): the screen
+     * recomposes only when a value it reads changes, so a Today left open kept the morning's greeting in the afternoon
+     * (a production review, 2026-10-10).
+     */
+    val minuteTick: StateFlow<Long> = kotlinx.coroutines.flow.flow {
         while (true) {
-            val now = System.currentTimeMillis()
-            val nextMidnight = java.util.Calendar.getInstance().apply {
-                add(java.util.Calendar.DAY_OF_YEAR, 1)
-                set(java.util.Calendar.HOUR_OF_DAY, 0)
-                set(java.util.Calendar.MINUTE, 0)
-                set(java.util.Calendar.SECOND, 0)
-                set(java.util.Calendar.MILLISECOND, 0)
-            }.timeInMillis
-            kotlinx.coroutines.delay((nextMidnight - now).coerceAtLeast(1000L) + 1000L)
-            emit(Unit)
+            emit(System.currentTimeMillis())
+            kotlinx.coroutines.delay(60_000L - System.currentTimeMillis() % 60_000L)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    // Room flows only emit on DATABASE changes — if the app sits open across midnight untouched,
+    // yesterday's classification would stick. This ticker re-emits when the local DATE changes, checked each minute, so
+    // Due/Overdue/Upcoming reclassify from time passing alone. Checked by the minute, not timed to the next midnight: a
+    // time-zone change (a trip with the app open) moves midnight, and the old zone's midnight could be most of a day away
+    // (a production review, 2026-10-10).
+    private val dayTick = kotlinx.coroutines.flow.flow {
+        var shown: java.time.LocalDate? = null
+        while (true) {
+            val today = java.time.LocalDate.now(java.time.ZoneId.systemDefault())
+            if (today != shown) {
+                shown = today
+                emit(Unit)
+            }
+            kotlinx.coroutines.delay(60_000L - System.currentTimeMillis() % 60_000L)
         }
     }
 
@@ -105,7 +116,10 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
      * with five midnight timers beside it (an outside audit counted the queries, 2026-09-27). The day bounds are
      * still read at each emission, so the lists reclassify at midnight exactly as before.
      */
-    private val activeNow = repository.activeUnits.combine(sharedDayTick) { units, _ -> units }
+    private val activeNow = repository.activeUnits
+        // The order of today's share and of Next up reads each topic on its own weight set, so they are loaded first.
+        .onStart { repository.ensureMemoryModelLoaded() }
+        .combine(sharedDayTick) { units, _ -> units }
         .shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
 
     val dueUnits: StateFlow<List<StudyUnitEntity>> = activeNow.map { units ->
@@ -151,11 +165,23 @@ class TodayViewModel(private val repository: MedReviewRepository) : ViewModel() 
     val totalActive: StateFlow<Int> = repository.totalActiveCount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
 
-    /** Reviews done today (first ratings excluded): what the daily limit counts. Resets at midnight. */
+    /**
+     * Every topic, archived ones included (-1 = not read yet): the first-run welcome is for a library that is truly
+     * empty. It counted active topics only, so a learner who had archived everything was welcomed as new (a production
+     * review, 2026-10-10).
+     */
+    val libraryCount: StateFlow<Int> = repository.libraryCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
+
+    /** The library has been read once: until then every list above is empty because nothing is known yet. */
+    val libraryLoaded: StateFlow<Boolean> = activeNow.map { true }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /** Reviews done today (first ratings excluded): what the daily limit counts. Resets at midnight. -1 = not read yet. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val reviewsDoneToday: StateFlow<Int> = sharedDayTick
         .flatMapLatest { repository.observeReviewsBetween(startOfToday(), endOfToday()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
 
     // "Spread out" (OverdueRedistributor.deferrals) is no longer offered here (the owner's decision, 2026-10-09): the line
     // after today's share says what to do today, and a backlog stays visible, most urgent first, instead of being moved
@@ -249,7 +275,11 @@ fun TodayScreen(
     val allUpcoming by viewModel.allUpcoming.collectAsStateWithLifecycle()
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     val totalActive by viewModel.totalActive.collectAsStateWithLifecycle()
-    var showUpcomingSchedule by remember { mutableStateOf(false) }
+    val libraryCount by viewModel.libraryCount.collectAsStateWithLifecycle()
+    // Read again at every minute (TodayViewModel.minuteTick): the greeting, "due now" and the countdown follow the clock.
+    val minute by viewModel.minuteTick.collectAsStateWithLifecycle()
+    val now = remember(minute) { System.currentTimeMillis() }
+    var showUpcomingSchedule by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) } // kept through a rotation (UI-01)
         val strings = com.example.ui.i18n.LocalStrings.current
     val useJalali = com.example.ui.i18n.LocalUseJalali.current
 
@@ -292,6 +322,11 @@ fun TodayScreen(
     // a lecture, a video), so the seconds a card sits open measure nothing and "about N min" would be a
     // made-up number.
     val doneToday by viewModel.reviewsDoneToday.collectAsStateWithLifecycle()
+    // Nothing is drawn from the lists until the library and today's count have been read: on a cold start the empty
+    // first values drew "Finished for today" for a moment, and a share that ignored the reviews already done (a
+    // production review, 2026-10-10).
+    val libraryLoaded by viewModel.libraryLoaded.collectAsStateWithLifecycle()
+    val ready = libraryLoaded && doneToday >= 0
     val plan = remember(due, doneToday, dailyLimit) {
         DailyPlan.plan(due, doneToday, dailyLimit, System.currentTimeMillis())
     }
@@ -361,7 +396,7 @@ fun TodayScreen(
             // Shared logic (ExamCountdown) — exam day itself is not counted; same text on all screens.
             val examSp = androidx.compose.ui.platform.LocalContext.current.getSharedPreferences("medreview_settings", android.content.Context.MODE_PRIVATE)
             val examText = com.example.ui.i18n.ExamCountdown.text(
-                examSp.getString("exam_name", "") ?: "", examSp.getLong("exam_date", 0L), strings.languageCode
+                examSp.getString("exam_name", "") ?: "", examSp.getLong("exam_date", 0L), strings.languageCode, now,
             )
             if (examText != null) {
                 Text(
@@ -375,14 +410,14 @@ fun TodayScreen(
             // One calm hero card: greeting, what's on the plate, and the single primary action.
             run {
                 // When nothing is planned, the calm cards below cover it — don't double up here.
-                if (displayDue == 0) return@run
+                if (displayDue == 0 || !ready) return@run
                 val planned = plan.queue
                 val highYieldCount = planned.count { it.highYield }
                 val weakCount = planned.count { it.state == "NeedsRelearn" || it.state == "Learning" }
                 val newCount = plan.firstRatings.size
                 val isFa = strings.languageCode == "fa"
                 fun n(v: Int) = if (isFa) com.example.ui.i18n.PersianDate.faDigits(v) else v.toString()
-                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                val hour = java.util.Calendar.getInstance().apply { timeInMillis = now }.get(java.util.Calendar.HOUR_OF_DAY)
                 val greeting = when {
                     hour < 12 -> if (isFa) "صبح بخیر" else if (strings.languageCode == "de") "Guten Morgen" else "Good morning"
                     hour < 18 -> if (isFa) "بعدازظهر بخیر" else if (strings.languageCode == "de") "Guten Tag" else "Good afternoon"
@@ -491,6 +526,7 @@ fun TodayScreen(
                 contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (!ready) return@LazyColumn
                 if (showBackupNudge) {
                     item {
                         Card(
@@ -555,7 +591,7 @@ fun TodayScreen(
                             ) {
                                 // First run (library truly empty, count loaded): "caught up" would be
                                 // confusing before anything was ever added — greet and point at "+".
-                                if (totalActive == 0) {
+                                if (libraryCount == 0) {
                                     Text(
                                         text = when (strings.languageCode) { "fa" -> "به یادورا خوش آمدی"; "de" -> "Willkommen bei Yadora"; else -> "Welcome to Yadora" },
                                         style = MaterialTheme.typography.titleMedium,
@@ -629,7 +665,7 @@ fun TodayScreen(
                             )
                         }
                         items(plan.queue, key = { "share-${it.id}" }) { unit ->
-                            StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "PLAN") }, disambiguator = disambOf(unit))
+                            StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "PLAN") }, disambiguator = disambOf(unit), now = now)
                         }
                     }
                     // The line: the share ends where the daily limit does, and the rest of the day belongs to new material.
@@ -651,7 +687,7 @@ fun TodayScreen(
                             }
                         }
                         items(belowLine, key = { "below-${it.id}" }) { unit ->
-                            StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "EXTRA") }, disambiguator = disambOf(unit))
+                            StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "EXTRA") }, disambiguator = disambOf(unit), now = now)
                         }
                     }
                 }
@@ -691,7 +727,7 @@ fun TodayScreen(
                         }
                     }
                     items(if (nextUpExpanded) nextUp else nextUp.take(NEXT_UP_SHOWN), key = { "ahead-${it.id}" }) { unit ->
-                        StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "AHEAD") }, disambiguator = disambOf(unit))
+                        StudyUnitCard(unit, subjects, onClick = { onReviewFromToday(unit.id, "AHEAD") }, disambiguator = disambOf(unit), now = now)
                     }
                     if (!nextUpExpanded && nextUp.size > NEXT_UP_SHOWN) {
                         item {
@@ -724,7 +760,9 @@ fun StudyUnitCard(
     selectable: Boolean = false,
     // Shown under the title ONLY when another active topic shares this exact title, so the user can
     // tell two same-named topics apart by whatever actually differs (a note or source snippet).
-    disambiguator: String? = null
+    disambiguator: String? = null,
+    /** The clock "due now" is read against; Today passes its minute so the label follows time passing. */
+    now: Long = System.currentTimeMillis(),
 ) {
     val strings = com.example.ui.i18n.LocalStrings.current
     val haptic = LocalHapticFeedback.current
@@ -905,7 +943,7 @@ fun StudyUnitCard(
                 
                 // Date only — the schedule is day-granularity, so a clock time would claim a precision
                 // the scheduler doesn't have. Calendar (Jalali/Gregorian) follows the user preference.
-                val nextReviewText = if (unit.nextReviewAt < System.currentTimeMillis()) strings.dueNow
+                val nextReviewText = if (unit.nextReviewAt < now) strings.dueNow
                     else com.example.ui.i18n.AppDate.date(com.example.ui.i18n.LocalUseJalali.current, unit.nextReviewAt, strings.languageCode == "fa")
                 
                 Text(

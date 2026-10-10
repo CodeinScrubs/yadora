@@ -125,7 +125,10 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
             // across later no-review days (flat line, not a dip), but do NOT backfill the days BEFORE
             // any data existed — inventing a rate for days the user hadn't studied yet is a fake line.
             val firstDataDay = dayStats.minByOrNull { it.key }!!.key
-            var lastRate = -1f
+            // The rate carried in from before the window: after a break of two weeks or more no review falls inside it, and
+            // the chart said "No data yet" with months of reviews behind it (a production review, 2026-10-10).
+            var lastRate = dayStats.filterKeys { it < today - 13 }.maxByOrNull { it.key }
+                ?.let { (_, stat) -> stat.second.toFloat() / stat.first.toFloat() * 100f } ?: -1f
             val entries = (0..13).mapNotNull { i ->
                 val day = today - 13 + i
                 if (day < firstDataDay) return@mapNotNull null // pre-observation: leave a gap, don't invent
@@ -195,8 +198,8 @@ class ProgressViewModel(repository: MedReviewRepository) : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     /** The memory model card: the weight set in use, the last fit attempt, and the evidence so far. */
-    val memoryModelStatus = kotlinx.coroutines.flow.combine(allLogs, parameterSets) { logs, sets ->
-        memoryModelStatusOf(logs, sets)
+    val memoryModelStatus = kotlinx.coroutines.flow.combine(allLogs, parameterSets, repository.observeCorrectionEvents()) { logs, sets, events ->
+        memoryModelStatusOf(logs, sets, events)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 }
 
@@ -476,8 +479,10 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                             Column(modifier = Modifier.padding(16.dp)) {
                                 val digits: (String) -> String = { if (isFarsiLanguage) com.example.ui.i18n.PersianDate.faDigits(it) else it }
                                 val n: (Int) -> String = { digits(it.toString()) }
-                                val ll: (Double) -> String = { digits(String.format(java.util.Locale.US, "%.3f", it)) }
-                                val pct: (Double) -> String = { digits(String.format(java.util.Locale.US, "%.1f", it * 100)) }
+                                // German writes a decimal comma, as the calibration card above does (it read "0.345" here).
+                                val decimal: (String) -> String = { if (strings.languageCode == "de") it.replace('.', ',') else digits(it) }
+                                val ll: (Double) -> String = { decimal(String.format(java.util.Locale.US, "%.3f", it)) }
+                                val pct: (Double) -> String = { decimal(String.format(java.util.Locale.US, "%.1f", it * 100)) }
                                 val date: (Long) -> String = { com.example.ui.i18n.AppDate.date(useJalali, it, isFarsiLanguage) }
                                 val active = status.active
                                 val latest = status.latestAttempt
@@ -493,6 +498,13 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                         "de" -> "Seit $since, aus ${active.availableReviews} Wiederholungen. Bei deinen späteren Wiederholungen sagte es besser voraus als das ersetzte Modell: Log-Loss ${ll(active.currentLogLoss)} → ${ll(active.candidateLogLoss)}, gruppierter Fehler ${pct(active.currentRmseBins)} % → ${pct(active.candidateRmseBins)} %."
                                         else -> "Since $since, from ${active.availableReviews} reviews. On your later reviews it predicted better than the model it replaced: log loss ${ll(active.currentLogLoss)} → ${ll(active.candidateLogLoss)}, binned error ${pct(active.currentRmseBins)}% → ${pct(active.candidateRmseBins)}%."
                                     }
+                                    // The refit retired the set in use (it no longer met the conditions it was adopted under) and
+                                    // refused the new fit, so the standard weights schedule again.
+                                    latest != null && status.latestRetiredActive -> when (strings.languageCode) {
+                                        "fa" -> "آخرین بررسی ${date(latest.createdAt)} با ${n(latest.availableReviews)} مرور: مدلی که بر تو برازش شده بود دیگر شرط‌هایی را که با آن پذیرفته شده بود نداشت (فاصله‌هایت را طولانی‌تر نکند و ترتیب گزینه‌های اولین ارزیابی درست بماند)، پس کنار گذاشته شد و دوباره وزن‌های استاندارد به کار می‌روند. مدل تازه هم پذیرفته نشد."
+                                        "de" -> "Zuletzt geprüft am ${date(latest.createdAt)} mit ${latest.availableReviews} Wiederholungen: Das an dich angepasste Modell erfüllte die Bedingungen nicht mehr, unter denen es übernommen wurde (deine Abstände nicht verlängern, die Reihenfolge der ersten Bewertung wahren), daher gelten wieder die Standardgewichte. Ein neues Modell wurde nicht übernommen."
+                                        else -> "Last checked ${date(latest.createdAt)} on ${latest.availableReviews} reviews: the model fitted to you no longer met the conditions it was adopted under (not lengthening your intervals, the first rating's answers in order), so the standard weights schedule again. A new fit was not adopted."
+                                    }
                                     // Refused although it predicted better: the never-lengthen rule or the grade order.
                                     latest?.status == com.example.data.local.entity.MemoryParameterSetEntity.REJECTED &&
                                         latest.zScore >= com.example.domain.srs.Fsrs6Optimizer.ACCEPT_Z -> when (strings.languageCode) {
@@ -505,10 +517,12 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                                         "de" -> "Zuletzt geprüft am ${date(latest.createdAt)} mit ${latest.availableReviews} Wiederholungen: Ein an dich angepasstes Modell sagte deine späteren Wiederholungen nicht verlässlich besser voraus, daher bleibt alles, wie es ist."
                                         else -> "Last checked ${date(latest.createdAt)} on ${latest.availableReviews} reviews: a model fitted to you did not predict your later reviews reliably better, so nothing changed."
                                     }
+                                    // Switched off in Settings, or retired by a check when the model was loaded: no row says which,
+                                    // so the card says what holds either way (it said "switched off" for both).
                                     latest != null -> when (strings.languageCode) {
-                                        "fa" -> "مدلی که بر تو برازش شده بود خاموش شد."
-                                        "de" -> "Das an dich angepasste Modell wurde ausgeschaltet."
-                                        else -> "The model fitted to you was switched off."
+                                        "fa" -> "مدلی که بر تو برازش شده بود دیگر به کار نمی‌رود؛ وزن‌های استاندارد مرورهایت را زمان‌بندی می‌کنند."
+                                        "de" -> "Das an dich angepasste Modell wird nicht mehr verwendet; die Standardgewichte planen deine Wiederholungen."
+                                        else -> "The model fitted to you is no longer used; the standard weights schedule your reviews."
                                     }
                                     else -> when (strings.languageCode) {
                                         "fa" -> "مدلی متناسب با مرورهای خودت وقتی حدود $min مرورِ یادآوری جمع شود امتحان می‌شود (تا الان ${n(status.recallReviews)}) و فقط اگر مرورهای بعدی‌ات را بهتر پیش‌بینی کند و فاصله‌هایت را طولانی‌تر نکند به کار می‌رود."
@@ -591,7 +605,6 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                 set(Calendar.MILLISECOND, 0)
             }
             val todayStart = todayCalendar.timeInMillis
-            val oneDayMs = 24L * 60 * 60 * 1000
             
             LazyColumn(
                 modifier = Modifier
@@ -789,7 +802,11 @@ fun ProgressScreen(repository: MedReviewRepository, onNavigateToSettings: () -> 
                     }
                 }
                 
-                val laterUnits = activeList.filter { it.nextReviewAt > todayStart + daysToForecast * oneDayMs }
+                // From where the last day row ends, counted in calendar days as the rows are: a fixed 240 hours lost a topic
+                // due in the first hour after the window across a spring DST change, and counted one twice across a fall-back
+                // (a production review, 2026-10-10).
+                val windowEnd = Calendar.getInstance().apply { timeInMillis = todayStart; add(Calendar.DAY_OF_YEAR, daysToForecast) }.timeInMillis
+                val laterUnits = activeList.filter { it.nextReviewAt >= windowEnd }
                 if (laterUnits.isNotEmpty()) {
                     item {
                         Card(

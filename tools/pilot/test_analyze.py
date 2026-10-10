@@ -150,6 +150,29 @@ def test_a_corrected_day_recomputes_the_moved_review_too():
     print("a corrected day marks the moved review and the later ones; a corrected rating only the later ones")
 
 
+def test_a_correction_still_marks_its_logs_after_a_merge_moved_them():
+    """A merge moves the corrected topic's logs to the survivor while the correction's event keeps the old topic id: its
+    recomputed predictions used to count as evidence again after the merge (a production review, 2026-10-10). The app's
+    RecomputedPredictionsTest pins the same case."""
+    events = [dict(type="RATING_CORRECTED", unitId=7, at=500, detail="log=1 upto=3 memory=Good>Hard"),
+              dict(type="MERGE", unitId=9, at=600, detail="7"),
+              dict(type="MERGE", unitId=11, at=700, detail="9,12")]
+    logs = [dict(id=1, reviewedAt=100), dict(id=2, reviewedAt=200), dict(id=3, reviewedAt=300), dict(id=8, reviewedAt=800)]
+    fixes = analyze.corrections({"eventLogs": events})
+    for owner in (7, 9, 11):
+        assert {l["id"] for l in logs if analyze.recomputed_by(l, fixes[owner])} == {2, 3}, owner
+    assert 12 not in fixes, "a merge alone recomputes nothing"
+    print("a correction still marks the predictions it recomputed after merges moved its logs")
+
+
+def test_only_a_merge_survivor_is_a_merged_topic():
+    """A merge moves an absorbed copy's logs to the survivor, so a copy restored from the trash holds only its own
+    reviews afterwards (a production review, 2026-10-10). MergeUnitsTest pins the app's side."""
+    d = {"eventLogs": [dict(type="MERGE", unitId=9, at=1, detail="7,8"), dict(type="MERGE", unitId=None, at=2, detail="5")]}
+    assert analyze.merged_units(d) == {9}
+    print("only a merge survivor counts as a merged topic")
+
+
 def test_review_time_reports_coverage_before_the_minutes():
     """The learner's optional minutes (export v16): not given (-1) is never read as zero, coverage comes first, and a
     review saved hours after it happened (a backdated rating) is counted apart."""
@@ -456,6 +479,77 @@ def test_reminder_delivery_finds_the_days_a_phone_never_reminded():
     assert next(x for x in summary["decisions"] if x["id"] == "D11")["verdict"] == "WAIT"
     assert "predate it" in files["report.md"]
     print("reminder delivery: missed days, a late alarm, days switched off and a safety-net catch-up are told apart")
+
+
+def test_a_phone_whose_reminders_never_came_is_judged():
+    """The days judged start when the build was first seen on the phone (APP_VERSION), not at its first fire: from the
+    first fire, a phone whose reminders never came was never judged, and one silent for weeks showed none of those weeks
+    (a production review, 2026-10-10). The day the build was first seen is not judged."""
+    import datetime as dt
+    d = copy.deepcopy(fixture())
+    tz, _ = analyze.zone_of(d)
+    export_day = dt.datetime.fromtimestamp(d["exportedAt"] / 1000, tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    seen_at = int((export_day - dt.timedelta(days=20)).replace(hour=9).timestamp() * 1000)
+    events = [e for e in d.get("eventLogs") or [] if e["type"] not in ("REMINDER_FIRED", "APP_VERSION", "DAILY_SNAPSHOT",
+                                                                         "REMINDERS_ON", "REMINDERS_OFF")]
+    events.append(dict(at=seen_at, type="APP_VERSION", unitId=None, detail="code=4 name=1.1 previous=0"))
+    silent = copy.deepcopy(d)
+    silent["eventLogs"] = sorted(events, key=lambda e: e["at"])
+    silent.setdefault("settings", {})["dailyReminderEnabled"] = True
+    r = analyze.reminder_delivery(silent, tz, d["exportedAt"])
+    assert r["fires"] == 0 and r["days"] == 19 and len(r["missed_days"]) == 19, r
+    # Reminders that came only from the twelfth day on: the eleven days before are missed.
+    late_start = copy.deepcopy(silent)
+    for k in range(8, 0, -1):
+        at = int((export_day - dt.timedelta(days=k)).replace(hour=20).timestamp() * 1000)
+        late_start["eventLogs"].append(dict(at=at, type="REMINDER_FIRED", unitId=None,
+                                            detail=f"slot=primary scheduled={at} late_s=0 exact=1 idle=0 saver=0 bucket=10 outcome=posted due=3"))
+    r = analyze.reminder_delivery(late_start, tz, d["exportedAt"])
+    assert r["days"] == 19 and len(r["missed_days"]) == 11, r
+    # Switched off before any switch was logged: nothing to judge.
+    off = copy.deepcopy(silent)
+    off["settings"]["dailyReminderEnabled"] = False
+    assert analyze.reminder_delivery(off, tz, d["exportedAt"])["days"] == 0
+    print("a phone whose reminders never came, or came late in its span, is judged from when its build was first seen")
+
+
+def test_the_pooled_lengthening_reads_the_learner_target_as_the_app_does():
+    """The app checks a refit's lengthening at the learner's own target for every topic
+    (MedReviewRepository.refitPersonalModel); the toolkit used the target stored on each topic's last review, which an
+    Important topic or an older setting moves (a production review, 2026-10-10)."""
+    d = fixture()
+    tz, tz_name = analyze.zone_of(d)
+    e = analyze.Export("x", d, d["participantId"], int(d["exportedAt"]), tz, tz_name)
+    hist = [(p, u, l, un, tz, 1 << 62) for p, u, l, un, tz in analyze.histories([e])]
+    steeper = list(analyze.ym.DEFAULT_WEIGHTS)
+    steeper[20] = 0.3
+    marked = [(p, u, [dict(x, desiredRetentionAtReview=0.93) for x in l], un, tz, c) for p, u, l, un, tz, c in hist]
+    at_base = [(p, u, [dict(x, desiredRetentionAtReview=0.90) for x in l], un, tz, c) for p, u, l, un, tz, c in hist]
+    target = {d["participantId"]: 0.90}
+    expected = analyze.pooled_lengthening(at_base, tuple(steeper))
+    assert abs(analyze.pooled_lengthening(marked, tuple(steeper), target) - expected) < 1e-12
+    assert abs(analyze.pooled_lengthening(marked, tuple(steeper)) - expected) > 1e-6, "the stored targets do differ"
+    assert analyze.base_target(dict(settings=dict(userDesiredRetention=0.93))) == 0.93
+    assert analyze.base_target(dict(settings={})) == 0.90
+    print("the pooled refit's lengthening is read at each learner's own target, as the app reads it")
+
+
+def test_important_is_read_as_each_review_was_scheduled():
+    """A topic switched to Important later: its earlier reviews were scheduled at the normal target, as the log says
+    (wasImportantAtReview), and the toolkit counted them as Important from the topic's flag now (2026-10-10)."""
+    assert analyze.important_at_review(dict(wasImportantAtReview=0), dict(highYield=True)) is False
+    assert analyze.important_at_review(dict(wasImportantAtReview=1), dict(highYield=False)) is True
+    assert analyze.important_at_review(dict(wasImportantAtReview=-1), dict(highYield=True)) is True
+    assert analyze.important_at_review({}, dict(highYield=False)) is False
+    print("Important is read as each review was scheduled")
+
+
+def test_summary_json_is_strict_json():
+    """summary.json wrote NaN as a bare token, which strict readers refuse (2026-10-10)."""
+    assert analyze.finite_json(dict(a=float("nan"), b=[1.5, float("inf")], c=(2, "x"))) == dict(a=None, b=[1.5, None], c=[2, "x"])
+    _, _, files = run([fixture()])
+    json.loads(files["summary.json"], parse_constant=lambda c: (_ for _ in ()).throw(ValueError(c)))
+    print("summary.json is strict JSON")
 
 
 def with_daily_load(d, days=40, missing=(33,), backlog_from=20):
@@ -818,15 +912,18 @@ def test_calibration_window_follows_saved_ids_and_filters_before_limiting():
     # Use the real export's Row type and replay, then deliberately reverse its wall-clock order.
     row = next(r for r in rows_of(fixture()) if r.is_recall and r.predicted is not None)
     old = [replace(row, participant="owner", log_id=i + 1, at=100_000 + i, parameter_set=0,
-                   scheduler_version="FSRS-6", predicted=.9, elapsed_days=10., previous_interval=10.,
+                   scheduler_version="FSRS-6", predicted=.9, elapsed_days=10., stored_elapsed=10., previous_interval=10.,
                    rating="Good", recomputed=False) for i in range(analyze.ym.CAL_WINDOW)]
+    # A merged topic's replay counts its days again across both copies (elapsed_days 1 here); the app selects by the
+    # stored gap, and so does the window (a production review, 2026-10-10).
     recent = [replace(r, log_id=r.log_id + analyze.ym.CAL_WINDOW, at=1_000 + i,
-                      rating="Good" if i % 100 < 80 else "Forgot") for i, r in enumerate(old)]
+                      rating="Good" if i % 100 < 80 else "Forgot", elapsed_days=1. if i % 7 == 0 else r.elapsed_days)
+              for i, r in enumerate(old)]
     invalid = [replace(recent[0], log_id=10_000 + i, **kw) for i, kw in enumerate([
         dict(participant="another phone"), dict(parameter_set=7), dict(log_type="FIRST_STUDY"),
         dict(scheduler_version="FSRS-5"), dict(recomputed=True), dict(predicted=None),
         dict(predicted=1.01), dict(predicted=-.1), dict(predicted=float("nan")),
-        dict(elapsed_days=None), dict(elapsed_days=1.), dict(previous_interval=100.), dict(at=0),
+        dict(stored_elapsed=None), dict(stored_elapsed=1.), dict(previous_interval=100.), dict(at=0),
     ])]
     rows = old + recent + invalid
     for ordered in (rows, rows[::-1], sorted(rows, key=lambda r: r.at)):
@@ -844,6 +941,12 @@ if __name__ == "__main__":
     test_a_clock_set_back_and_a_corrected_rating_replay_exactly()
     test_a_correction_after_the_clock_went_back_still_marks_what_it_recomputed()
     test_a_corrected_day_recomputes_the_moved_review_too()
+    test_a_correction_still_marks_its_logs_after_a_merge_moved_them()
+    test_only_a_merge_survivor_is_a_merged_topic()
+    test_a_phone_whose_reminders_never_came_is_judged()
+    test_the_pooled_lengthening_reads_the_learner_target_as_the_app_does()
+    test_important_is_read_as_each_review_was_scheduled()
+    test_summary_json_is_strict_json()
     test_review_time_reports_coverage_before_the_minutes()
     test_a_tampered_interval_is_caught()
     test_a_tampered_prediction_and_elapsed_are_caught()

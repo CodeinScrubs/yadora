@@ -191,7 +191,7 @@ object Fsrs6Optimizer {
         var prevTime = 0L
         for ((index, e) in events.withIndex()) {
             if (index > 0 && e.logType == "FIRST_STUDY") {
-                prevTime = e.reviewedAt
+                prevTime = MedScheduler.exposureClock(prevTime, e.reviewedAt)
                 continue
             }
             val g = gradeOf(e.memoryRating) ?: continue

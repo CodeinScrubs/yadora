@@ -19,6 +19,12 @@ import com.example.data.local.entity.ReviewLogEntity
  *
  * A corrected DAY (REVIEW_DATE_CORRECTED, 2026-10-09: "log=<id> upto=<id> from=<ms> to=<ms>") recomputes the corrected
  * review's own prediction as well, since its gap changed, so its range starts at the corrected log itself.
+ *
+ * A merge moves a topic's logs to the topic that absorbs it, and the event keeps the old topic's id, so a correction
+ * made before the merge used to find none of its logs afterwards, and the predictions it recomputed counted again (a
+ * production review, 2026-10-10). Its range now applies to the logs of every topic a MERGE event moved them to as well
+ * ([ownersOf]). On the survivor that range can also hold logs of its own that were never recomputed; leaving a few true
+ * predictions out costs a little evidence, while counting a recomputed one would bias it.
  */
 object RecomputedPredictions {
 
@@ -31,18 +37,52 @@ object RecomputedPredictions {
             (if (inclusive) l.id >= corrected else l.id > corrected) && (upTo?.let { l.id <= it } ?: (l.reviewedAt < at))
     }
 
+    /** [events]: the corrections and the MERGE events (`EventLogDao.getCorrectionEvents`). */
     fun ids(logs: List<ReviewLogEntity>, events: List<EventLogEntity>): Set<Long> {
         val byUnit = HashMap<Long, MutableList<Correction>>()
+        val survivor = survivors(events)
         for (e in events) {
             if ((e.type != EVENT && e.type != DATE_EVENT) || e.unitId == null) continue
             val logId = correctedLogId(e.detail) ?: continue
-            byUnit.getOrPut(e.unitId) { mutableListOf() } += Correction(logId, lastLogId(e.detail), e.at, inclusive = e.type == DATE_EVENT)
+            val correction = Correction(logId, lastLogId(e.detail), e.at, inclusive = e.type == DATE_EVENT)
+            for (owner in ownersOf(e.unitId, survivor)) byUnit.getOrPut(owner) { mutableListOf() } += correction
         }
         if (byUnit.isEmpty()) return emptySet()
         return logs.asSequence()
             .filter { l -> byUnit[l.studyUnitId]?.any { it.recomputed(l) } == true }
             .map { it.id }
             .toHashSet()
+    }
+
+    /** Every topic whose logs [ids] has to read: the corrected topics and the topics merges moved their logs to. */
+    fun affectedUnits(events: List<EventLogEntity>): Set<Long> {
+        val survivor = survivors(events)
+        return events.asSequence()
+            .filter { (it.type == EVENT || it.type == DATE_EVENT) && it.unitId != null }
+            .flatMap { ownersOf(it.unitId!!, survivor) }
+            .toSet()
+    }
+
+    /** Absorbed topic -> the topic that absorbed it, from the MERGE events (survivor in unitId, absorbed ids in detail). */
+    private fun survivors(events: List<EventLogEntity>): Map<Long, Long> {
+        val out = HashMap<Long, Long>()
+        for (e in events) {
+            if (e.type != MERGE_EVENT || e.unitId == null) continue
+            for (part in (e.detail ?: "").split(',')) part.trim().toLongOrNull()?.let { if (it != e.unitId) out[it] = e.unitId }
+        }
+        return out
+    }
+
+    /** [unitId] and every topic its logs were moved to by a merge, then by a merge of that one, and so on. */
+    private fun ownersOf(unitId: Long, survivor: Map<Long, Long>): Set<Long> {
+        val out = linkedSetOf(unitId)
+        var at = unitId
+        while (true) {
+            val next = survivor[at] ?: break
+            if (!out.add(next)) break // a cycle cannot come from real merges, but must not loop
+            at = next
+        }
+        return out
     }
 
     /** The corrected log's id from a RATING_CORRECTED detail, "log=<id> upto=<id> memory=<a>><b> understanding=<c>><d>". */
@@ -58,4 +98,7 @@ object RecomputedPredictions {
 
     /** A review's day corrected from the topic's history (2026-10-09). */
     const val DATE_EVENT = "REVIEW_DATE_CORRECTED"
+
+    /** A merge: it moves the absorbed copies' logs, the corrections' among them, to the survivor. */
+    const val MERGE_EVENT = "MERGE"
 }
