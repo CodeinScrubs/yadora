@@ -1535,7 +1535,8 @@ These were decided deliberately. Re-suggesting them wastes a session:
     against the per-keystroke search. A restore inserts in batches, and
     Settings shows a progress dialog, which cannot be dismissed, during a backup, an export, a restore or a share (the
     soak's year, 1,935 topics and 16,699 reviews in a 14 MB file, restored in 2.8 s on the desktop JVM against 9.6 s one
-    row at a time; a phone is several times slower). "Spread out" writes `OverdueRedistributor.deferrals`, the one definition the soak drives too.
+    row at a time; a phone is several times slower). "Spread out" wrote `OverdueRedistributor.deferrals`, the one definition the soak drove too, until the redesign
+    took Spread out away (2026-10-09); the soak no longer uses it.
     Today's Review-ahead caption and the exam-countdown copy call it a good use of ANY spare time, not only of the last
     four weeks.
   - **Logged for the analysis (export v15):** DAILY_SNAPSHOT (`data/DailySnapshot`), at most once a local day, the day's
