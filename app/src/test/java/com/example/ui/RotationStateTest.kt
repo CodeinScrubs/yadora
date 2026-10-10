@@ -5,7 +5,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
@@ -73,6 +76,41 @@ class RotationStateTest {
         restore.emulateSavedInstanceStateRestore()
         waitForText("Review Forecast (Next 10 Days)") // still on Calendar Plan
         compose.onNodeWithText("Nephron physiology").assertExists() // and tomorrow is still open
+    }
+
+    /**
+     * The Library's selection and the merge dialog on it survive a rotation: both were plain remembered state, so a
+     * rotation cleared the topics chosen and closed the dialog (a production review, 2026-10-10).
+     */
+    @Test
+    fun `the library selection and its merge dialog stay through a rotation`() {
+        val app = ApplicationProvider.getApplicationContext<MedReviewApplication>()
+        runBlocking {
+            val now = System.currentTimeMillis()
+            for (title in listOf("Appendicitis", "آپاندیسیت")) app.repository.insertUnit(
+                StudyUnitEntity(
+                    title = title, studyType = "Topic", stability = 6.0, difficulty = 5.0, retrievability = 0.9,
+                    state = "Building", studiedAt = now - 9 * 86_400_000L, lastReviewedAt = now - 6 * 86_400_000L,
+                    nextReviewAt = now + 86_400_000L, modelDueAt = now + 86_400_000L, currentIntervalDays = 6.0, reviewCount = 2,
+                    memoryModel = "FSRS-6",
+                )
+            )
+        }
+        val restore = StateRestorationTester(compose)
+        restore.setContent(english { com.example.ui.library.LibraryScreen(repository = app.repository) })
+        waitForText("Appendicitis")
+        compose.onNodeWithText("Appendicitis").performTouchInput { longClick() }
+        waitForText(EnglishStrings.selectAll)
+        compose.onNodeWithText("آپاندیسیت").performClick()
+        compose.onNodeWithContentDescription("Merge Selected").performClick()
+        waitForText("Merge topics")
+
+        restore.emulateSavedInstanceStateRestore()
+        waitForText("Merge topics") // the dialog is open again
+        compose.onNodeWithText("Merge topics").assertExists()
+        compose.onAllNodesWithText(EnglishStrings.selectAll).fetchSemanticsNodes().isNotEmpty().let {
+            org.junit.Assert.assertTrue("still selecting", it)
+        }
     }
 
     @Test

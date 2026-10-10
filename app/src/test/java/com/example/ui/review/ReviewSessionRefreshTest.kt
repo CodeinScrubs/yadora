@@ -115,6 +115,77 @@ class ReviewSessionRefreshTest {
         )
     }
 
+    /**
+     * The Edit screen re-reads its topic each time it comes back (a review opened on top of it from a topic notification,
+     * or after process death), while the form keeps the dates it was filled with. Save compared the form with the fresher
+     * row, so the due date the review had just set looked edited, and Save wrote the old one back as a deferral (a
+     * production review, 2026-10-10).
+     */
+    @Test
+    fun `saving the Edit form after a review made on top of it keeps the review's due date`() {
+        val app = ApplicationProvider.getApplicationContext<MedReviewApplication>()
+        val repo = app.repository
+        val now = System.currentTimeMillis()
+        val id = ratedTopic(app, "Hypokalemia", now)
+        val vm = AddUnitViewModel(repo)
+        vm.loadUnit(id)
+        waitFor("the row loaded") { vm.existingUnit?.id == id }
+        val form = vm.existingUnit!! // what the form was filled with
+
+        // A topic notification opens its review on top of the Edit screen, and the learner rates it.
+        runBlocking { repo.rateUnit(id, now, MemoryRating.Good, UnderstandingRating.Clear, sessionKind = SessionKind.PLAN, reviewDurationMs = 1) }
+        val reviewed = runBlocking { repo.getUnitById(id)!! }
+        assertNotEquals("the review moved the due date", form.nextReviewAt, reviewed.nextReviewAt)
+        // Back on the Edit screen: it re-reads the row, the form keeps its own dates.
+        vm.loadUnit(id)
+        waitFor("the row re-read") { vm.existingUnit?.nextReviewAt == reviewed.nextReviewAt }
+
+        var saved = false
+        vm.saveUnit(
+            title = "Hypokalemia — ECG", subjectId = form.subjectId, systemId = null, studyType = "Topic", prompt = "",
+            keyPoints = null, notes = form.notes.orEmpty(), source = form.source.orEmpty(), highYield = false,
+            studiedAt = form.studiedAt, nextReviewAt = form.nextReviewAt, onSaved = { saved = true },
+            loadedStudiedAt = form.studiedAt, loadedNextReviewAt = form.nextReviewAt,
+        )
+        waitFor("the save") { saved }
+
+        val after = runBlocking { repo.getUnitById(id)!! }
+        assertEquals("Hypokalemia — ECG", after.title)
+        assertEquals("the review's due date stands", reviewed.nextReviewAt, after.nextReviewAt)
+        assertEquals("and nobody deferred it", null, after.deferredUntil)
+    }
+
+    /**
+     * A next-review date picked in the same save as a new study date is the learner's deferral. The study date replays
+     * the history, and the replay gave the rated topic the model's date instead: the picked date was dropped (a
+     * production review, 2026-10-10).
+     */
+    @Test
+    fun `a next-review date picked with a new study date is kept`() {
+        val app = ApplicationProvider.getApplicationContext<MedReviewApplication>()
+        val repo = app.repository
+        val now = System.currentTimeMillis()
+        val id = ratedTopic(app, "Hyperkalemia", now)
+        val vm = AddUnitViewModel(repo)
+        vm.loadUnit(id)
+        waitFor("the row loaded") { vm.existingUnit?.id == id }
+        val loaded = vm.existingUnit!!
+        val picked = now + 9 * day
+        var saved = false
+        vm.saveUnit(
+            title = loaded.title, subjectId = loaded.subjectId, systemId = null, studyType = "Topic", prompt = "",
+            keyPoints = null, notes = loaded.notes.orEmpty(), source = loaded.source.orEmpty(), highYield = false,
+            studiedAt = loaded.studiedAt - day, nextReviewAt = picked, onSaved = { saved = true },
+        )
+        waitFor("the save") { saved }
+
+        val after = runBlocking { repo.getUnitById(id)!! }
+        assertEquals("the study date moved", loaded.studiedAt - day, after.studiedAt)
+        assertEquals("the picked date stands", picked, after.nextReviewAt)
+        assertEquals("as the learner's deferral", picked, after.deferredUntil)
+        assertNotEquals("the model's own date is the replay's", picked, after.modelDueAt)
+    }
+
     /** The form no longer shows a topic's collection or study type, so saving it must leave them alone. */
     @Test
     fun `saving an edit keeps the collection and study type the form does not show`() {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 9 to 11 (API 28-30): the same rules as xml/backup_rules.xml, plus the Room database in a direct
+  phone-to-phone transfer only.
+
+  The owner's decision is that the database stays out of cloud backup and goes with a device transfer (CLAUDE.md;
+  data_extraction_rules.xml does exactly that on Android 12+). Before Android 12 a transfer reads these rules too, so the
+  database never went with it, and "set up my new phone" arrived with settings and no study history (a production
+  review, 2026-10-10). requireFlags="deviceToDeviceTransfer" (API 28+) includes it in a transfer and nowhere else.
+  Android 8 has no such flag, so there (xml/backup_rules.xml) the database stays out of both, and the app's own JSON
+  backup moves the history.
+-->
+<full-backup-content>
+    <include domain="database" path="." requireFlags="deviceToDeviceTransfer"/>
+    <include domain="sharedpref" path="."/>
+    <exclude domain="sharedpref" path="medreview_transient.xml"/>
+</full-backup-content>

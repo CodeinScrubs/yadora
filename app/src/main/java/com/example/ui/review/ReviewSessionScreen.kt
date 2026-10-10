@@ -75,11 +75,17 @@ internal fun intervalButtonLabel(days: Double): String {
 
 /**
  * [intervalButtonLabel] in the user's language. Persian gets Persian digits and the unit as a word:
- * "۳٫۲d" mixed two scripts on one button while every other number on the screen was Persian.
+ * "۳٫۲d" mixed two scripts on one button while every other number on the screen was Persian. German gets its decimal
+ * comma and its own words too, as its header beside the buttons has them ("3,2 Tage", "23 Std."): the buttons printed
+ * the English "d" and "h" (a production review, 2026-10-10).
  */
 internal fun localizedIntervalLabel(days: Double, languageCode: String): String {
     val latin = intervalButtonLabel(days)
-    if (languageCode == "de") return latin.replace('.', ',') // German writes a decimal comma: "3,2d"
+    if (languageCode == "de") return when {
+        latin == "<1h" -> "<1 Std."
+        latin.endsWith("h") -> "${latin.dropLast(1)} Std."
+        else -> latin.dropLast(1).replace('.', ',').let { if (it == "1") "1 Tag" else "$it Tage" }
+    }
     if (languageCode != "fa") return latin
     return when {
         latin == "<1h" -> "کمتر از ۱ ساعت"
@@ -134,7 +140,11 @@ internal fun previewReturnDays(
 internal fun estimateLabel(days: Double, languageCode: String, exact: Boolean): String {
     if (exact) return localizedIntervalLabel(days, languageCode)
     val whole = Math.round(days).coerceAtLeast(1L)
-    return if (languageCode == "fa") "حدود ${com.example.ui.i18n.PersianDate.faDigits(whole)} روز" else "~${whole}d"
+    return when (languageCode) {
+        "fa" -> "حدود ${com.example.ui.i18n.PersianDate.faDigits(whole)} روز"
+        "de" -> "~$whole ${if (whole == 1L) "Tag" else "Tage"}"
+        else -> "~${whole}d"
+    }
 }
 
 /** True if [earlier] falls on an earlier local calendar day than [later]. */
@@ -205,10 +215,37 @@ class ReviewViewModel(
         }
         loadNext(unitId, ignoreLimit, ahead)
     }
+
+    /**
+     * A single topic already rated on this screen before Android ended the process: the screen comes back with a new
+     * ViewModel, and loading the topic again offered its rating buttons, inviting the same review a second time (a
+     * production review, 2026-10-10). The end screen is shown instead, with the sentence it had; there is nothing left
+     * to undo in a new process.
+     */
+    fun restoreSaved(reason: String) {
+        if (sessionStarted) return
+        sessionStarted = true
+        singleTopic = true
+        sessionCount = 1
+        savedReason = reason
+        isLoading = false
+    }
     
     private val _currentUnit = MutableStateFlow<StudyUnitEntity?>(null)
     val currentUnit: StateFlow<StudyUnitEntity?> = _currentUnit
     
+    /**
+     * Ticks at every minute. The screen reads the clock when it recomposes, so a screen left open did not recompose and
+     * kept the minute it was drawn at: past midnight its previews no longer matched what the commit then wrote (a
+     * production review, 2026-10-10). Reading this makes it recompose each minute.
+     */
+    val minuteTick: StateFlow<Long> = kotlinx.coroutines.flow.flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            kotlinx.coroutines.delay(60_000L - System.currentTimeMillis() % 60_000L)
+        }
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), 0L)
+
     val subjects: StateFlow<List<com.example.data.local.entity.SubjectEntity>> = repository.allSubjects
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList())
         
@@ -434,6 +471,9 @@ class ReviewViewModel(
         highYield: Boolean,
         intervalDays: Double,
         effectiveIntervalDays: Double,
+        /** When the topic actually comes back, and the moment the rating was saved: the calendar day it names. */
+        dueAt: Long,
+        savedAt: Long,
         firstStudy: Boolean,
         // Whether a repair deadline was actually written. With the backoff, Partial or Confused can
         // leave the memory date standing alone; the sentence must then not claim anything moved.
@@ -448,21 +488,30 @@ class ReviewViewModel(
         val d = Math.round(effectiveIntervalDays).toInt().coerceAtLeast(1)
         val memoryDays = Math.round(intervalDays).toInt().coerceAtLeast(1)
         val repairWon = memoryDays > d
-        // A review saved for an earlier day can already be due again (counted from today, as the caller passes it).
-        val dueNow = effectiveIntervalDays < 0.5
+        // A review saved for an earlier day can already be due again, or come back later the same day. The day is named
+        // by the calendar, as Today lists it: a backdated Forgot due tonight was announced as "back tomorrow", and an Easy
+        // already due again as "pushed out, next today" (a production review, 2026-10-10).
+        val dueNow = dueAt <= savedAt
+        val zone = java.time.ZoneId.systemDefault()
+        val dayDiff = java.time.temporal.ChronoUnit.DAYS.between(
+            java.time.Instant.ofEpochMilli(savedAt).atZone(zone).toLocalDate(),
+            java.time.Instant.ofEpochMilli(dueAt).atZone(zone).toLocalDate(),
+        )
         val days = when {
             dueNow -> if (fa) "امروز" else if (de) "heute" else "today"
-            fa -> "${com.example.ui.i18n.PersianDate.faDigits(d)} روز دیگر"
-            de -> if (d <= 1) "in 1 Tag" else "in $d Tagen"
-            else -> if (d <= 1) "in 1 day" else "in $d days"
+            dayDiff <= 0 -> if (fa) "امروز، کمی بعد" else if (de) "später heute" else "later today"
+            dayDiff == 1L -> if (fa) "فردا" else if (de) "morgen" else "tomorrow"
+            fa -> "${com.example.ui.i18n.PersianDate.faDigits(dayDiff.toInt())} روز دیگر"
+            de -> "in $dayDiff Tagen"
+            else -> "in $dayDiff days"
         }
         val core = when {
             firstStudy -> if (fa) "ثبت شد — اولین مرور $days." else if (de) "Gespeichert — erster Check-in $days." else "Logged — first check-in $days."
             memory == MemoryRating.Forgot && dueNow -> if (fa) "فراموش شده بود — از امروز دوباره مرورش می‌کنی." else if (de) "Vergessen — ab heute wieder zum Neulernen dran." else "Forgot — it's due again from today to relearn."
-            memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — فردا دوباره مرورش می‌کنی." else if (de) "Vergessen — morgen kommt es zum Neulernen zurück." else "Forgot — it's back tomorrow to relearn."
-            memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es gab Lücken, also blieb der Abstand kurz — nächste $days." else "There were gaps, so it comes back soon — next $days."
-            memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — weiter hinausgeschoben, nächste $days." else "Easy — pushed out, next $days."
-            else -> if (fa) "خوب یادت مانده بود — مرور بعدی $days." else if (de) "Gut behalten — nächste $days." else "Remembered well — next $days."
+            memory == MemoryRating.Forgot -> if (fa) "فراموش شده بود — $days دوباره مرورش می‌کنی." else if (de) "Vergessen — $days kommt es zum Neulernen zurück." else "Forgot — it's back $days to relearn."
+            memory == MemoryRating.Hard -> if (fa) "جاهای خالی داشت، پس فاصله کوتاه ماند — مرور بعدی $days." else if (de) "Es gab Lücken, also blieb der Abstand kurz — nächste Wiederholung $days." else "There were gaps, so it comes back soon — next review $days."
+            memory == MemoryRating.Easy -> if (fa) "آسان بود — مرور بعدی $days." else if (de) "Leicht — nächste Wiederholung $days." else "Easy — next review $days."
+            else -> if (fa) "خوب یادت مانده بود — مرور بعدی $days." else if (de) "Gut behalten — nächste Wiederholung $days." else "Remembered well — next review $days."
         }
         // When the understanding clock wins, name the memory estimate too. "A bit sooner" alone hid
         // how far apart the two can be — a 100-day memory prediction with a 3-day repair is not
@@ -535,7 +584,13 @@ class ReviewViewModel(
                 val restored = repository.getUnitById(historyItem.review.before.id)
                     ?.takeIf { it.deletedAt == null && !it.archived }
                     ?.let { runCatching { repository.projectOntoCurrentModel(it) }.getOrNull() }
-                if (restored != null) _currentUnit.value = restored else advanceUnit()
+                if (restored != null) {
+                    _currentUnit.value = restored
+                    // As advanceUnit does for a card it shows: its own split hint and its own time on screen. Both stayed
+                    // the previous card's (a production review, 2026-10-10).
+                    unitShownAt = System.currentTimeMillis()
+                    checkSplitSuggestion(restored)
+                } else advanceUnit()
             } catch (t: Throwable) {
                 ratedStack.add(historyItem) // undo failed: keep the history item so Undo stays possible
             } finally {
@@ -624,6 +679,8 @@ class ReviewViewModel(
                 memoryRating, understandingRating, rated.before.highYield,
                 intervalDays = rated.memoryIntervalDays - (wallClock - now) / 86400000.0,
                 effectiveIntervalDays = effectiveIntervalDays,
+                dueAt = rated.effectiveDueAt,
+                savedAt = wallClock,
                 firstStudy = reviewNumber == 0,
                 repairPending = rated.repairPending,
             )
@@ -705,8 +762,16 @@ fun ReviewSessionScreen(
     val application = context.applicationContext as android.app.Application
     val viewModel: ReviewViewModel = viewModel(factory = ReviewViewModelFactory(application, repository))
 
+    // What a single topic's end screen said, kept with the screen's saved state (ReviewViewModel.restoreSaved).
+    var savedHere by androidx.compose.runtime.saveable.rememberSaveable(unitId) { mutableStateOf<String?>(null) }
     LaunchedEffect(unitId, ignoreLimit, ahead) {
-        viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead, kind = kind)
+        val saved = savedHere
+        if (unitId != -1L && saved != null) viewModel.restoreSaved(saved)
+        else viewModel.startSessionOnce(unitId = unitId, ignoreLimit = ignoreLimit, ahead = ahead, kind = kind)
+    }
+    // Set when the rating is saved, cleared by its Undo.
+    LaunchedEffect(viewModel.savedReason) {
+        if (viewModel.singleTopic) savedHere = viewModel.savedReason
     }
     // Coming back to the card (from the Edit screen, or the app from the background): show the row as it is now.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
@@ -919,8 +984,19 @@ fun ReviewSessionScreen(
                 // First rating (logging a study) vs a later review.
                 val previewReviewNumber = MedScheduler.effectiveReviewNumber(currentUnit.reviewCount)
                 val isFreshFirstStudy = previewReviewNumber == 0
-                // One clock for every preview on this screen (the estimates and the understanding buttons).
+                // One clock for every preview on this screen (the estimates and the understanding buttons), read again at
+                // every minute (minuteTick), and the time the review will be saved with: now, or the earlier day chosen on
+                // the understanding step. The first and memory steps read it too: the chosen day stays when the learner
+                // goes back to them, and their figures ignored it (a production review, 2026-10-10).
+                @Suppress("UNUSED_VARIABLE") val tick = viewModel.minuteTick.collectAsStateWithLifecycle().value
                 val now = System.currentTimeMillis()
+                val zone = java.time.ZoneId.systemDefault()
+                val reviewTime = reviewedOnEpochDay?.let {
+                    com.example.domain.model.ReviewDay.timeForRating(java.time.LocalDate.ofEpochDay(it), now, currentUnit.lastReviewedAt, zone)
+                } ?: now
+                // A figure counted from today: a review saved for an earlier day comes back that much sooner, or is due now.
+                fun fromToday(days: Double) = days - (now - reviewTime) / 86_400_000.0
+                val todayWord = when (strings.languageCode) { "fa" -> "امروز"; "de" -> "heute"; else -> "today" }
                 // Reference only: shown with the notes, never scored (KeyPoints).
                 val keyPointList = remember(currentUnit.keyPoints) { com.example.domain.srs.KeyPoints.parse(currentUnit.keyPoints) }
                 Row(
@@ -1225,7 +1301,7 @@ fun ReviewSessionScreen(
                                 ) {
                                     // The first check-in this answer leads to (with Clear understanding): the learner sees
                                     // what each answer means for the schedule before choosing it.
-                                    val estimate = previewReturnDays(currentUnit, now, rating, UnderstandingRating.Clear, viewModel.currentUnrepairedStreak)
+                                    val estimate = fromToday(previewReturnDays(currentUnit, reviewTime, rating, UnderstandingRating.Clear, viewModel.currentUnrepairedStreak))
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text(
                                             when (rating) {
@@ -1236,7 +1312,7 @@ fun ReviewSessionScreen(
                                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                         )
                                         Text(
-                                            estimateLabel(estimate, strings.languageCode, exact = false),
+                                            if (estimate < 0.5) todayWord else estimateLabel(estimate, strings.languageCode, exact = false),
                                             style = MaterialTheme.typography.labelSmall,
                                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                                         )
@@ -1291,11 +1367,11 @@ fun ReviewSessionScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     // The rating, and under it roughly when this answer brings the topic back.
-                                    val estimate = previewReturnDays(
-                                        currentUnit, now, rating,
+                                    val estimate = fromToday(previewReturnDays(
+                                        currentUnit, reviewTime, rating,
                                         if (rating == MemoryRating.Forgot) UnderstandingRating.Partial else UnderstandingRating.Clear,
                                         viewModel.currentUnrepairedStreak,
-                                    )
+                                    ))
                                     Column(modifier = Modifier.width(88.dp)) {
                                         Text(
                                             when (rating) {
@@ -1307,7 +1383,7 @@ fun ReviewSessionScreen(
                                             fontWeight = FontWeight.Bold,
                                         )
                                         Text(
-                                            estimateLabel(estimate, strings.languageCode, exact = rating == MemoryRating.Forgot),
+                                            if (estimate < 0.5) todayWord else estimateLabel(estimate, strings.languageCode, exact = rating == MemoryRating.Forgot),
                                             style = MaterialTheme.typography.labelSmall,
                                         )
                                     }
@@ -1338,10 +1414,6 @@ fun ReviewSessionScreen(
                         // Before the last answer, two optional things about the review itself, for a first study and a
                         // review alike: the day it happened (today unless the learner says otherwise) and about how long
                         // it took. Neither is ever required (the owner's decisions, 2026-10-09).
-                        val zone = java.time.ZoneId.systemDefault()
-                        val reviewTime = reviewedOnEpochDay?.let {
-                            com.example.domain.model.ReviewDay.timeForRating(java.time.LocalDate.ofEpochDay(it), now, currentUnit.lastReviewedAt, zone)
-                        } ?: now
                         ReviewDayChip(
                             languageCode = strings.languageCode,
                             firstStudy = isFreshFirstStudy,
@@ -1375,11 +1447,8 @@ fun ReviewSessionScreen(
                                 // earlier of the memory date and the repair deadline, with the commit's own fuzz, from
                                 // the time the review is saved with. Shown counted from today: a review saved for an
                                 // earlier day comes back that much sooner, or is due now.
-                                val effectiveInterval = previewReturnDays(currentUnit, reviewTime, chosenMemory, rating, viewModel.currentUnrepairedStreak)
-                                val fromToday = effectiveInterval - (now - reviewTime) / 86_400_000.0
-                                val intervalStr = if (fromToday < 0.5) {
-                                    when (strings.languageCode) { "fa" -> "امروز"; "de" -> "heute"; else -> "today" }
-                                } else localizedIntervalLabel(fromToday, strings.languageCode)
+                                val shown = fromToday(previewReturnDays(currentUnit, reviewTime, chosenMemory, rating, viewModel.currentUnrepairedStreak))
+                                val intervalStr = if (shown < 0.5) todayWord else localizedIntervalLabel(shown, strings.languageCode)
                                 Button(
                                     onClick = {
                                         haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)

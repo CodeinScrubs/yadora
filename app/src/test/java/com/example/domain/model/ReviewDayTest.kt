@@ -81,6 +81,41 @@ class ReviewDayTest {
         assertNull(ReviewDay.correctionRange(at(tehran, 2026, 10, 6, 9), at(tehran, 2026, 10, 4, 9), now, tehran))
     }
 
+    @Test fun `a review before it that lies after now leaves no day either`() {
+        // The clock set back since the review before: its day is today, but every time after it lies after now. The
+        // picker used to offer today, and the repository then refused the move without a word (a production review,
+        // 2026-10-10).
+        val now = at(tehran, 2026, 10, 9, 9)
+        assertNull(ReviewDay.correctionRange(at(tehran, 2026, 10, 9, 10), null, now, tehran))
+    }
+
+    @Test fun `every day offered gives a time inside the neighbours, not after now, on that day`() {
+        val now = at(tehran, 2026, 10, 9, 12)
+        val cases = listOf(
+            Triple(at(tehran, 2026, 10, 2, 20), at(tehran, 2026, 10, 6, 8), at(tehran, 2026, 10, 4, 21)),
+            // The review after it at exactly midnight: the day it starts holds no time before it.
+            Triple(at(tehran, 2026, 10, 2, 20), at(tehran, 2026, 10, 6, 0), at(tehran, 2026, 10, 4, 21)),
+            // Both neighbours on one day, a minute apart.
+            Triple(at(tehran, 2026, 10, 5, 9, 0), at(tehran, 2026, 10, 5, 9, 1), at(tehran, 2026, 10, 5, 23)),
+            // The last review, its hour later than now's.
+            Triple(at(tehran, 2026, 10, 9, 11), null, at(tehran, 2026, 10, 3, 22)),
+            Triple(null, at(tehran, 2026, 10, 1, 7), at(tehran, 2026, 9, 30, 23, 59)),
+        )
+        for ((previous, next, original) in cases) {
+            val range = ReviewDay.correctionRange(previous, next, now, tehran)!!
+            var d = range.start
+            while (d <= range.endInclusive) {
+                val t = ReviewDay.timeForCorrection(d, original, previous, next, now, tehran)
+                assertTrue("after the review before ($d)", previous == null || t > previous)
+                assertTrue("before the review after ($d)", next == null || t < next)
+                assertTrue("not after now ($d)", t <= now)
+                assertEquals("on the day chosen", d, ReviewDay.day(t, tehran))
+                d = d.plusDays(1)
+            }
+            if (next != null) assertTrue("no day after the one the next review's time is on", range.endInclusive <= ReviewDay.day(next - 1, tehran))
+        }
+    }
+
     @Test fun `a day in a daylight-saving gap still lands on that day`() {
         // Berlin skips 02:00-03:00 on 2026-03-29. A rating for that day at 02:30 (the clock's hour now) lands on it.
         val now = at(berlin, 2026, 3, 30, 2, 30)

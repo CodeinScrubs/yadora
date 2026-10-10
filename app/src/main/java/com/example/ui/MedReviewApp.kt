@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -60,9 +61,18 @@ fun MedReviewApp(
     // (the owner's decision, 2026-10-09). It used to open today's plan as a session.
     androidx.compose.runtime.LaunchedEffect(openReviewSignal) {
         if (openReviewSignal > 0) {
-            navController.navigate(Screen.Today) {
-                popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
-                launchSingleTop = true
+            val top = navController.currentBackStackEntry?.destination
+            when {
+                top?.hasRoute<Screen.Today>() == true -> Unit
+                // From another tab, Today as the tab bar opens it.
+                top == null || top.hasRoute<Screen.Library>() || top.hasRoute<Screen.Progress>() -> navController.navigate(Screen.Today) {
+                    popUpTo(navController.graph.findStartDestination().id) { inclusive = false }
+                    launchSingleTop = true
+                }
+                // A form, a review or Settings is open: Today goes on top of it, so Back returns to it with what was typed
+                // or chosen there. Popping back to Today threw an unsaved Add or Edit form away (a production review,
+                // 2026-10-10), which the session this replaced, opened on top, never did.
+                else -> navController.navigate(Screen.Today) { launchSingleTop = true }
             }
         }
     }
@@ -70,7 +80,14 @@ fun MedReviewApp(
     // A topic's own notification opens that topic to rate. It is in today's share, so its log says PLAN.
     androidx.compose.runtime.LaunchedEffect(openTopic) {
         if (openTopic != null) {
-            navController.navigate(Screen.ReviewSession(openTopic.unitId, kind = "PLAN")) { launchSingleTop = true }
+            val top = navController.currentBackStackEntry
+            val reviewOnTop = top?.destination?.hasRoute<Screen.ReviewSession>() == true
+            // Already rating this very topic: nothing to open, and the answers chosen so far stay.
+            if (reviewOnTop && top.toRoute<Screen.ReviewSession>().unitId == openTopic.unitId) return@LaunchedEffect
+            // A review of ANOTHER topic gives way. A single-top launch kept its back-stack entry (only the arguments
+            // change), so its ViewModel went on showing the old topic.
+            if (reviewOnTop) navController.popBackStack()
+            navController.navigate(Screen.ReviewSession(openTopic.unitId, kind = "PLAN"))
         }
     }
 

@@ -26,7 +26,7 @@ class LibrarySearchTest {
         val subjectHits = subjects.filterValues { has(it) }.keys
         val systemHits = systems.filterValues { has(it) }.keys
         return units.filter { u ->
-            has(u.title) || has(u.studyType) || has(u.recallPrompt) || has(u.keyPoints) || has(u.notes) || has(u.source) ||
+            has(u.title) || has(u.recallPrompt) || has(u.keyPoints) || has(u.notes) || has(u.source) ||
                 u.subjectId in subjectHits || u.systemId in systemHits
         }
     }
@@ -111,6 +111,23 @@ class LibrarySearchTest {
         assertEquals("every word must be found", emptyList<Long>(), ids("cardio 304"))
         assertEquals("a word repeated counts once", listOf(2L), ids("303 303"))
         assertEquals("one word, as before", listOf(3L), ids("304"))
+    }
+
+    /**
+     * The study type is dormant, "Topic" on every topic and shown nowhere: searched, "opi" (opioids) or "top" listed the
+     * whole library (a production review, 2026-10-10).
+     */
+    @Test fun the_hidden_study_type_is_not_searched() {
+        val units = listOf(
+            StudyUnitEntity(id = 1, title = "Opioid toxicity", studyType = "Topic", studiedAt = 0L, nextReviewAt = 0L),
+            StudyUnitEntity(id = 2, title = "Asthma", studyType = "Topic", studiedAt = 0L, nextReviewAt = 0L),
+            StudyUnitEntity(id = 3, title = "Heart failure", studyType = "Lecture", studiedAt = 0L, nextReviewAt = 0L),
+        )
+        val index = LibrarySearch.index(units)
+        fun ids(q: String) = LibrarySearch.search(index, q, emptyMap(), emptyMap()).map { it.id }
+        assertEquals(listOf(1L), ids("opi"))
+        assertEquals(emptyList<Long>(), ids("topic"))
+        assertEquals(emptyList<Long>(), ids("lecture"))
     }
 
     /** Typing in a year's library: about 2,000 topics, many with long notes. Printed, so a slow phone build shows. */

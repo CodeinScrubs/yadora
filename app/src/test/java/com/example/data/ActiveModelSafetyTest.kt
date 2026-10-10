@@ -96,6 +96,10 @@ class ActiveModelSafetyTest {
         assertEquals(origin + 100 * day, retired.retiredAt)
         val event = db.eventLogDao().getAll().single { it.type == "PERSONAL_MODEL_RETIRED" }
         assertTrue(event.detail.orEmpty().contains("set=$id") && event.detail.orEmpty().contains("lengthening"))
+        // Progress says the set in use was retired, not "nothing changed" (it read only the refused attempt).
+        val status = com.example.ui.progress.memoryModelStatusOf(emptyList(), db.memoryParameterSetDao().getAll())
+        assertNull(status.active)
+        assertTrue("the card knows this attempt retired the set in use", status.latestRetiredActive)
         repo.refreshMemoryModel()
         assertEquals(0L, MedScheduler.activeParameterSet.id)
         assertArrayEquals(longWeights, MedScheduler.knownParameterSets[id], 0.0)
@@ -111,6 +115,7 @@ class ActiveModelSafetyTest {
         assertEquals(Fsrs6Optimizer.Verdict.REJECTED, report.verdict)
         assertEquals(id, db.memoryParameterSetDao().getActive()!!.id)
         assertTrue(db.eventLogDao().getAll().none { it.type == "PERSONAL_MODEL_RETIRED" })
+        assertFalse(com.example.ui.progress.memoryModelStatusOf(emptyList(), db.memoryParameterSetDao().getAll()).latestRetiredActive)
     }
 
     @Test fun `switching off during a fit discards retirement as well as adoption`() = runBlocking {

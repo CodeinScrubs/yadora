@@ -38,6 +38,9 @@ import com.example.ui.theme.MyApplicationTheme
 class AlarmRingActivity : ComponentActivity() {
 
     companion object {
+        private const val AUTO_STOP_MS = 5 * 60 * 1000L
+        private const val STATE_RINGING_SINCE = "ringing_since"
+
         // The ringing lives in this activity, so a notification action or the main app opening needs
         // a way to silence it from outside. Same-process only; cleared in onDestroy.
         @Volatile
@@ -52,6 +55,13 @@ class AlarmRingActivity : ComponentActivity() {
 
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
+    /** When this alarm began ringing (elapsed realtime), kept across a rotation. */
+    private var ringingSince = 0L
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putLong(STATE_RINGING_SINCE, ringingSince)
+    }
 
     /** The ringer has had window focus at least once: the learner has seen it, so a stop now means they left. */
     private var seen = false
@@ -84,8 +94,13 @@ class AlarmRingActivity : ComponentActivity() {
         }
 
         startRinging()
-        // Don't ring forever — auto-stop after a few minutes like a real alarm clock.
-        autoStopHandler.postDelayed(autoStopRunnable, 5 * 60 * 1000L)
+        // Don't ring forever — auto-stop after a few minutes like a real alarm clock, counted from when it began ringing,
+        // so a rotation (a new instance) does not start the five minutes again.
+        ringingSince = savedInstanceState?.getLong(STATE_RINGING_SINCE, 0L)?.takeIf { it > 0L } ?: android.os.SystemClock.elapsedRealtime()
+        autoStopHandler.postDelayed(
+            autoStopRunnable,
+            (AUTO_STOP_MS - (android.os.SystemClock.elapsedRealtime() - ringingSince)).coerceAtLeast(0L),
+        )
 
         val prefs = getSharedPreferences("medreview_settings", MODE_PRIVATE)
         val lang = prefs.getString("app_language", "en") ?: "en"
@@ -187,10 +202,14 @@ class AlarmRingActivity : ComponentActivity() {
     }
 
     private fun stopRinging() {
-        runCatching { ringtone?.stop() }
-        runCatching { vibrator?.cancel() }
+        stopSound()
         // Clear only OUR reminder notification (not the user's other notifications) after dismiss/review.
         runCatching { (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(NotificationScheduler.NOTIFICATION_ID) }
+    }
+
+    private fun stopSound() {
+        runCatching { ringtone?.stop() }
+        runCatching { vibrator?.cancel() }
         ringtone = null
         vibrator = null
     }
@@ -241,7 +260,10 @@ class AlarmRingActivity : ComponentActivity() {
 
     override fun onDestroy() {
         autoStopHandler.removeCallbacks(autoStopRunnable)
-        stopRinging()
+        // A rotation recreates the ringer, which rings again at once: only this instance's sound stops. The reminder,
+        // with its Review now and Dismiss, stays in the shade; it used to go with every rotation (a production review,
+        // 2026-10-10).
+        if (isChangingConfigurations) stopSound() else stopRinging()
         if (active === this) active = null
         super.onDestroy()
     }

@@ -210,6 +210,23 @@ object AutoBackup {
         schedule(context)
     }
 
+    /**
+     * Back up into [uri] from now on, instead of the folder in use. The new folder's permission is taken FIRST: the old
+     * one used to be released before it, so a folder whose provider refuses a lasting permission left automatic backup
+     * off, with the working folder dropped (a production review, 2026-10-10). Throws, changing nothing, when [uri] cannot
+     * be used.
+     */
+    fun changeFolder(context: Context, uri: Uri) {
+        val old = treeUri(context)
+        enable(context, uri)
+        if (old != null && old != uri) runCatching {
+            context.contentResolver.releasePersistableUriPermission(
+                old,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+    }
+
     fun disable(context: Context) {
         treeUri(context)?.let { uri ->
             runCatching {

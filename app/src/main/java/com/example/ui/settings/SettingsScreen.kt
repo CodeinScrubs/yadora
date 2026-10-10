@@ -1,5 +1,6 @@
 package com.example.ui.settings
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Context
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
@@ -89,11 +90,8 @@ private fun AutoBackupCard(language: String, useJalali: Boolean, refresh: Int) {
         androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
-            val ok = runCatching {
-                // A new folder replaces the old one: release the old permission first.
-                if (com.example.data.AutoBackup.isOn(context)) com.example.data.AutoBackup.disable(context)
-                com.example.data.AutoBackup.enable(context, uri)
-            }.isSuccess
+            // A new folder replaces the old one only once it can be used (AutoBackup.changeFolder).
+            val ok = runCatching { com.example.data.AutoBackup.changeFolder(context, uri) }.isSuccess
             tick++
             if (ok) backUpNow() else android.widget.Toast.makeText(
                 context, t("این پوشه قابل استفاده نیست", "Dieser Ordner lässt sich nicht verwenden", "That folder can't be used"),
@@ -114,9 +112,9 @@ private fun AutoBackupCard(language: String, useJalali: Boolean, refresh: Int) {
             if (!on) {
                 Text(
                     t(
-                        "تاریخچهٔ مطالعه‌ات فقط روی همین گوشی است. یک پوشه انتخاب کن تا یادورا هر روز یک پشتیبان کامل آنجا ذخیره کند. پشتیبان‌های هفتهٔ اخیر و یکی از هر ماه نگه داشته می‌شوند. اگر پوشه‌ای را انتخاب کنی که یک برنامهٔ ابری (مثل گوگل‌درایو) همگامش می‌کند، با گم شدن گوشی هم چیزی از دست نمی‌رود.",
-                        "Dein Lernverlauf liegt nur auf diesem Handy. Wähle einen Ordner, und Yadora legt dort jeden Tag eine vollständige Sicherung ab. Die Sicherungen der letzten Woche und je eine pro Monat bleiben erhalten. Ein Ordner, den eine Cloud-App synchronisiert (z. B. Google Drive), schützt dich auch, wenn das Handy verloren geht.",
-                        "Your study history lives only on this phone. Choose a folder and Yadora saves a full backup there every day, keeping the last week's backups and one from each month. A folder a cloud app syncs (Google Drive, for example) also protects you if the phone is lost.",
+                        "تاریخچهٔ مطالعه‌ات فقط روی همین گوشی است. یک پوشه انتخاب کن تا یادورا هر روز یک پشتیبان کامل آنجا ذخیره کند. پشتیبان‌های هفتهٔ اخیر و یکی از هر یک از شش ماه اخیر نگه داشته می‌شوند. اگر پوشه‌ای را انتخاب کنی که یک برنامهٔ ابری (مثل گوگل‌درایو) همگامش می‌کند، با گم شدن گوشی هم چیزی از دست نمی‌رود.",
+                        "Dein Lernverlauf liegt nur auf diesem Handy. Wähle einen Ordner, und Yadora legt dort jeden Tag eine vollständige Sicherung ab. Die Sicherungen der letzten Woche und je eine aus jedem der letzten sechs Monate bleiben erhalten. Ein Ordner, den eine Cloud-App synchronisiert (z. B. Google Drive), schützt dich auch, wenn das Handy verloren geht.",
+                        "Your study history lives only on this phone. Choose a folder and Yadora saves a full backup there every day, keeping the last week's backups and one from each of the last six months. A folder a cloud app syncs (Google Drive, for example) also protects you if the phone is lost.",
                     ),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -239,21 +237,19 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     val exportScope = rememberCoroutineScope()
     // What a long file operation is doing, shown while it runs. With a year of study (thousands of topics, tens of
     // thousands of reviews) a restore or an export takes many seconds on a phone, and a screen that shows nothing for
-    // that long looks frozen; leaving it then cannot stop the work, which runs to the end either way.
-    var busyMessage by remember { mutableStateOf<String?>(null) }
+    // that long looks frozen; leaving it then cannot stop the work, which runs to the end either way. The operation and
+    // this state live on the application's scope (DataOperations), so a rotation neither hides the dialog nor skips what
+    // comes after the work; what they report goes through the application context for the same reason.
+    val busyMessage by DataOperations.busy.collectAsStateWithLifecycle()
+    val appContext = context.applicationContext
     val preparingFile = when (language) { "fa" -> "در حال آماده‌سازی فایل…"; "de" -> "Datei wird vorbereitet …"; else -> "Preparing the file…" }
     val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
-            exportScope.launch {
-                busyMessage = preparingFile
-                val ok = try {
-                    writePickedDocument(context, uri) { com.example.data.AnalyticsExporter.writeJson(context, it) }
-                } finally {
-                    busyMessage = null
-                }
-                android.widget.Toast.makeText(context, if (ok) (when (language) { "fa" -> "خروجی ذخیره شد"; "de" -> "Exportiert"; else -> "Exported" }) else (when (language) { "fa" -> "خروجی ناموفق بود"; "de" -> "Export fehlgeschlagen"; else -> "Export failed" }), android.widget.Toast.LENGTH_SHORT).show()
+            DataOperations.run(preparingFile) {
+                val ok = writePickedDocument(appContext, uri) { com.example.data.AnalyticsExporter.writeJson(appContext, it) }
+                android.widget.Toast.makeText(appContext, if (ok) (when (language) { "fa" -> "خروجی ذخیره شد"; "de" -> "Exportiert"; else -> "Exported" }) else (when (language) { "fa" -> "خروجی ناموفق بود"; "de" -> "Export fehlgeschlagen"; else -> "Export failed" }), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -283,18 +279,13 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
-            exportScope.launch {
-                busyMessage = preparingFile
-                val ok = try {
-                    writePickedDocument(context, uri) { com.example.data.BackupManager.writeBackup(context, it) }
-                } finally {
-                    busyMessage = null
-                }
+            DataOperations.run(preparingFile) {
+                val ok = writePickedDocument(appContext, uri) { com.example.data.BackupManager.writeBackup(appContext, it) }
                 // A backup made by hand quiets Today's automatic-backup suggestion for a month.
-                if (ok) NotificationScheduler.transientPrefs(context).edit {
+                if (ok) NotificationScheduler.transientPrefs(appContext).edit {
                     putLong(com.example.data.AutoBackup.PREF_LAST_MANUAL_AT, System.currentTimeMillis())
                 }
-                android.widget.Toast.makeText(context, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else if (language == "de") "Sicherung gespeichert" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else if (language == "de") "Sicherung fehlgeschlagen" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(appContext, if (ok) (if (language == "fa") "پشتیبان ذخیره شد" else if (language == "de") "Sicherung gespeichert" else "Backup saved") else (if (language == "fa") "ذخیرهٔ پشتیبان ناموفق بود" else if (language == "de") "Sicherung fehlgeschlagen" else "Backup failed"), android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -312,49 +303,67 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 TextButton(onClick = {
                     val uri = pendingImportUri ?: return@TextButton
                     pendingImportUri = null
-                    exportScope.launch {
-                        busyMessage = when (language) { "fa" -> "در حال بازیابی… یادورا را باز نگه دار."; "de" -> "Wiederherstellung läuft … lass Yadora geöffnet."; else -> "Restoring… keep Yadora open." }
+                    DataOperations.run(when (language) { "fa" -> "در حال بازیابی… یادورا را باز نگه دار."; "de" -> "Wiederherstellung läuft … lass Yadora geöffnet."; else -> "Restoring… keep Yadora open." }) {
                         // Streamed from the file, validated in full before anything is replaced, and not
                         // cancellable half-way: a restore either completes or never touches the data. The
                         // reminder re-arm and the widget refresh belong to the restore, so they run inside the
                         // same block: leaving Settings mid-restore cancels this scope, and a cancelled
                         // withContext throws on return, which used to skip them and leave the reminders armed
                         // for the old data and the widget showing it.
-                        val result = try {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
-                                val restored = runCatching {
-                                    com.example.data.BackupManager.openPicked(context, uri)
-                                        .use { com.example.data.BackupManager.restoreFromStream(context, it) }
-                                }
-                                if (restored.isSuccess) {
-                                    runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(context) }
-                                    runCatching { com.example.notifications.TodayRefresh.afterChange(context, topicsToo = false) }
-                                }
-                                restored
+                        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                            val restored = runCatching {
+                                com.example.data.BackupManager.openPicked(appContext, uri)
+                                    .use { com.example.data.BackupManager.restoreFromStream(appContext, it) }
                             }
-                        } finally {
-                            busyMessage = null
+                            if (restored.isSuccess) {
+                                runCatching { com.example.notifications.NotificationScheduler.scheduleDailyReminder(appContext) }
+                                runCatching { com.example.notifications.TodayRefresh.afterChange(appContext, topicsToo = false) }
+                            }
+                            restored
                         }
                         val count = result.getOrNull()
                         if (count != null) {
-                            android.widget.Toast.makeText(context, if (language == "fa") "بازیابی شد: ${com.example.ui.i18n.PersianDate.faDigits(count)} مبحث" else if (language == "de") "$count Themen wiederhergestellt" else "Restored $count topics", android.widget.Toast.LENGTH_LONG).show()
+                            android.widget.Toast.makeText(
+                                appContext,
+                                when (language) {
+                                    "fa" -> "بازیابی شد: ${com.example.ui.i18n.PersianDate.faDigits(count)} مبحث"
+                                    "de" -> if (count == 1) "1 Thema wiederhergestellt" else "$count Themen wiederhergestellt"
+                                    else -> if (count == 1) "Restored 1 topic" else "Restored $count topics"
+                                },
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
                             // The file can carry another language, theme and settings. They are in the preferences now, but
                             // the screens read them when they open, so the app kept its old look until it was restarted
-                            // (an outside emulator audit, 2026-09-30). Rebuilding the activity applies them at once.
-                            context.findActivity()?.recreate()
+                            // (an outside emulator audit, 2026-09-30). Rebuilding the activity on screen applies them at once.
+                            DataOperations.requestRebuild()
                         } else {
                             // A file that could not be OPENED (a revoked permission, a provider that is gone) is not the same
                             // failure as a file that is not a valid backup. Only the open is classed as unreadable: the reader
                             // reports a corrupt or truncated file as an IOException too, and that one is "invalid backup".
-                            val unreadable = result.exceptionOrNull() is com.example.data.BackupManager.UnreadableFile
-                            android.util.Log.w("Yadora", "restore failed", result.exceptionOrNull())
+                            // A newer file and a restore that could not be carried out are not damaged files either (a
+                            // production review, 2026-10-10): they said "invalid backup" too.
+                            val failure = result.exceptionOrNull()
+                            android.util.Log.w("Yadora", "restore failed", failure)
                             android.widget.Toast.makeText(
-                                context,
-                                if (unreadable) when (language) {
-                                    "fa" -> "فایل باز نشد — دوباره انتخابش کن یا اول آن را در حافظهٔ گوشی ذخیره کن."
-                                    "de" -> "Die Datei ließ sich nicht öffnen — wähle sie erneut oder speichere sie zuerst auf dem Telefon."
-                                    else -> "Couldn't open that file — pick it again, or save it to the phone first."
-                                } else if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup",
+                                appContext,
+                                when (failure) {
+                                    is com.example.data.BackupManager.UnreadableFile -> when (language) {
+                                        "fa" -> "فایل باز نشد — دوباره انتخابش کن یا اول آن را در حافظهٔ گوشی ذخیره کن."
+                                        "de" -> "Die Datei ließ sich nicht öffnen — wähle sie erneut oder speichere sie zuerst auf dem Telefon."
+                                        else -> "Couldn't open that file — pick it again, or save it to the phone first."
+                                    }
+                                    is com.example.data.BackupManager.NewerVersion -> when (language) {
+                                        "fa" -> "این پشتیبان با نسخهٔ جدیدتری از یادورا ساخته شده — اول برنامه را به‌روز کن، بعد بازیابی کن."
+                                        "de" -> "Diese Sicherung stammt aus einer neueren Yadora-Version — aktualisiere zuerst die App."
+                                        else -> "This backup was made by a newer version of Yadora — update the app first."
+                                    }
+                                    is com.example.data.BackupManager.NotRestored -> when (language) {
+                                        "fa" -> "بازیابی انجام نشد و چیزی تغییر نکرد. اگر حافظهٔ گوشی پر است، کمی جا باز کن و دوباره امتحان کن."
+                                        "de" -> "Wiederherstellung fehlgeschlagen, nichts wurde geändert. Ist der Speicher voll, schaffe Platz und versuche es erneut."
+                                        else -> "Restore failed, and nothing was changed. If the phone's storage is full, free some space and try again."
+                                    }
+                                    else -> if (language == "fa") "بازیابی ناموفق بود — فایل نامعتبر" else if (language == "de") "Wiederherstellung fehlgeschlagen — ungültige Sicherung" else "Restore failed — invalid backup"
+                                },
                                 android.widget.Toast.LENGTH_LONG,
                             ).show()
                         }
@@ -398,16 +407,16 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 TextButton(
                     onClick = {
                         showDeleteAll = false
-                        exportScope.launch {
+                        DataOperations.run(when (language) { "fa" -> "در حال حذف…"; "de" -> "Wird gelöscht …"; else -> "Deleting…" }) {
                             // The result decides the message. Announcing "all data deleted" after a
                             // failed wipe is the worst possible lie this screen can tell: the user
                             // believes their data is gone -- possibly hands the phone on -- when it
                             // is still there, and they never retry.
-                            val wiped = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                runCatching { com.example.data.BackupManager.deleteAllData(context) }
+                            val wiped = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                                runCatching { com.example.data.BackupManager.deleteAllData(appContext) }
                             }
                             android.widget.Toast.makeText(
-                                context,
+                                appContext,
                                 if (wiped.isSuccess)
                                     when (language) { "fa" -> "همهٔ داده‌ها حذف شد"; "de" -> "Alle Daten gelöscht"; else -> "All data deleted" }
                                 else
@@ -415,9 +424,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
                             if (wiped.isSuccess) {
-                                onBack()
+                                runCatching { onBack() }
                                 // The settings were reset with the data; rebuild so the look follows at once, not after a restart.
-                                context.findActivity()?.recreate()
+                                DataOperations.requestRebuild()
                             }
                         }
                     }
@@ -462,8 +471,10 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     Column(modifier = Modifier.weight(1f)) {
                         fun formatTime(hour: Int, minute: Int): String {
                             val m = minute.toString().padStart(2, '0')
-                            // Persian convention: 24-hour clock with Persian digits (no AM/PM).
+                            // Persian convention: 24-hour clock with Persian digits (no AM/PM). German writes a 24-hour clock too: it
+                            // read "8:00 PM", English words in a German screen (a production review, 2026-10-10).
                             if (language == "fa") return com.example.ui.i18n.PersianDate.faDigits("${hour.toString().padStart(2, '0')}:$m")
+                            if (language == "de") return "${hour.toString().padStart(2, '0')}:$m"
                             val h = if (hour == 0 || hour == 12) 12 else hour % 12
                             val amPm = if (hour < 12) "AM" else "PM"
                             return "$h:$m $amPm"
@@ -484,6 +495,8 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                         DropdownMenuItem(text = {
                                             if (language == "fa") {
                                                 Text(com.example.ui.i18n.PersianDate.faDigits("${h.toString().padStart(2, '0')}:00"))
+                                            } else if (language == "de") {
+                                                Text("${h.toString().padStart(2, '0')}:00")
                                             } else {
                                                 val formatted = if (h == 0 || h == 12) 12 else h % 12
                                                 val amPm = if (h < 12) "AM" else "PM"
@@ -533,7 +546,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                                 if (isChecked) {
                                     NotificationScheduler.scheduleDailyReminder(context)
                                 } else {
-                                    NotificationScheduler.cancelReminder(context)
+                                    NotificationScheduler.remindersOff(context)
                                 }
                                 // The pilot reads days without a reminder as a phone problem unless it can see they were off.
                                 exportScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -794,30 +807,36 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                         }
                         DropdownMenu(expanded = langExpanded, onDismissRequest = { langExpanded = false }) {
                             DropdownMenuItem(text = { Text(strings.englishLanguage) }, onClick = {
+                                val changed = language != "en"
                                 language = "en"
                                 sharedPrefs.edit { putString("app_language", "en") }
                                 langExpanded = false
                                 // The topic notifications come back in the new language at the next reminder time;
-                                // the reminder itself is re-worded now (TopicNotifications.languageChanged).
-                                com.example.notifications.TopicNotifications.languageChanged(context)
+                                // the reminder itself is re-worded now (TopicNotifications.languageChanged). The language
+                                // picked again changes nothing, and took the topics away (a production review, 2026-10-10).
+                                if (changed) com.example.notifications.TopicNotifications.languageChanged(context)
                                 onLanguageChange(language)
                             })
                             DropdownMenuItem(text = { Text(strings.persianLanguage) }, onClick = {
+                                val changed = language != "fa"
                                 language = "fa"
                                 sharedPrefs.edit { putString("app_language", "fa") }
                                 langExpanded = false
                                 // The topic notifications come back in the new language at the next reminder time;
-                                // the reminder itself is re-worded now (TopicNotifications.languageChanged).
-                                com.example.notifications.TopicNotifications.languageChanged(context)
+                                // the reminder itself is re-worded now (TopicNotifications.languageChanged). The language
+                                // picked again changes nothing, and took the topics away (a production review, 2026-10-10).
+                                if (changed) com.example.notifications.TopicNotifications.languageChanged(context)
                                 onLanguageChange(language)
                             })
                             DropdownMenuItem(text = { Text(strings.germanLanguage) }, onClick = {
+                                val changed = language != "de"
                                 language = "de"
                                 sharedPrefs.edit { putString("app_language", "de") }
                                 langExpanded = false
                                 // The topic notifications come back in the new language at the next reminder time;
-                                // the reminder itself is re-worded now (TopicNotifications.languageChanged).
-                                com.example.notifications.TopicNotifications.languageChanged(context)
+                                // the reminder itself is re-worded now (TopicNotifications.languageChanged). The language
+                                // picked again changes nothing, and took the topics away (a production review, 2026-10-10).
+                                if (changed) com.example.notifications.TopicNotifications.languageChanged(context)
                                 onLanguageChange(language)
                             })
                         }
@@ -875,7 +894,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                     soundEnabled = it
                     sharedPrefs.edit { putBoolean("sound_enabled", it) }
                     // Re-create notification channel if needed
-                    NotificationScheduler.createNotificationChannel(context)
+                    NotificationScheduler.changeReminderChannel(context)
                 }) {
                     Text(strings.reminderSound, style = MaterialTheme.typography.bodyLarge)
                 }
@@ -885,7 +904,7 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 SwitchRow(checked = vibrationEnabled, onCheckedChange = {
                     vibrationEnabled = it
                     sharedPrefs.edit { putBoolean("vibration_enabled", it) }
-                    NotificationScheduler.createNotificationChannel(context)
+                    NotificationScheduler.changeReminderChannel(context)
                 }) {
                     Text(strings.vibration, style = MaterialTheme.typography.bodyLarge)
                 }
@@ -1033,6 +1052,9 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             context, com.example.data.SettingsChangeLog.DAILY_LIMIT,
                             com.example.data.SettingsChangeLog.limitValue(before), com.example.data.SettingsChangeLog.limitValue(limit),
                         )
+                        // Today's share follows the limit, and so do the widget and the topic notifications (a production
+                        // review, 2026-10-10: they kept the old plan until the next rating).
+                        if (Math.round(before) != Math.round(limit)) com.example.notifications.TodayRefresh.afterChange(context)
                     },
                     valueRange = 10f..200f,
                     steps = 18,
@@ -1291,7 +1313,6 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 val researchId = remember { com.example.data.ResearchId.get(context) }
                 // One export at a time: a second tap while the first is still writing used to race on the
                 // same file, and the app receiving the share could read a file being rewritten under it.
-                var sharing by remember { mutableStateOf(false) }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = when (language) {
@@ -1304,28 +1325,21 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
-                    enabled = !sharing,
+                    enabled = busyMessage == null,
                     onClick = {
-                        sharing = true
-                        exportScope.launch {
-                          try {
-                            busyMessage = preparingFile
-                            val file = try {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    runCatching { com.example.data.AnalyticsExporter.writeShareableFile(context) }.getOrNull()
-                                }
-                            } finally {
-                                busyMessage = null
+                        DataOperations.run(preparingFile) {
+                            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                                runCatching { com.example.data.AnalyticsExporter.writeShareableFile(appContext) }.getOrNull()
                             }
                             val shared = file != null && runCatching {
-                                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                val uri = androidx.core.content.FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", file)
                                 val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                                     type = "application/json"
                                     putExtra(android.content.Intent.EXTRA_STREAM, uri)
                                     putExtra(android.content.Intent.EXTRA_SUBJECT, "Yadora research data $researchId")
                                     addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
-                                context.startActivity(
+                                appContext.startActivity(
                                     android.content.Intent.createChooser(
                                         send,
                                         when (language) { "fa" -> "ارسال دادهٔ پژوهشی"; "de" -> "Forschungsdaten senden"; else -> "Send research data" },
@@ -1334,14 +1348,11 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
                             }.isSuccess
                             if (!shared) {
                                 android.widget.Toast.makeText(
-                                    context,
+                                    appContext,
                                     when (language) { "fa" -> "ارسال ناموفق بود"; "de" -> "Senden fehlgeschlagen"; else -> "Couldn't share the file" },
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             }
-                          } finally {
-                            sharing = false
-                          }
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
@@ -1498,8 +1509,3 @@ fun SettingsScreen(onBack: () -> Unit, onLanguageChange: (String) -> Unit = {}, 
     }
 }
 
-private tailrec fun Context.findActivity(): android.app.Activity? = when (this) {
-    is android.app.Activity -> this
-    is android.content.ContextWrapper -> baseContext.findActivity()
-    else -> null
-}

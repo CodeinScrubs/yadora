@@ -124,4 +124,45 @@ class ReminderSlotsTest {
         assertTrue(NotificationScheduler.reminderSlotsCollide(eighteen, eighteen + 30_000))
         assertFalse(NotificationScheduler.reminderSlotsCollide(eighteen, eighteen + 10 * 60_000))
     }
+
+    /**
+     * The Snooze button's label is fixed when the reminder is posted. Deciding at the tap sent a "This evening" pressed
+     * between 17:00 and 18:00 to tomorrow (a production review, 2026-10-10).
+     */
+    @Test
+    fun `a snooze goes where its label said`() {
+        val zone = java.util.TimeZone.getDefault().toZoneId()
+        fun at(h: Int, m: Int) = java.time.LocalDate.of(2026, 10, 10).atTime(h, m).atZone(zone).toInstant().toEpochMilli()
+        val tomorrowAtEight = java.time.LocalDate.of(2026, 10, 11).atTime(20, 0).atZone(zone).toInstant().toEpochMilli()
+        assertEquals("posted at 10:00 as This evening, tapped at 17:30", at(18, 0), NotificationScheduler.snoozeTarget(at(17, 30), true, 20, 0))
+        assertEquals("posted after 17:00 as Tomorrow, tapped at 17:30", tomorrowAtEight, NotificationScheduler.snoozeTarget(at(17, 30), false, 20, 0))
+        assertEquals("This evening tapped after 18:00: two hours on", at(20, 30), NotificationScheduler.snoozeTarget(at(18, 30), true, 20, 0))
+        assertEquals("too late for that: tomorrow", tomorrowAtEight, NotificationScheduler.snoozeTarget(at(20, 30), true, 20, 0))
+        // A button from an older build carries no label: decided by the time of the tap, as before.
+        assertEquals(at(18, 0), NotificationScheduler.snoozeTarget(at(16, 0), null, 20, 0))
+        assertEquals(tomorrowAtEight, NotificationScheduler.snoozeTarget(at(17, 30), null, 20, 0))
+    }
+
+    /**
+     * A 09:00 set time's chain (09:00, 12:00, 15:00) lands its next repeat a second or so after the 18:00 second slot. A
+     * repeat is silent since 2026-10-09, and the collision used to keep it and cancel 18:00: the evening reminder never
+     * sounded on such a day (a production review, 2026-10-10). The chosen time is the one kept.
+     */
+    @Test
+    fun `when the chain's repeat lands on the second slot, the second slot is kept`() {
+        val tehran = java.time.ZoneId.of("Asia/Tehran")
+        fun at(h: Int, m: Int, s: Int, ms: Int) = java.time.LocalDate.of(2026, 10, 10).atTime(h, m, s, ms * 1_000_000)
+            .atZone(tehran).toInstant().toEpochMilli()
+        val evening = at(18, 0, 0, 0)
+        val repeat = at(18, 0, 1, 300)
+        assertEquals(null to evening, NotificationScheduler.slotsToArm(repeat, evening, 9, 0, tehran))
+        // The repeat is not a chosen time; the second slot is.
+        assertFalse(NotificationScheduler.isChosenSlot("primary", repeat, 9, 0, tehran))
+        assertTrue(NotificationScheduler.isChosenSlot("secondary", evening, 9, 0, tehran))
+        // The set time itself colliding keeps the set time (it sounds as well), and apart both are armed.
+        val setTime = at(17, 58, 0, 0)
+        assertEquals(setTime to null, NotificationScheduler.slotsToArm(setTime, evening, 17, 58, tehran))
+        val noon = at(12, 0, 0, 500)
+        assertEquals(noon to evening, NotificationScheduler.slotsToArm(noon, evening, 9, 0, tehran))
+    }
 }

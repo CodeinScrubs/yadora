@@ -31,9 +31,7 @@ class ReviewReminderReceiver : BroadcastReceiver() {
         if (!sp.getBoolean("daily_reminder", true) && intent.action != NotificationScheduler.ACTION_TEST &&
             intent.action != TopicNotifications.ACTION_HIDE
         ) {
-            NotificationScheduler.cancelReminder(context)
-            NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
-            TopicNotifications.cancelAll(context)
+            NotificationScheduler.remindersOff(context)
             return
         }
         // A dedicated snooze fire consumes the persisted suppression state before normal handling,
@@ -96,7 +94,11 @@ class ReviewReminderReceiver : BroadcastReceiver() {
                 // Re-remind later WITHOUT changing any topic's schedule. The topics go too, and come back with it.
                 NotificationManagerCompat.from(context).cancel(NotificationScheduler.NOTIFICATION_ID)
                 TopicNotifications.cancelAll(context)
-                NotificationScheduler.scheduleSnooze(context)
+                NotificationScheduler.scheduleSnooze(
+                    context,
+                    labelSaidEvening = if (intent.hasExtra(NotificationScheduler.EXTRA_SNOOZE_EVENING))
+                        intent.getBooleanExtra(NotificationScheduler.EXTRA_SNOOZE_EVENING, true) else null,
+                )
                 // Log it: snooze frequency is a key adherence signal in the exported data.
                 val pending = goAsync()
                 val appContext = context.applicationContext

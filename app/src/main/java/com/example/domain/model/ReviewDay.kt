@@ -38,24 +38,31 @@ object ReviewDay {
 
     /**
      * The days a logged review may be moved to: from the day of the review saved before it to the day of the one saved
-     * after it (or today), so a correction never changes the order of a topic's reviews. Null when no day fits (a
-     * clock that went back can leave the neighbours in the wrong order).
+     * after it (or today), so a correction never changes the order of a topic's reviews. Null when no time fits (a
+     * clock that went back can leave the neighbours in the wrong order, or the review before it after now).
+     *
+     * Judged on the times [timeForCorrection] can give, not only on the days: with the clock set back since the review
+     * before, its day could be today while every time after it lay after now, so the picker offered today and the
+     * repository then refused the move, without a word (a production review, 2026-10-10).
      */
     fun correctionRange(previous: Long?, next: Long?, now: Long, zone: ZoneId): ClosedRange<LocalDate>? {
-        val today = day(now, zone)
-        val first = previous?.let { day(it, zone) } ?: today.minusDays(FIRST_LOG_DAYS_BACK)
-        val last = minOf(today, next?.let { day(it, zone) } ?: today)
+        val earliest = previous?.let { it + 1 }
+        val latest = minOf(now, next?.let { it - 1 } ?: now)
+        if (earliest != null && earliest > latest) return null
+        val first = earliest?.let { day(it, zone) } ?: day(now, zone).minusDays(FIRST_LOG_DAYS_BACK)
+        val last = day(latest, zone)
         return if (first <= last) first..last else null
     }
 
     /**
      * The time a corrected review is saved with: [chosen] at the review's own hour, kept strictly between its
-     * neighbours and never after [now].
+     * neighbours and never after [now]. For a day in [correctionRange] that time exists, and it lies on [chosen].
      */
     fun timeForCorrection(chosen: LocalDate, original: Long, previous: Long?, next: Long?, now: Long, zone: ZoneId): Long {
         var t = chosen.atTime(Instant.ofEpochMilli(original).atZone(zone).toLocalTime()).atZone(zone).toInstant().toEpochMilli()
-        if (previous != null && t <= previous) t = previous + 1
         if (next != null && t >= next) t = next - 1
-        return minOf(t, now)
+        t = minOf(t, now)
+        if (previous != null && t <= previous) t = previous + 1
+        return t
     }
 }

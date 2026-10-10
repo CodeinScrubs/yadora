@@ -17,8 +17,13 @@ internal object LibrarySearch {
 
     fun index(units: List<StudyUnitEntity>): List<Entry> = units.map { Entry(it, keysOf(it)) }
 
+    /**
+     * The texts the learner can see on a topic. Not its study type: that column is dormant, "Topic" on every topic the Add
+     * screen saves and shown nowhere, so "opi" (opioids) or "top" matched the whole library (a production review,
+     * 2026-10-10).
+     */
     fun keysOf(u: StudyUnitEntity): List<String> =
-        listOfNotNull(u.title, u.studyType, u.recallPrompt, u.keyPoints, u.notes, u.source)
+        listOfNotNull(u.title, u.recallPrompt, u.keyPoints, u.notes, u.source)
             .map { TopicTitle.searchKey(it) }
             .filter { it.isNotEmpty() }
 

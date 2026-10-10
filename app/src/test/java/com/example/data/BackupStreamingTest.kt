@@ -162,6 +162,52 @@ class BackupStreamingTest {
         assertEquals(0, json.getJSONObject("consistency").getInt("issueCount"))
     }
 
+    /**
+     * The notification's "Not today" moves only the rated topics due by the end of its day. It used to count as a deferral
+     * for every review whose window held it, so a topic due days later, or a first rating, was flagged deferred and its
+     * on-time review left out of the adherence analysis (a production review, 2026-10-10).
+     */
+    @Test
+    fun `a bulk Not today counts only for the topics it moved`() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<MedReviewApplication>()
+        val db = app.database
+        val now = System.currentTimeMillis()
+        fun unit(title: String) = StudyUnitEntity(
+            title = title, studyType = "Topic", stability = 3.0, difficulty = 5.0, retrievability = 0.9, state = "Building",
+            studiedAt = now - 40 * day, nextReviewAt = now + day, modelDueAt = now + day, currentIntervalDays = 3.0,
+            reviewCount = 2, memoryModel = "FSRS-6",
+        )
+        fun log(unitId: Long, at: Long, interval: Double, type: String, understanding: String = "Clear") = ReviewLogEntity(
+            studyUnitId = unitId, reviewedAt = at, memoryRating = "Good", understandingRating = understanding,
+            previousIntervalDays = 3.0, nextIntervalDays = interval, previousState = "Learning", nextState = "Building",
+            logType = type,
+        )
+        val later = db.studyUnitDao().insertUnit(unit("due days after the Not today"))
+        val due = db.studyUnitDao().insertUnit(unit("due when it was pressed"))
+        val repair = db.studyUnitDao().insertUnit(unit("left to repair"))
+        // A first rating 30 days ago with a 10-day interval: due 20 days ago. "Not today" 28 days ago did not move it.
+        val laterIds = listOf(log(later, now - 30 * day, 10.0, "FIRST_STUDY"), log(later, now - 20 * day, 5.0, "RECALL"))
+            .map { db.reviewLogDao().insertLog(it) }
+        // A 1-day interval: due 29 days ago, so the Not today 28 days ago moved it.
+        val dueIds = listOf(log(due, now - 30 * day, 1.0, "FIRST_STUDY"), log(due, now - 20 * day, 5.0, "RECALL"))
+            .map { db.reviewLogDao().insertLog(it) }
+        // Partial understanding: its repair date can come before the memory date, which the log does not hold.
+        val repairIds = listOf(log(repair, now - 30 * day, 10.0, "FIRST_STUDY", "Partial"), log(repair, now - 20 * day, 5.0, "RECALL"))
+            .map { db.reviewLogDao().insertLog(it) }
+        db.eventLogDao().insert(EventLogEntity(type = "PROCRASTINATE_ALL", at = now - 28 * day))
+        // Before any of them was rated: a first rating is never moved by it.
+        db.eventLogDao().insert(EventLogEntity(type = "PROCRASTINATE_ALL", at = now - 35 * day))
+
+        val out = java.io.ByteArrayOutputStream()
+        AnalyticsExporter.writeJson(app, out)
+        val logs = JSONObject(out.toString("UTF-8")).getJSONArray("reviewLogs")
+        val count = (0 until logs.length()).map { logs.getJSONObject(it) }.associate { it.getLong("id") to it.getInt("deferralsBeforeThisReview") }
+        assertEquals("a first rating is never moved by it", 0, count.getValue(laterIds[0]))
+        assertEquals("a topic not due yet was not moved", 0, count.getValue(laterIds[1]))
+        assertEquals("a topic due then was", 1, count.getValue(dueIds[1]))
+        assertEquals("a topic left to repair may have been", 1, count.getValue(repairIds[1]))
+    }
+
     /** A test reminder armed just before a wipe used to arrive a minute after "all data deleted" (2026-09-30 audit). */
     @Test
     fun `delete all data also cancels a pending test reminder`() = runBlocking {

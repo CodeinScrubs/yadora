@@ -421,12 +421,10 @@ object AnalyticsExporter {
         // The event log already records every such action; joining them here means the analysis does
         // not have to reimplement the join (and get it subtly wrong).
         val deferralTypes = setOf("PROCRASTINATE", "PROCRASTINATE_ALL", "REDISTRIBUTE")
-        // Sorted event times per topic, plus the bulk actions (no unit id: they moved every due topic, so
-        // they count for whatever was due at the time), each counted in a window by binary search. The old
-        // join scanned every event for every review: fine for a pilot, but on a multi-year history (~20k
-        // reviews, ~20k events) it took seconds of phone time.
+        // Sorted event times per topic, plus the bulk actions (no unit id: they moved the topics due at the time, below),
+        // each found in a window by binary search. The old join scanned every event for every review: fine for a pilot,
+        // but on a multi-year history (~20k reviews, ~20k events) it took seconds of phone time.
         val deferrals = events.filter { it.type in deferralTypes }
-        val bulkDeferralTimes = deferrals.filter { it.unitId == null }.map { it.at }.sorted()
         val unitDeferralTimes = deferrals.filter { it.unitId != null }.groupBy({ it.unitId!! }, { it.at })
             .mapValues { (_, times) -> times.sorted() }
         fun countIn(sorted: List<Long>, from: Long, to: Long): Int {
@@ -440,15 +438,41 @@ object AnalyticsExporter {
             val upper = if (to == Long.MAX_VALUE) sorted.size else firstAtLeast(to + 1)
             return upper - firstAtLeast(from)
         }
+        // A bulk action moved only the topics it applied to: the notification's "Not today" every RATED topic due by the end
+        // of its day (StudyUnitDao.procrastinateAllDue), "Spread out" (no longer offered) overdue reviews. It used to count
+        // for every review whose window held it, so a topic due days later, or not rated yet, was flagged deferred and its
+        // on-time review left out of the adherence analysis (a production review, 2026-10-10). It counts now only after a
+        // review, and only when the date that review set (scheduledForAt, the memory date) had come by then, or when that
+        // review left understanding to repair (Partial, Confused): its earlier repair date is not in the log.
+        val bulkDeferrals = deferrals.filter { it.unitId == null }.sortedBy { it.at }
+        fun bulkMoved(e: com.example.data.local.entity.EventLogEntity, previous: com.example.data.local.entity.ReviewLogEntity, dueAt: Long?): Boolean {
+            if (previous.understandingRating == "Partial" || previous.understandingRating == "Confused" || dueAt == null) return true
+            return if (e.type == "REDISTRIBUTE") dueAt < com.example.ui.today.DayBounds.startOf(e.at)
+            else dueAt <= com.example.ui.today.DayBounds.endOf(e.at)
+        }
         val deferralsByLog = HashMap<Long, Int>(logs.size)
         for ((unitId, unitLogs) in logs.groupBy { it.studyUnitId }) {
             val ordered = unitLogs.sortedWith(REVIEW_HISTORY_ORDER)
             var windowStart = unitStudiedAt[unitId] ?: 0L
+            var previous: com.example.data.local.entity.ReviewLogEntity? = null
             val ownTimes = unitDeferralTimes[unitId].orEmpty()
             for (l in ordered) {
-                deferralsByLog[l.id] = countIn(bulkDeferralTimes, windowStart, l.reviewedAt) +
-                    countIn(ownTimes, windowStart, l.reviewedAt)
+                val prev = previous
+                val bulk = if (prev == null || bulkDeferrals.isEmpty() || windowStart > l.reviewedAt) 0 else {
+                    // The bulk actions in [windowStart, reviewedAt], found by binary search, then checked one by one.
+                    var lo = 0; var hi = bulkDeferrals.size
+                    while (lo < hi) { val mid = (lo + hi) ushr 1; if (bulkDeferrals[mid].at < windowStart) lo = mid + 1 else hi = mid }
+                    var n = 0
+                    var i = lo
+                    while (i < bulkDeferrals.size && bulkDeferrals[i].at <= l.reviewedAt) {
+                        if (bulkMoved(bulkDeferrals[i], prev, scheduledForByLog[l.id])) n++
+                        i++
+                    }
+                    n
+                }
+                deferralsByLog[l.id] = bulk + countIn(ownTimes, windowStart, l.reviewedAt)
                 windowStart = l.reviewedAt
+                previous = l
             }
         }
 

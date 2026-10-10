@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Android auto-backup (pre-Android-12 devices).
+  Android auto-backup on Android 8 (API 26-27). Android 9 to 11 read xml-v28/backup_rules.xml, which also carries the
+  database in a direct phone-to-phone transfer; Android 12+ reads data_extraction_rules.xml.
 
   The Room database is deliberately NOT included. Auto-backup copies the live SQLite files with no
   WAL checkpoint, so a restore can land a torn snapshot — and Yadora already ships its own complete,

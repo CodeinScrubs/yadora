@@ -192,7 +192,7 @@ class MedReviewRepository(
             // replay -- the same evidence reconstructed two different ways, so a topic's state
             // depended on whether it arrived via migration or via a rating correction.
             if (index > 0 && log.logType == "FIRST_STUDY") {
-                prevTime = log.reviewedAt
+                prevTime = MedScheduler.exposureClock(prevTime, log.reviewedAt)
                 continue
             }
             val grade = runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrNull() ?: continue
@@ -277,6 +277,19 @@ class MedReviewRepository(
             ?.let { row -> known[row.id]?.let { MedScheduler.ParameterSet(row.id, it, row.activatedAt ?: row.createdAt) } }
         MedScheduler.knownParameterSets = known
         MedScheduler.activeParameterSet = active ?: MedScheduler.DEFAULT_PARAMETER_SET
+        MedScheduler.parameterSetsLoaded = true
+    }
+
+    /**
+     * [refreshMemoryModel], unless it has run in this process already: for what only READS the weight sets (today's
+     * share and its order, Next up, the reminders, the widget, the daily snapshot). In a new process nothing had loaded
+     * them until a review screen opened, so every topic on a personal set was ordered on the published defaults
+     * (`MedScheduler.reviewValue` falls back to them for a set it does not hold; a production review, 2026-10-10). After
+     * the first load the sets change only where they changed before, so a review never previews with one and commits
+     * with another.
+     */
+    suspend fun ensureMemoryModelLoaded() {
+        if (!MedScheduler.parameterSetsLoaded) runCatching { refreshMemoryModel() }
     }
 
     /**
@@ -335,10 +348,13 @@ class MedReviewRepository(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** Every topic a merge touched, survivors and absorbed copies, read from the MERGE events as analyze.py reads them. */
-    private suspend fun mergedUnitIds(): Set<Long> = database.eventLogDao().getMergeEvents().flatMapTo(HashSet()) { e ->
-        listOfNotNull(e.unitId) + (e.detail ?: "").split(",").mapNotNull { it.trim().toLongOrNull() }
-    }
+    /**
+     * Every topic whose history a merge combined: the survivors of the MERGE events, read as analyze.py reads them
+     * (`merged_units`). Not the absorbed copies: a merge moves all their logs to the survivor, so an absorbed copy holds a
+     * history only after it was restored from the trash, and that history is its own. Counting it as merged left the
+     * restored copy out of the personal fit for good and replayed it differently (a production review, 2026-10-10).
+     */
+    private suspend fun mergedUnitIds(): Set<Long> = database.eventLogDao().getMergeEvents().mapNotNullTo(HashSet()) { it.unitId }
 
     /** One refit at a time: the daily job and the one Settings starts must not fit and adopt side by side. */
     private val refitLock = kotlinx.coroutines.sync.Mutex()
@@ -645,31 +661,7 @@ class MedReviewRepository(
                 // memory state are no longer backed by anything. Reset them to an unrated baseline
                 // before soft-deleting: otherwise restoring it from "Recently deleted" would hand the
                 // user a topic claiming reviews it doesn't own, with zero logs to justify them.
-                val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, copy.highYield).state
-                studyUnitDao.updateUnit(
-                    copy.copy(
-                        stability = seed.stability,
-                        difficulty = seed.difficulty,
-                        currentIntervalDays = 0.0,
-                        reviewCount = 0,
-                        lapseCount = 0,
-                        state = StudyState.New.name,
-                        // Reset to the same shape a brand-new topic has, model label included: the
-                        // seed above comes from the FSRS-5 first-study prior, and labelling the row
-                        // FSRS-6 would claim a state expressed in units it was not computed in. With
-                        // no history left it re-seeds at its first rating either way.
-                        memoryModel = MedScheduler.MemoryModel.FSRS_5.id,
-                        parameterSetId = 0L,
-                        lastReviewedAt = null,
-                        nextReviewAt = copy.studiedAt,
-                        modelDueAt = copy.studiedAt,
-                        // No history left to owe a repair for; a stale deadline would otherwise make
-                        // a restored copy due on a date nothing in its (now empty) record justifies.
-                        understandingDueAt = null,
-                        deferredUntil = null,
-                        updatedAt = stamp,
-                    )
-                )
+                studyUnitDao.updateUnit(withoutHistory(copy, stamp))
                 studyUnitDao.softDeleteUnit(copy.id, stamp)
             }
             database.eventLogDao().insert(
@@ -695,7 +687,45 @@ class MedReviewRepository(
     }
 
     suspend fun restoreDeletedUnit(id: Long) {
-        studyUnitDao.restoreDeletedUnit(id, System.currentTimeMillis())
+        val stamp = System.currentTimeMillis()
+        database.withTransaction {
+            // A copy a merge absorbed before 2026-08-06 kept its counts while its reviews moved to the survivor; a backup
+            // still carries such copies in the trash. Restored as it was, it claimed reviews with no history behind them,
+            // and every backup written afterwards was refused as damaged (a production review, 2026-10-10). It comes
+            // back unrated, as the merge resets copies it absorbs now.
+            val unit = studyUnitDao.getUnitById(id)
+            if (unit != null && (unit.reviewCount > 0 || unit.lapseCount > 0) && reviewLogDao.getLogsForUnitOnce(id).isEmpty()) {
+                studyUnitDao.updateUnit(withoutHistory(unit, stamp))
+            }
+            studyUnitDao.restoreDeletedUnit(id, stamp)
+        }
+    }
+
+    /** [unit] as a topic with no history: the unrated baseline a merge leaves an absorbed copy with. */
+    private fun withoutHistory(unit: StudyUnitEntity, stamp: Long): StudyUnitEntity {
+        val seed = MedScheduler.firstStudy(UnderstandingRating.Partial, unit.highYield).state
+        return unit.copy(
+            stability = seed.stability,
+            difficulty = seed.difficulty,
+            currentIntervalDays = 0.0,
+            reviewCount = 0,
+            lapseCount = 0,
+            state = StudyState.New.name,
+            // Reset to the same shape a brand-new topic has, model label included: the
+            // seed above comes from the FSRS-5 first-study prior, and labelling the row
+            // FSRS-6 would claim a state expressed in units it was not computed in. With
+            // no history left it re-seeds at its first rating either way.
+            memoryModel = MedScheduler.MemoryModel.FSRS_5.id,
+            parameterSetId = 0L,
+            lastReviewedAt = null,
+            nextReviewAt = unit.studiedAt,
+            modelDueAt = unit.studiedAt,
+            // No history left to owe a repair for; a stale deadline would otherwise make
+            // a restored copy due on a date nothing in its (now empty) record justifies.
+            understandingDueAt = null,
+            deferredUntil = null,
+            updatedAt = stamp,
+        )
     }
 
     /**
@@ -723,6 +753,9 @@ class MedReviewRepository(
     
     // Progress / Stats
     val totalActiveCount: Flow<Int> = studyUnitDao.getTotalActiveUnitsCount()
+
+    /** Every topic the learner has, archived ones included, the trash not. */
+    val libraryCount: Flow<Int> = studyUnitDao.getLibraryCount()
     
     fun getCountByState(state: String): Flow<Int> {
         return studyUnitDao.getCountByState(state)
@@ -767,9 +800,11 @@ class MedReviewRepository(
      */
     internal suspend fun calibrationEvidence(set: MedScheduler.ParameterSet): List<ReviewLogEntity> {
         val corrections = database.eventLogDao().getCorrectionEvents()
-        // Every prediction a correction recomputed, read from the corrected topics' own logs (corrections are rare).
-        val recomputed = if (corrections.isEmpty()) emptySet() else com.example.data.RecomputedPredictions.ids(
-            corrections.mapNotNull { it.unitId }.distinct().flatMap { reviewLogDao.getLogsForUnitOnce(it) },
+        // Every prediction a correction recomputed, read from the logs of the corrected topics and of the topics merges
+        // moved them to (corrections are rare).
+        val affected = com.example.data.RecomputedPredictions.affectedUnits(corrections)
+        val recomputed = if (affected.isEmpty()) emptySet() else com.example.data.RecomputedPredictions.ids(
+            affected.flatMap { reviewLogDao.getLogsForUnitOnce(it) },
             corrections,
         )
         val window = com.example.domain.srs.RecallCalibration.WINDOW
@@ -794,6 +829,8 @@ class MedReviewRepository(
         now: Long = System.currentTimeMillis(),
         ignoreLimit: Boolean = false,
     ): com.example.ui.today.DailyPlan.Plan {
+        // The order reads each topic on its own weight set (MedScheduler.reviewValue).
+        ensureMemoryModelLoaded()
         val due = studyUnitDao.getDueUnitsList(com.example.ui.today.DayBounds.endOf(now))
         val done = reviewLogDao.countReviewsBetween(com.example.ui.today.DayBounds.startOf(now), com.example.ui.today.DayBounds.endOf(now))
         return com.example.ui.today.DailyPlan.plan(due, done, dailyLimit, now, ignoreLimit)
@@ -807,7 +844,10 @@ class MedReviewRepository(
     suspend fun reviewAheadQueue(
         now: Long = System.currentTimeMillis(),
         limit: Int = com.example.ui.today.ReviewAhead.SESSION_SIZE,
-    ): List<StudyUnitEntity> = reviewAheadOf(studyUnitDao.getAllActiveOnce(), now, limit)
+    ): List<StudyUnitEntity> {
+        ensureMemoryModelLoaded()
+        return reviewAheadOf(studyUnitDao.getAllActiveOnce(), now, limit)
+    }
 
     /** [reviewAheadQueue] over topics already in hand: Today's "next up" list reads the library it already watches. */
     fun reviewAheadOf(
@@ -1291,6 +1331,7 @@ class MedReviewRepository(
         var lastStability = stability
         var lastDifficulty = difficulty
         var lastStateName = unit.state
+        var lastRetrievability = unit.retrievability
         val replayModel = MedScheduler.MemoryModel.of(unit.memoryModel)
         // ...and under the weight set it is on, for the same reason: replay reproduces the history this
         // topic actually had. The next review projects it onto the active set like any model change.
@@ -1356,10 +1397,19 @@ class MedReviewRepository(
             //
             // An exposure therefore leaves stability, difficulty and the graded review count ALONE,
             // and only re-anchors the clock: the next real retrieval's elapsed time is measured from
-            // the day the material was last actually studied, which is the honest baseline.
+            // the day the material was last actually studied, which is the honest baseline. Never
+            // BACK: a copy rated for an earlier day (ReviewDay) and merged afterwards is saved after a
+            // later review, and moving the clock back to it moved the topic's due dates back by the
+            // gap (a production review, 2026-10-10). [MedScheduler.exposureClock] is the one rule.
             if (log.logType == "FIRST_STUDY" && !isFirstLogOfHistory) {
                 updatedLogs.add(
                     log.copy(
+                        // A corrected exposure keeps the answer it was corrected to. The replay used to rebuild the
+                        // row without it, so the dialog closed, the correction was logged and the row still said
+                        // the old answer (a production review, 2026-10-10). Untouched rows keep what they said.
+                        memoryRating = mem.name,
+                        understandingRating = undStored,
+                        initialDifficulty = if (editingThis) MedScheduler.difficultyLabelFor(mem) else log.initialDifficulty,
                         previousIntervalDays = prevInterval,
                         nextIntervalDays = prevInterval,
                         previousState = prevStateName,
@@ -1373,8 +1423,8 @@ class MedReviewRepository(
                         parameterSetId = replaySetId,
                     )
                 )
-                prevTime = log.reviewedAt
-                lastReviewedAt = log.reviewedAt
+                prevTime = MedScheduler.exposureClock(prevTime, log.reviewedAt)
+                lastReviewedAt = MedScheduler.exposureClock(lastReviewedAt, log.reviewedAt)
                 // An exposure carries an understanding answer like any other row, and the live path
                 // counts it from the logs, so the replay must count it identically.
                 unrepairedStreak = if (MedScheduler.continuesUnrepairedStreak(mem.name, undStored)) unrepairedStreak + 1 else 0
@@ -1499,6 +1549,7 @@ class MedReviewRepository(
             lastStability = outcome.state.stability
             lastDifficulty = outcome.state.difficulty
             lastStateName = nextStateName
+            lastRetrievability = outcome.retrievabilityAtReview
         }
 
         // Re-anchor the next due date to the last (corrected) review time + recomputed interval, then write
@@ -1507,6 +1558,9 @@ class MedReviewRepository(
             studiedAt = studiedAt,
             stability = lastStability,
             difficulty = lastDifficulty,
+            // What the live commit writes beside them (rateUnit): the last review's prediction. It kept its value from
+            // before the correction (a production review, 2026-10-10).
+            retrievability = lastRetrievability,
             state = lastStateName,
             reviewCount = reviewCount,
             lapseCount = lapseCount,

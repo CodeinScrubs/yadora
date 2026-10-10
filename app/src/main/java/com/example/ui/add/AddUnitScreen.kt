@@ -83,7 +83,11 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
 
     fun loadUnit(id: Long) {
         editingUnitId = id
-        viewModelScope.launch { existingUnit = repository.getUnitById(id) }
+        viewModelScope.launch {
+            // The forgetting curve is drawn on the topic's own weight set, so the sets are loaded first.
+            repository.ensureMemoryModelLoaded()
+            existingUnit = repository.getUnitById(id)
+        }
         // Cancel any previous log collector so repeated Edit visits don't pile up infinite collectors.
         logsJob?.cancel()
         logsJob = viewModelScope.launch {
@@ -111,7 +115,13 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
     }
 
     /** [onSaved] receives the new topic's id when one was inserted, null after an edit. */
-    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, keyPoints: String?, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: (Long?) -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false) {
+    /**
+     * [loadedStudiedAt] and [loadedNextReviewAt]: the dates the form was filled with (TopicEdit compares the form with
+     * them). [existingUnit] cannot stand in for them: the screen re-reads the row each time it comes back (from a review
+     * opened on top of it, or after process death), and against that fresher row an untouched date looked edited, so Save
+     * wrote the date a review had just replaced back as a deferral (a production review, 2026-10-10).
+     */
+    fun saveUnit(title: String, subjectId: Long?, systemId: Long?, studyType: String, prompt: String, keyPoints: String?, notes: String, source: String, highYield: Boolean, studiedAt: Long?, nextReviewAt: Long?, onSaved: (Long?) -> Unit = {}, onError: () -> Unit = {}, onDuplicate: () -> Unit = {}, onArchivedDuplicate: (StudyUnitEntity) -> Unit = {}, skipArchivedDuplicateCheck: Boolean = false, loadedStudiedAt: Long? = null, loadedNextReviewAt: Long? = null) {
         viewModelScope.launch {
             // "Am I editing?" comes from the nav argument, NOT from whether the row has finished
             // loading — see editingUnitId.
@@ -145,8 +155,12 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                     val found = repository.inTransaction {
                         val fresh = repository.getUnitById(editingId) ?: return@inTransaction false
                         // The row the form was filled from. If Save beat the load (process death restored
-                        // the form before the row arrived), the fresh row is the only baseline there is.
-                        val loaded = existingUnit?.takeIf { it.id == editingId } ?: fresh
+                        // the form before the row arrived), the fresh row is the only baseline there is. Its dates are
+                        // the ones the form was filled with, when the screen knows them.
+                        val loaded = (existingUnit?.takeIf { it.id == editingId } ?: fresh).let { row ->
+                            if (loadedStudiedAt != null && loadedNextReviewAt != null) row.copy(studiedAt = loadedStudiedAt, nextReviewAt = loadedNextReviewAt)
+                            else row
+                        }
                         val plan = TopicEdit.plan(
                             loaded = loaded,
                             fresh = fresh,
@@ -196,6 +210,17 @@ class AddUnitViewModel(val repository: MedReviewRepository) : ViewModel() {
                         // date in this form left them due on the old day.
                         if (plan.studyDateChanged) {
                             repository.updateUnitReplayingHistory(plan.updated)
+                            // A next-review date picked in the same save is the learner's deferral, and the replay
+                            // gives a rated topic the model's date (it supersedes a deferral made BEFORE it): the
+                            // picked date was dropped without a word (a production review, 2026-10-10). An unrated
+                            // topic keeps it already (updateUnitReplayingHistory).
+                            if (plan.nextDateChanged && plan.updated.deferredUntil != null) {
+                                repository.getUnitById(editingId)?.let { replayed ->
+                                    if (replayed.deferredUntil != plan.updated.deferredUntil) repository.updateUnit(
+                                        replayed.copy(nextReviewAt = plan.updated.nextReviewAt, deferredUntil = plan.updated.deferredUntil)
+                                    )
+                                }
+                            }
                             // Important switched on in the same save: tighten the REPLAYED row. It used to be
                             // tightened first and then overwritten by the replay, which recomputes from the logs
                             // (they record the importance each review had), so the switch did nothing until the
@@ -316,6 +341,26 @@ private fun ForgettingCurve(stability: Double, model: com.example.domain.srs.Med
     }
 }
 
+/**
+ * A study day picked as [picked] (09:00 on that day, as the pickers give it): today's 09:00 is in the future before 09:00,
+ * which hid "Save and rate now" for a topic studied this morning (a production review, 2026-10-10), so a study today is
+ * now at the latest. Another day keeps its 09:00.
+ */
+internal fun studiedOn(picked: Long, now: Long = System.currentTimeMillis()): Long {
+    val zone = java.time.ZoneId.systemDefault()
+    return if (com.example.domain.model.ReviewDay.day(picked, zone) == com.example.domain.model.ReviewDay.day(now, zone)) minOf(picked, now) else picked
+}
+
+/**
+ * [picked] unless it is the day [current] is already on: the pickers give 09:00 of the day chosen, and OK on the day
+ * already shown turned a due date of 16:05 into a deferral to 09:00 nobody chose, or a study time into a replayed history
+ * (a production review, 2026-10-10).
+ */
+internal fun keepIfSameDay(picked: Long, current: Long?): Long {
+    val zone = java.time.ZoneId.systemDefault()
+    return if (current != null && com.example.domain.model.ReviewDay.day(picked, zone) == com.example.domain.model.ReviewDay.day(current, zone)) current else picked
+}
+
 /** DatePicker returns UTC-midnight of the chosen day; convert to ~9am local on that same calendar date. */
 private fun datePickerUtcToLocalDay(utcMillis: Long): Long {
     val utc = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcMillis }
@@ -376,9 +421,15 @@ fun AddUnitScreen(
     // Set by "Save and review now": after an edit is saved, open this topic's review instead of going back.
     var reviewNowAfterSave by remember { mutableStateOf(false) }
     var archivedDuplicate by remember { mutableStateOf<StudyUnitEntity?>(null) }
-    var editingLog by remember { mutableStateOf<ReviewLogEntity?>(null) }
+    // The review whose rating is being corrected, by id and saveable: a rotation used to close the dialog and drop what
+    // was chosen in it (the rule UI-01 set for this screen's other dialogs; a production review, 2026-10-10).
+    var editingLogId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
+    val editingLogs by viewModel.reviewLogs.collectAsStateWithLifecycle()
+    val editingLog = editingLogId?.let { id -> editingLogs.firstOrNull { it.id == id } }
     var editingLogSaving by remember { mutableStateOf(false) }
     var editingLogError by remember { mutableStateOf(false) }
+    // The correction itself failed (the repository refused it): said under the fields, not left without a word.
+    var editingLogFailed by remember { mutableStateOf(false) }
 
     val subjects by viewModel.subjects.collectAsStateWithLifecycle()
     var showSubjectDropdown by remember { mutableStateOf(false) }
@@ -392,6 +443,9 @@ fun AddUnitScreen(
     // Populate ONCE per edit session: without the guard, rotation re-runs this effect and clobbers
     // the user's in-progress (rememberSaveable-restored) edits with the stored DB values.
     var loadedFromUnit by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // The dates the form was filled with: what Save compares the form's dates with (AddUnitViewModel.saveUnit).
+    var loadedStudiedAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
+    var loadedNextReviewAt by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<Long?>(null) }
     LaunchedEffect(viewModel.existingUnit) {
         if (loadedFromUnit) return@LaunchedEffect
         viewModel.existingUnit?.let {
@@ -405,6 +459,8 @@ fun AddUnitScreen(
             selectedSubjectId = it.subjectId
             studiedAt = it.studiedAt
             nextReviewAt = it.nextReviewAt
+            loadedStudiedAt = it.studiedAt
+            loadedNextReviewAt = it.nextReviewAt
             loadedFromUnit = true
         }
     }
@@ -434,6 +490,7 @@ fun AddUnitScreen(
         // System and study type were removed as v1 bloat (columns kept, dormant).
         // The recall prompt was too, until it returned as an optional field.
         viewModel.saveUnit(title, selectedSubjectId, null, "Topic", recallPrompt.trim(), com.example.domain.srs.KeyPoints.normalize(keyPointsText), notes, sourceLink, highYield, studiedAt, nextReviewAt,
+            loadedStudiedAt = loadedStudiedAt, loadedNextReviewAt = loadedNextReviewAt,
             onSaved = { newId ->
                 com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                 com.example.notifications.TodayRefresh.afterChange(reminderContext) // new topic changes today's count
@@ -999,7 +1056,7 @@ fun AddUnitScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 logs.forEach { log ->
                     Card(
-                        onClick = { editingLog = log },
+                        onClick = { editingLogId = log.id; editingLogFailed = false },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                         shape = RoundedCornerShape(16.dp)
@@ -1114,8 +1171,8 @@ fun AddUnitScreen(
     editingLog?.let { log ->
         val fa = strings.languageCode == "fa"
         val isFirstStudy = log.logType == "FIRST_STUDY"
-        var mem by remember(log.id) { mutableStateOf(runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrDefault(MemoryRating.Good)) }
-        var und by remember(log.id) {
+        var mem by androidx.compose.runtime.saveable.rememberSaveable(log.id) { mutableStateOf(runCatching { MemoryRating.valueOf(log.memoryRating) }.getOrDefault(MemoryRating.Good)) }
+        var und by androidx.compose.runtime.saveable.rememberSaveable(log.id) {
             mutableStateOf(
                 if (log.understandingRating == "NotAsked") null
                 else runCatching { UnderstandingRating.valueOf(log.understandingRating) }.getOrDefault(UnderstandingRating.Clear)
@@ -1135,13 +1192,13 @@ fun AddUnitScreen(
             com.example.domain.model.ReviewDay.correctionRange(previousAt, nextAt, System.currentTimeMillis(), zone)
         }
         val originalDay = remember(log.id) { com.example.domain.model.ReviewDay.day(log.reviewedAt, zone) }
-        var newDay by remember(log.id) { mutableStateOf<java.time.LocalDate?>(null) }
-        var showDayPicker by remember(log.id) { mutableStateOf(false) }
+        var newDay by androidx.compose.runtime.saveable.rememberSaveable(log.id) { mutableStateOf<java.time.LocalDate?>(null) }
+        var showDayPicker by androidx.compose.runtime.saveable.rememberSaveable(log.id) { mutableStateOf(false) }
         var dayError by remember(log.id) { mutableStateOf(false) }
         fun noonOf(day: java.time.LocalDate): Long = day.atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
         val shownDay = newDay ?: originalDay
         AlertDialog(
-            onDismissRequest = { editingLog = null },
+            onDismissRequest = { editingLogId = null },
             title = { Text(if (fa) "اصلاح ارزیابی" else if (strings.languageCode == "de") (if (isFirstStudy) "Erste Bewertung korrigieren" else "Bewertung korrigieren") else if (isFirstStudy) "Correct first-study rating" else "Correct this rating") },
             text = {
                 Column {
@@ -1151,7 +1208,7 @@ fun AddUnitScreen(
                         ratingOptions.forEach { r ->
                             FilterChip(
                                 selected = mem == r,
-                                onClick = { mem = r },
+                                onClick = { mem = r; editingLogFailed = false },
                                 label = { Text(when (r) {
                                     MemoryRating.Forgot -> strings.ratingFail
                                     MemoryRating.Hard -> strings.ratingHard
@@ -1172,7 +1229,7 @@ fun AddUnitScreen(
                         UnderstandingRating.entries.forEach { r ->
                             FilterChip(
                                 selected = und == r,
-                                onClick = { und = r; editingLogError = false },
+                                onClick = { und = r; editingLogError = false; editingLogFailed = false },
                                 label = { Text(when (r) {
                                     UnderstandingRating.Confused -> strings.urConfused
                                     UnderstandingRating.Partial -> strings.urPartial
@@ -1212,6 +1269,14 @@ fun AddUnitScreen(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (editingLogFailed) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (fa) "این اصلاح ذخیره نشد و چیزی تغییر نکرد." else if (strings.languageCode == "de") "Diese Korrektur wurde nicht gespeichert; nichts wurde geändert." else "This correction could not be saved, and nothing was changed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = if (fa) "کل زمان‌بندی این مبحث بر اساس ارزیابی اصلاح‌شده بازمحاسبه می‌شود." else if (strings.languageCode == "de") "Der gesamte Zeitplan dieses Themas wird aus der korrigierten Bewertung neu berechnet." else "This topic's whole schedule is recalculated from the corrected rating.",
@@ -1229,6 +1294,7 @@ fun AddUnitScreen(
                     }
                     editingLogSaving = true
                     editingLogError = false
+                    editingLogFailed = false
                     // A moved day keeps the review's own hour, inside its neighbours (ReviewDay.timeForCorrection).
                     val movedTo = newDay?.takeIf { it != originalDay }?.let { day ->
                         com.example.domain.model.ReviewDay.timeForCorrection(day, log.reviewedAt, previousAt, nextAt, System.currentTimeMillis(), zone)
@@ -1242,28 +1308,33 @@ fun AddUnitScreen(
                             // stale date back — reverting the replayed due date AND recording it as a
                             // manual deferral the user never made (deferredUntil), which is exactly what
                             // the v5 honest-scheduling model forbids.
+                            // A date the learner changed in the form and has not saved yet stays as they set it (it used
+                            // to be replaced without a word; a production review, 2026-10-10); an untouched one follows
+                            // the replay. Either way the replayed dates are what the form now compares with.
                             viewModel.existingUnit?.let { replayed ->
-                                studiedAt = replayed.studiedAt
-                                nextReviewAt = replayed.nextReviewAt
+                                if (studiedAt == loadedStudiedAt) studiedAt = replayed.studiedAt
+                                if (nextReviewAt == loadedNextReviewAt) nextReviewAt = replayed.nextReviewAt
+                                loadedStudiedAt = replayed.studiedAt
+                                loadedNextReviewAt = replayed.nextReviewAt
                             }
                             // Replay can move the due date → keep the reminder + widget in sync only
                             // after the database transaction has completed.
                             com.example.notifications.NotificationScheduler.scheduleDailyReminder(reminderContext)
                             com.example.notifications.TodayRefresh.afterChange(reminderContext)
-                            editingLog = null
+                            editingLogId = null
                         } else {
-                            editingLogError = true
+                            editingLogFailed = true
                         }
                     }
                 }
             ) { Text(if (editingLogSaving) "…" else strings.save) } },
-            dismissButton = { TextButton(onClick = { editingLog = null }) { Text(strings.cancel) } }
+            dismissButton = { TextButton(onClick = { editingLogId = null }) { Text(strings.cancel) } }
         )
 
         if (showDayPicker && dayRange != null) {
             // A day outside the neighbours would reorder the history: refused here, and again by the repository.
             fun accept(day: java.time.LocalDate) {
-                if (day in dayRange) { newDay = day; dayError = false } else dayError = true
+                if (day in dayRange) { newDay = day; dayError = false; editingLogFailed = false } else dayError = true
                 showDayPicker = false
             }
             if (useJalali) {
@@ -1303,7 +1374,7 @@ fun AddUnitScreen(
             com.example.ui.components.JalaliDatePickerDialog(
                 initialMillis = studiedAt ?: System.currentTimeMillis(),
                 onDismiss = { showStudiedAtPicker = false },
-                onConfirm = { millis -> studiedAt = millis; showStudiedAtPicker = false },
+                onConfirm = { millis -> studiedAt = keepIfSameDay(studiedOn(millis), studiedAt); showStudiedAtPicker = false },
             )
         } else {
             val datePickerState = rememberDatePickerState(initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(studiedAt ?: System.currentTimeMillis()))
@@ -1311,7 +1382,9 @@ fun AddUnitScreen(
                 onDismissRequest = { showStudiedAtPicker = false },
                 confirmButton = {
                     TextButton(onClick = {
-                        studiedAt = datePickerState.selectedDateMillis?.let { datePickerUtcToLocalDay(it) }
+                        // A date typed in and then cleared selects nothing: the date stays as it was. It used to become
+                        // null, which the card shows as "Today" while Save keeps the stored date (2026-10-10).
+                        datePickerState.selectedDateMillis?.let { studiedAt = keepIfSameDay(studiedOn(datePickerUtcToLocalDay(it)), studiedAt) }
                         showStudiedAtPicker = false
                     }) { Text(strings.okBtn) }
                 },
@@ -1329,7 +1402,7 @@ fun AddUnitScreen(
             com.example.ui.components.JalaliDatePickerDialog(
                 initialMillis = nextReviewAt ?: (System.currentTimeMillis() + 86400000),
                 onDismiss = { showNextReviewAtPicker = false },
-                onConfirm = { millis -> nextReviewAt = millis; showNextReviewAtPicker = false },
+                onConfirm = { millis -> nextReviewAt = keepIfSameDay(millis, nextReviewAt); showNextReviewAtPicker = false },
             )
         } else {
             val datePickerState = rememberDatePickerState(initialSelectedDateMillis = com.example.ui.i18n.AppDate.pickerSelection(nextReviewAt ?: (System.currentTimeMillis() + 86400000)))
@@ -1337,7 +1410,8 @@ fun AddUnitScreen(
                 onDismissRequest = { showNextReviewAtPicker = false },
                 confirmButton = {
                     TextButton(onClick = {
-                        nextReviewAt = datePickerState.selectedDateMillis?.let { datePickerUtcToLocalDay(it) }
+                        // As above: nothing selected leaves the date as it was.
+                        datePickerState.selectedDateMillis?.let { nextReviewAt = keepIfSameDay(datePickerUtcToLocalDay(it), nextReviewAt) }
                         showNextReviewAtPicker = false
                     }) { Text(strings.okBtn) }
                 },

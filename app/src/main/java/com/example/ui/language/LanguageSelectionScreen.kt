@@ -2,6 +2,7 @@ package com.example.ui.language
 
 import android.content.Context
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Translate
@@ -17,15 +18,21 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun LanguageSelectionScreen(onLanguageSelected: (String) -> Unit) {
     val context = LocalContext.current
-    var selectedLang by remember { mutableStateOf("en") }
+    // Saveable: a rotation went back to English, and Continue then stored English (a production review, 2026-10-10).
+    var selectedLang by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("en") }
 
     // First-run screens sit outside the app's Scaffolds, so this one paints its own background. The XML
     // window theme is dark: without this, a phone in light mode showed light cards on a dark window.
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    // Centred as before, and scrolling when the screen is too short for it (a phone in landscape), where Continue was cut
+    // off (a production review, 2026-10-10).
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+    val screenHeight = maxHeight
     Column(
         modifier = Modifier
-            .fillMaxSize()
-            .systemBarsPadding()
+            .fillMaxWidth()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState())
+            .heightIn(min = screenHeight)
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -114,6 +121,7 @@ fun LanguageSelectionScreen(onLanguageSelected: (String) -> Unit) {
             val strings = com.example.ui.i18n.LocalStrings.current
             Text(strings.continueBtn)
         }
+    }
     }
     }
 }

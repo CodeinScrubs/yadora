@@ -101,14 +101,31 @@ def expand(paths: Sequence[str]) -> List[str]:
     return out
 
 
+# Named zones this computer's Python could not load: no time-zone database (Windows Python without the tzdata package).
+# Their reviews are counted at a fixed offset, wrong across a daylight-saving change, so a day count near midnight in the
+# other season can differ from the phone's: D1 says so beside its mismatches (a production review, 2026-10-10).
+ZONES_WITHOUT_DATABASE: set = set()
+
+
+def load_zone(name: Optional[str]) -> Optional[dt.tzinfo]:
+    """The named zone, or None (recorded in ZONES_WITHOUT_DATABASE) when this computer cannot load it."""
+    if not name:
+        return None
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    ZONES_WITHOUT_DATABASE.add(name)
+    return None
+
+
 def zone_of(d: dict) -> Tuple[dt.tzinfo, str]:
     env = d.get("environment") or {}
     name = env.get("timeZoneId")
-    if name and ZoneInfo is not None:
-        try:
-            return ZoneInfo(name), name
-        except Exception:
-            pass
+    zone = load_zone(name)
+    if zone is not None:
+        return zone, name
     off = env.get("utcOffsetMinutesAtExport")
     if off is not None:
         return dt.timezone(dt.timedelta(minutes=off)), f"UTC{off / 60:+.1f} (fixed; DST not modelled)"
@@ -280,11 +297,9 @@ def calendar_days(a_ms: int, b_ms: int, tz) -> float:
 
 def tz_from(name: Optional[str], offset: Optional[str], fallback):
     """A zone from a TIME_ZONE event: its id, else its fixed offset ("+03:30"), else [fallback]."""
-    if name and ZoneInfo is not None:
-        try:
-            return ZoneInfo(name)
-        except Exception:
-            pass
+    zone = load_zone(name)
+    if zone is not None:
+        return zone
     if offset and ":" in offset:
         try:
             sign = -1 if offset.startswith("-") else 1
@@ -369,11 +384,14 @@ def calibration_window(rows: List[Row], participant: str, parameter_set: int, ac
     and invalid/short/early observations never displace eligible ones. This does not change the activation
     boundary: a prediction dated before a set began scheduling is still excluded as in the app.
     """
+    # The gap the app reads is the STORED one (ReviewLogDao.getRecentRecallLogsOnce): a merged topic's replay counts its
+    # days again across both copies, and selecting by that recount left out reviews the app counts (a production review,
+    # 2026-10-10). For every other topic the two are the same.
     eligible = [r for r in rows if r.participant == participant and r.parameter_set == parameter_set
                 and r.is_recall and r.scheduler_version == "FSRS-6" and not r.recomputed
                 and r.predicted is not None and 0 <= r.predicted <= 1
-                and r.elapsed_days is not None and r.at >= activated_at
-                and ym.is_calibration_evidence(r.elapsed_days, r.previous_interval)]
+                and r.stored_elapsed is not None and r.at >= activated_at
+                and ym.is_calibration_evidence(r.stored_elapsed, r.previous_interval)]
     return sorted(eligible, key=lambda r: (r.log_id, r.at))[-ym.CAL_WINDOW:]
 
 
@@ -386,16 +404,28 @@ def corrections(d: dict) -> Dict[int, List[Tuple[int, int, Optional[int], bool]]
     of every later log that existed then was recomputed, not made at the review. Since 2026-10-04 the event records that
     last id (`upto`), so saved order decides; an older event falls back to the clock, which misses the rewritten logs
     when it was set back between the reviews and the correction (an outside audit, 2026-10-04). REVIEW_DATE_CORRECTED
-    (export v16) moves a review to another day, which recomputes that review's own prediction as well. The app applies
-    the same rule (RecomputedPredictions)."""
+    (export v16) moves a review to another day, which recomputes that review's own prediction as well. A merge moves the
+    corrected topic's logs to the survivor while the event keeps the old id, so each correction also applies to the
+    topics MERGE events moved its logs to (a production review, 2026-10-10; on the survivor that can leave out a few of
+    its own true predictions, never count a recomputed one). The app applies the same rule (RecomputedPredictions)."""
+    survivor: Dict[int, int] = {}
+    for e in d.get("eventLogs") or []:
+        if e.get("type") == "MERGE" and e.get("unitId") is not None:
+            for part in str(e.get("detail") or "").split(","):
+                if part.strip().lstrip("-").isdigit() and int(part) != int(e["unitId"]):
+                    survivor[int(part)] = int(e["unitId"])
     out: Dict[int, List[Tuple[int, int, Optional[int], bool]]] = defaultdict(list)
     for e in d.get("eventLogs") or []:
         if e.get("type") in CORRECTION_EVENTS and e.get("unitId") is not None:
             kv = parse_detail(e.get("detail"))
             log_id = as_int(kv.get("log"))
             if log_id is not None:
-                out[int(e["unitId"])].append((log_id, int(e.get("at") or 0), as_int(kv.get("upto")),
-                                              e.get("type") == "REVIEW_DATE_CORRECTED"))
+                fix = (log_id, int(e.get("at") or 0), as_int(kv.get("upto")), e.get("type") == "REVIEW_DATE_CORRECTED")
+                owner, seen = int(e["unitId"]), set()
+                while owner is not None and owner not in seen:
+                    seen.add(owner)
+                    out[owner].append(fix)
+                    owner = survivor.get(owner)
     return out
 
 
@@ -435,16 +465,18 @@ def review_time(d: dict) -> dict:
                 with_save_time=len(saved), saved_later=len(later), date_corrections=moved)
 
 
+def important_at_review(log: dict, unit: dict) -> bool:
+    """Whether the review was scheduled as Important: its own wasImportantAtReview (1 or 0; -1 = not recorded, older
+    logs), as the app's replay reads it, else the topic's flag now."""
+    flag = as_int(log.get("wasImportantAtReview"))
+    return flag == 1 if flag is not None and flag >= 0 else bool(unit.get("highYield", False))
+
+
 def merged_units(d: dict) -> set:
-    out = set()
-    for e in d.get("eventLogs") or []:
-        if e.get("type") == "MERGE":
-            if e.get("unitId") is not None:
-                out.add(int(e["unitId"]))
-            for part in str(e.get("detail") or "").split(","):
-                if part.strip().lstrip("-").isdigit():
-                    out.add(int(part))
-    return out
+    """The topics whose history a merge combined: the MERGE events' survivors. Not the absorbed copies: a merge moves
+    all their logs to the survivor, so a copy holds logs only after it was restored from the trash, and those are its
+    own (a production review, 2026-10-10). The app reads them the same way (MedReviewRepository.mergedUnitIds)."""
+    return {int(e["unitId"]) for e in d.get("eventLogs") or [] if e.get("type") == "MERGE" and e.get("unitId") is not None}
 
 
 LATE_REMINDER_S = 600  # a reminder more than 10 minutes after its time is late (D11)
@@ -498,9 +530,22 @@ def reminder_delivery(d: dict, tz, exported_at: int) -> dict:
                max_late_s=None, inexact=0, in_doze=0, outcomes={}, health_problems=problems,
                safety_net=shown.get("safety_worker", 0) + shown.get("boot_catchup", 0), shown_by_source=dict(shown),
                **reminder_funnel(d, tz))
-    if not fires:
+    # The days judged start when this build was first seen on the phone, not at its first fire: counted from the first
+    # fire, a phone whose reminders never came was never judged, and one silent for weeks before its first fire showed
+    # none of those weeks (a production review, 2026-10-10). APP_VERSION (export v15+) is written at the first run of each
+    # build and DAILY_SNAPSHOT on the first open of each day; the day the build was first seen is left out, since its
+    # first reminder time may still be ahead then.
+    seen = [int(e.get("at") or 0) for e in events if e.get("type") in ("APP_VERSION", "DAILY_SNAPSHOT")]
+    seen = [x for x in seen if x > 0]
+    if not fires and not seen:
         return out
-    first_at = min(f["at"] for f in fires)
+    first_fire = min(f["at"] for f in fires) if fires else None
+    first_seen = min(seen) if seen else None
+    first_at = min(x for x in (first_fire, first_seen) if x is not None)
+    if first_seen is not None and (first_fire is None or local_day(first_seen, tz) < local_day(first_fire, tz)):
+        window_start = local_day(first_seen, tz) + dt.timedelta(days=1)
+    else:
+        window_start = local_day(first_fire, tz)
     off_days = set()
 
     def mark_off(a_ms: int, b_ms: int):
@@ -520,8 +565,13 @@ def reminder_delivery(d: dict, tz, exported_at: int) -> dict:
             off_since = None
     if off_since is not None:
         mark_off(off_since, exported_at)
+    # Reminders off when the file was written, and switched off before any switch was logged (a build before export
+    # v13): nothing here was the phone's to deliver.
+    switched = any(e.get("type") in ("REMINDERS_ON", "REMINDERS_OFF") for e in events)
+    if not switched and (d.get("settings") or {}).get("dailyReminderEnabled") is False:
+        return out
     fire_days = {local_day(f["at"], tz) for f in fires}
-    day, export_day = local_day(first_at, tz), local_day(exported_at, tz)
+    day, export_day = window_start, local_day(exported_at, tz)
     observed = []
     while day < export_day:  # the export day itself is not over yet
         if day not in off_days:
@@ -693,7 +743,9 @@ def replay_unit(logs: List[dict], unit: dict, weights: Tuple[float, ...], tz, me
             counted = calendar_days(last, t, zone(t))
             out.append(dict(before=state, after=state, elapsed=counted, counted=counted, predicted=None,
                             graded_before=graded, first=False, exposure=True))
-            last = t
+            # An exposure moves the clock to it, never back (MedScheduler.exposureClock): a merged copy rated for an
+            # earlier day can be saved after a later review of the other copy.
+            last = max(last, t)
             continue
         counted = calendar_days(last, t, zone(t))
         stored = None if merged else stored_days(log)
@@ -803,7 +855,9 @@ def build_rows(e: Export) -> Tuple[List[Row], List[dict]]:
                 deferrals=int(log.get("deferralsBeforeThisReview", 0) or 0),
                 first_grade=first_grade,
                 subject=subjects.get(str(unit.get("subjectId")), "") if unit.get("subjectId") is not None else "",
-                high_yield=bool(unit.get("highYield", False)),
+                # Important as the review was scheduled (wasImportantAtReview, as the app's replay reads it), not as the
+                # topic is now: a topic switched on later counted every earlier review as Important (2026-10-10).
+                high_yield=important_at_review(log, unit),
                 notes_length=int(unit.get("notesLength", -1) if unit.get("notesLength") is not None else -1),
                 methods=methods,
                 q_correct=int(log.get("questionsCorrect", -1)), q_total=int(log.get("questionsTotal", -1)),
@@ -1226,20 +1280,37 @@ def predictions(hist, weights) -> Tuple[List[Tuple[float, bool]], List[Tuple[flo
     return train, test, who
 
 
-def pooled_lengthening(hist, weights) -> float:
+def base_target(d: dict) -> float:
+    """The learner's own retention target, as the app's refit uses it for every topic (MedScheduler.effectiveRetention
+    without Important, clamped by safeRetention to 0.70-0.99)."""
+    try:
+        target = float((d.get("settings") or {}).get("userDesiredRetention"))
+    except (TypeError, ValueError):
+        return 0.90
+    return min(max(target, 0.70), 0.99) if math.isfinite(target) else 0.90
+
+
+def pooled_lengthening(hist, weights, targets: Optional[Dict[str, float]] = None) -> float:
     """The app's never-lengthen check (Fsrs6Optimizer.lengthening) for a pooled set: every topic replayed to its last
-    state under the set and under the published defaults, the next interval at the target the learner had, inside the
+    state under the set and under the published defaults, the next interval at the learner's target, inside the
     scheduler's 1-365 day bounds; the geometric mean of the ratios. Above 1 the set would schedule these learners'
     topics later than the defaults. As in the app, the comparison is with the defaults, not with the defaults times a
-    learner's calibration (Fsrs6Optimizer.lengthening says why), and the first-study cap is not applied."""
+    learner's calibration (Fsrs6Optimizer.lengthening says why), and the first-study cap is not applied.
+
+    [targets]: each learner's own target (base_target), the one the app checks every topic at
+    (MedReviewRepository.refitPersonalModel). The target stored on a topic's last review (an Important topic's +0.03, or
+    an older setting) used to stand in for it (a production review, 2026-10-10); it still does when none is given."""
     fitted, defaults = ym.Fsrs6(weights), ym.Fsrs6()
     logs_sum, n = 0.0, 0
-    for _, _, logs, unit, tz, _ in hist:
+    for participant, _, logs, unit, tz, _ in hist:
         a, b = replay_unit(logs, unit, tuple(weights), tz), replay_unit(logs, unit, ym.DEFAULT_WEIGHTS, tz)
         if not a:
             continue
-        target = float(logs[-1].get("desiredRetentionAtReview") or 0.9)
-        target = target if 0.7 <= target <= 0.99 else 0.9
+        if targets is not None and participant in targets:
+            target = targets[participant]
+        else:
+            target = float(logs[-1].get("desiredRetentionAtReview") or 0.9)
+            target = target if 0.7 <= target <= 0.99 else 0.9
 
         def nxt(m, state):
             return min(max(m.interval_days(state.stability, target), ym.MIN_INTERVAL_DAYS), ym.MAX_INTERVAL_DAYS)
@@ -1321,7 +1392,7 @@ def pooled_fit(exports: List[Export], min_train=300) -> dict:
     # against the defaults (Fsrs6Optimizer.keepsGradeOrder, .lengthening). This fit used to be judged on z alone, and
     # an outside audit (2026-10-03) got "better" from a set with S0(Hard) 12.5 days over S0(Good) 0.14.
     order_ok = fitted[0] <= fitted[1] <= fitted[2] <= fitted[3]
-    longer = pooled_lengthening(hist, fitted)
+    longer = pooled_lengthening(hist, fitted, {e.participant: base_target(e.data) for e in exports})
     result.update(
         fitted=True,
         weights=list(fitted),
@@ -1456,8 +1527,11 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
             reminder_days=rd["days"], days_without_reminder=len(rd["missed_days"]), reminder_fires=rd["fires"],
             late_reminders=rd["late"], safety_net_reminders=rd["safety_net"],
             reminder_health_problems="; ".join(rd["health_problems"]),
-            rating_corrections=sum(1 for v in corrections(d).values() for c in v if not c[3]),
-            date_corrections=sum(1 for v in corrections(d).values() for c in v if c[3]),
+            # Counted from the events: corrections() lists one under every topic a merge moved its logs to.
+            rating_corrections=sum(1 for e in d.get("eventLogs") or [] if e.get("type") == "RATING_CORRECTED"
+                                   and e.get("unitId") is not None and as_int(parse_detail(e.get("detail")).get("log")) is not None),
+            date_corrections=sum(1 for e in d.get("eventLogs") or [] if e.get("type") == "REVIEW_DATE_CORRECTED"
+                                 and e.get("unitId") is not None and as_int(parse_detail(e.get("detail")).get("log")) is not None),
             minutes_given=review_time(d)["given"], minutes_median=review_time(d)["review_median"],
             saved_later=review_time(d)["saved_later"],
             opened_from_reminder=rd["opened"], reviewed_after_reminder=rd["reviewed_same_day"],
@@ -1568,7 +1642,7 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
                                 first_ratings=len(first), session_kinds=dict(kinds))
 
     rem = summary.get("reminders") or {}
-    if any(r["fires"] for r in rem.values()):
+    if any(r["fires"] or r["days"] for r in rem.values()):
         rep.p("**Reminders: did each phone deliver them, on time?** Every reminder alarm that reached the app is logged "
               "(REMINDER_FIRED), test reminders apart, and every day with reminders on has at least one, even when nothing "
               f"is due. A day without one is a reminder the phone never delivered; late means more than "
@@ -1947,8 +2021,21 @@ def analyze(exports: List[Export], out_dir: str, warnings: List[str], fit: bool 
     with open(os.path.join(out_dir, "report.md"), "w", encoding="utf-8") as f:
         f.write(rep.text())
     with open(os.path.join(out_dir, "summary.json"), "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False, default=lambda o: None if isinstance(o, float) and math.isnan(o) else str(o))
+        # Strict JSON: json.dump writes a float NaN or infinity as a bare token (its default= is never asked about floats),
+        # which a strict reader, forecast_audit.py's included, refuses (a production review, 2026-10-10).
+        json.dump(finite_json(summary), f, indent=2, ensure_ascii=False, allow_nan=False, default=str)
     return summary
+
+
+def finite_json(o):
+    """[o] with every NaN or infinite float replaced by None, for strict JSON."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: finite_json(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [finite_json(v) for v in o]
+    return o
 
 
 def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
@@ -1958,8 +2045,13 @@ def decide(summary: dict, recalls_pred: List[Row]) -> List[dict]:
         out.append(dict(id=i, question=q, result=result, verdict=verdict))
 
     integ = summary["integrity"]
+    zone_note = ""
+    if integ["mismatched"] and ZONES_WITHOUT_DATABASE:
+        zone_note = (f"; this computer has no time-zone database for {', '.join(sorted(ZONES_WITHOUT_DATABASE))}, so a day "
+                     "count near midnight across a daylight-saving change can be this analysis's error, not the phone's: "
+                     "install it (python -m pip install tzdata) and run again")
     add("D1", "Did every phone schedule exactly what the rules say?",
-        f"{integ['mismatched']} mismatches, {integ['consistency_issues']} self-check issues",
+        f"{integ['mismatched']} mismatches, {integ['consistency_issues']} self-check issues{zone_note}",
         "BUG" if integ["mismatched"] or integ["consistency_issues"] else "OK")
 
     # Every group with enough reviews is judged: the published defaults pooled, and each learner's personal set on its

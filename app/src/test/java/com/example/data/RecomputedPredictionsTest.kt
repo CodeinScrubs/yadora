@@ -61,6 +61,26 @@ class RecomputedPredictionsTest {
         )
     }
 
+    /**
+     * A merge moves the corrected topic's logs to the survivor, and the correction's event keeps the old id: its
+     * recomputed predictions used to count again after the merge (a production review, 2026-10-10).
+     */
+    @Test
+    fun `a correction still covers its topic's logs after a merge moved them`() {
+        // Topic 7's review 1 corrected when its last log was 3; then 7 was merged into 9, and later 9 into 11.
+        val corrected = correction(7, 1, 500, upTo = 3)
+        val merge = EventLogEntity(at = 600, type = RecomputedPredictions.MERGE_EVENT, unitId = 9, detail = "7")
+        val again = EventLogEntity(at = 700, type = RecomputedPredictions.MERGE_EVENT, unitId = 11, detail = "9,12")
+        val onNine = listOf(log(1, 9, 100), log(2, 9, 200), log(3, 9, 300), log(8, 9, 800))
+        assertEquals(setOf(2L, 3L), RecomputedPredictions.ids(onNine, listOf(corrected, merge)))
+        assertEquals(setOf(7L, 9L), RecomputedPredictions.affectedUnits(listOf(corrected, merge)))
+        val onEleven = onNine.map { it.copy(studyUnitId = 11) }
+        assertEquals("through two merges", setOf(2L, 3L), RecomputedPredictions.ids(onEleven, listOf(corrected, merge, again)))
+        assertEquals(setOf(7L, 9L, 11L), RecomputedPredictions.affectedUnits(listOf(corrected, merge, again)))
+        assertEquals("a merge alone recomputes nothing", emptySet<Long>(), RecomputedPredictions.ids(onNine, listOf(merge)))
+        assertEquals(emptySet<Long>(), RecomputedPredictions.affectedUnits(listOf(merge)))
+    }
+
     @Test
     fun `the corrected log is read from the event detail`() {
         assertEquals(12L, RecomputedPredictions.correctedLogId("log=12 memory=Good>Hard understanding=Clear>Partial"))

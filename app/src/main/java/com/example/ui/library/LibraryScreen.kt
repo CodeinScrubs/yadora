@@ -141,23 +141,27 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         .flowOn(kotlinx.coroutines.Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Every action runs under runCatching so a DB failure surfaces as "didn't work" instead of an
+    // unhandled coroutine exception, and onComplete still runs so the UI can never stick in
+    // selection mode with a spinner. Matches the discipline already used for review commits. The
+    // single-topic actions had none of it, and a failed write (a full phone) took the app down (a
+    // production review, 2026-10-10).
     fun archiveUnit(unitId: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.archiveUnit(unitId)
+            runCatching { repository.archiveUnit(unitId) }
+                .onFailure { android.util.Log.w("Yadora", "archive failed", it) }
             onComplete()
         }
     }
 
     fun unarchiveUnit(unitId: Long, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
-            repository.unarchiveUnit(unitId)
+            runCatching { repository.unarchiveUnit(unitId) }
+                .onFailure { android.util.Log.w("Yadora", "unarchive failed", it) }
             onComplete()
         }
     }
 
-    // Batch actions run under runCatching so a DB failure surfaces as "didn't work" instead of an
-    // unhandled coroutine exception, and onComplete still runs so the UI can never stick in
-    // selection mode with a spinner. Matches the discipline already used for review commits.
     fun archiveUnits(unitIds: Collection<Long>, onComplete: () -> Unit = {}) {
         viewModelScope.launch {
             runCatching { repository.archiveUnits(unitIds) }
@@ -179,7 +183,10 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun softDelete(unitId: Long) {
-        viewModelScope.launch { repository.softDeleteUnit(unitId) }
+        viewModelScope.launch {
+            runCatching { repository.softDeleteUnit(unitId) }
+                .onFailure { android.util.Log.w("Yadora", "delete failed", it) }
+        }
     }
 
     /**
@@ -210,8 +217,13 @@ class LibraryViewModel(private val repository: MedReviewRepository) : ViewModel(
         }
     }
 
-    fun restoreDeleted(unitId: Long) {
-        viewModelScope.launch { repository.restoreDeletedUnit(unitId) }
+    /** [onComplete] runs once the restore is written: the topic notifications and the widget re-read the share then. */
+    fun restoreDeleted(unitId: Long, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.restoreDeletedUnit(unitId) }
+                .onFailure { android.util.Log.w("Yadora", "restore from the trash failed", it) }
+            onComplete()
+        }
     }
 }
 
@@ -243,16 +255,26 @@ fun LibraryScreen(
     val strings = com.example.ui.i18n.LocalStrings.current
     val libContext = androidx.compose.ui.platform.LocalContext.current
     
-    var selectedIds by remember { mutableStateOf(setOf<Long>()) }
+    // The selection and the dialogs acting on it are saveable: a rotation cleared the topics chosen and closed an open
+    // merge or delete dialog (the rule UI-01 set for Progress; a production review, 2026-10-10).
+    var selectedIds by androidx.compose.runtime.saveable.rememberSaveable(
+        stateSaver = androidx.compose.runtime.saveable.listSaver(save = { it.toList() }, restore = { it.toSet() }),
+    ) { mutableStateOf(setOf<Long>()) }
     // A selection belongs to one view: switching between the library and the archive starts a new one, so an
-    // action here can never reach topics selected over there.
-    androidx.compose.runtime.LaunchedEffect(showArchived) { selectedIds = emptySet() }
+    // action here can never reach topics selected over there. Only a SWITCH clears it, not a screen built again.
+    var selectionView by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(showArchived) }
+    androidx.compose.runtime.LaunchedEffect(showArchived) {
+        if (selectionView != showArchived) {
+            selectedIds = emptySet()
+            selectionView = showArchived
+        }
+    }
     // Deleting FROM the archive: the archive toolbar previously offered only Restore, so an archived
     // topic could not be deleted from selection mode at all.
-    var showBatchPurgeConfirm by remember { mutableStateOf(false) }
+    var showBatchPurgeConfirm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     // Merging duplicates (same material added twice, often in two languages).
-    var showMergeDialog by remember { mutableStateOf(false) }
-    var showBatchDeleteConfirm by remember { mutableStateOf(false) }
+    var showMergeDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var showBatchDeleteConfirm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val isFarsi = strings.languageCode == "fa"
 
     if (showMergeDialog) {
@@ -672,7 +694,7 @@ fun LibraryScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 items(units, key = { it.id }) { unit ->
-                    var showDeleteConfirm by remember { mutableStateOf(false) }
+                    var showDeleteConfirm by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
                     
                     val dismissState = rememberSwipeToDismissBoxState()
                     
@@ -834,8 +856,9 @@ fun LibraryScreen(
                                 maxLines = 1
                             )
                             TextButton(onClick = {
-                                viewModel.restoreDeleted(del.id)
-                                com.example.notifications.TodayRefresh.afterChange(libContext)
+                                // Refreshed once the restore is written: called beside it, the share could be read
+                                // before the topic was back (a production review, 2026-10-10).
+                                viewModel.restoreDeleted(del.id) { com.example.notifications.TodayRefresh.afterChange(libContext) }
                             }) {
                                 Text(when (strings.languageCode) { "fa" -> "بازگردانی"; "de" -> "Wiederherstellen"; else -> "Restore" })
                             }

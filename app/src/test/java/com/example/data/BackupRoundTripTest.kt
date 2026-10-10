@@ -10,6 +10,7 @@ import com.example.data.local.entity.SubjectEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -382,6 +383,11 @@ class BackupRoundTripTest {
             assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
             assertEquals(1, db.reviewLogDao().getLogsForUnitOnce(unitId).size)
         }
+        // A newer format is told apart from a damaged file, so Settings says "update the app first".
+        val newer = org.json.JSONObject(json).put("backupVersion", BackupManager.BACKUP_VERSION + 1).toString()
+        assertTrue(runCatching { BackupManager.restoreFromJson(context, newer) }.exceptionOrNull() is BackupManager.NewerVersion)
+        val textVersion = org.json.JSONObject(json).put("backupVersion", "10").toString()
+        assertFalse(runCatching { BackupManager.restoreFromJson(context, textVersion) }.exceptionOrNull() is BackupManager.NewerVersion)
         // org.json would print 9.0 as 9, so the text is edited directly (the backup is compact JSON).
         val wholeDouble = json.replace("\"backupVersion\":${BackupManager.BACKUP_VERSION},", "\"backupVersion\":${BackupManager.BACKUP_VERSION}.0,")
         assertTrue("the edit must have applied", wholeDouble != json)
@@ -471,6 +477,8 @@ class BackupRoundTripTest {
         val result = runCatching { BackupManager.restoreFromJson(context, root.toString()) }
         assertTrue("a newer model must not be read as FSRS-5", result.isFailure)
         assertTrue(result.exceptionOrNull()!!.message!!.contains("update the app"))
+        // Settings says "update the app", not "invalid backup" (a production review, 2026-10-10).
+        assertTrue("told apart from a damaged file", result.exceptionOrNull() is BackupManager.NewerVersion)
         assertEquals("Keep me", db.studyUnitDao().getUnitById(unitId)!!.title)
         // An older file with no model named at all is still FSRS-5, as before.
         val legacy = org.json.JSONObject(json)
